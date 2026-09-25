@@ -6,62 +6,80 @@ Pipeline: mic 16 kHz → Silero VAD (segmenta frases) → Parakeet TDT v3 int8
 (`sherpa-onnx`, CPU) → portapapeles + Ctrl+V. Sin nube, sin GPU.
 Paquete Python en `dictado/` (nombre `instant`, entry point `instant`).
 
-## Estado actual verificado (2026-09-25 ~06:16, daemon VIVO del otro worker)
+## Estado actual verificado (esta vuelta, daemon VIVO ajeno)
 
-- Proceso: `instant.exe` VIVO pid 12648 (verificado con
-  `Get-Process instant` y `instant-status.bat` → `instant.exe vivo: SI`).
-  NO lo levanto ni lo toco: es del otro worker.
-- Log (`%APPDATA%/instant/instant.log`, leído tal cual): el bug de las
-  06:13:23 quedó registrado — `instant run` sin `DICTADO_DATA` buscó
-  `C:\Users\juans\AppData\Local\instant\models\parakeet-v3-int8\encoder.int8.onnx`
-  (vacío, ese dir ni existe) y murió con `modelo parakeet incompleto...
-  -> corre instant setup primero`. Con `DICTADO_DATA` apuntando al repo,
-  06:13:47: `modelo listo en 1.7s`, `warmup ok`,
-  `listo. Manten F9 para dictar (60-120s), suelta para transcribir`,
-  y `vivo, esperando F9...` 06:14:47 y 06:15:47. Sin traceback tras el fix.
-- `instant-run.bat check` (con el fix) → exit 0: `tecla: f9 OK`,
-  `mic probe: OK` (`[3] Microphone (DGM20 USB Microphon…`),
-  `boot mic+warmup: 2.4s (OK <5s)`.
-- Bench anterior en el mismo log (2026-09-25 05:45):
-  `14.7s audio -> 0.64s, RTF=0.04x` (2 segmentos, decode 0.58 s).
-- Config activa (`%APPDATA%/instant/config.json`, leído tal cual):
+- Proceso: `instant.exe` VIVO (verificado al ejecutar `instant-status.bat` ->
+  `instant.exe vivo: SI`). NO lo levanto ni lo toco: es de otro worker.
+- Log (`%APPDATA%/instant/instant.log`, tail de 15 lineas tal cual): a las
+  13:23 decodifico 66.2 s en 5 segmentos (`decode 5 segs en 1.97s`,
+  `RTF=0.03x`); de 13:23:47 a 13:28:47 repite `vivo, esperando F9...`
+  cada minuto. Sin tracebacks.
+- Config (`%APPDATA%/instant/config.json`, leida tal cual):
   `mic_index: 3`, `key: f9`, `threads: 4`, `sound: false`, `llm_url: ""`.
+- CLI (exe por ruta absoluta, NO esta en PATH): `instant.exe --help` lista
+  `setup,run,check`; `setup --help` muestra `-y/--yes ... --no-probe`;
+  `check --help` sale 0. (Los tres ejecutados esta vuelta.)
+- En mi shell `DICTADO_DATA` vacia y el default
+  `%LOCALAPPDATA%/instant/models` VACIO (lo dice el propio status);
+  el daemon ajeno sigue vivo igual. No lo toco.
 - Modelos YA descargados en `models/` (no se versionan, no se empaquetan):
   `parakeet-v3-int8/` ~640 MB + `silero-vad/silero_vad.onnx` ~1 MB.
-  Diagnóstico sin levantar nada: `instant-status.bat`.
+  Diagnostico sin levantar nada: `instant-status.bat`.
 
-## Instalación
+## Instalación en un comando
 
-### Windows
+Clona el repo y corre el instalador de tu SO. Los dos instaladores hacen lo
+mismo: instalan el paquete `instant` y corren `instant setup --yes`, que
+descarga TODO JUNTO (Parakeet v3 int8 ~670 MB + Silero VAD ~1 MB, español
+único) en un solo paso (fuente: `install.bat`, `install.sh`,
+`dictado/src/instant_app/models.py` → `download_models()`; flag `--yes`
+verificado en `instant.exe setup --help` y `dictado/src/instant_app/setup.py`).
 
-Sin dependencias del sistema.
+### Windows (sin dependencias del sistema, solo Python 3.11+ en PATH)
 
 ```bat
-pip install -e dictado
+git clone https://github.com/getodevel-source/Instant.git && cd Instant && install.bat
 ```
 
-(`pip show instant` confirma install editable desde `dictado/`.)
+Pasos: 1/2 `pip install -e dictado`, 2/2 `instant setup --yes`
+(con fallback a `python -m instant_app setup --yes` si `instant` aún no está
+en PATH en esa terminal — mismo fallback que `instant-setup.bat`).
 
 ### Linux (X11)
 
 ```bash
-sudo apt install libportaudio2 xclip xdotool
-pip install -e dictado
+git clone https://github.com/getodevel-source/Instant.git && cd Instant && ./install.sh
 ```
 
-(Fuente: `dictado/README.md`. Wayland: el pegado con `xdotool` no funciona;
-usa sesión X11. El hotkey con `pynput` requiere X.)
+Pasos: 1/3 `sudo apt-get install libportaudio2 xclip xdotool`, 2/3
+`pip install -e dictado`, 3/3 `instant setup --yes`.
+Wayland: el pegado con `xdotool` no funciona; usa sesión X11.
+El hotkey con `pynput` requiere X. (Fuente: `dictado/README.md`.)
 
 ### macOS
 
 ```bash
-brew install portaudio
-pip install -e dictado
+git clone https://github.com/getodevel-source/Instant.git && cd Instant && ./install.sh
 ```
 
-(Fuente: `dictado/README.md`.) Autoriza micrófono y accesibilidad (pegado por
-teclado) en Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado las mapea
-a multimedia.
+(`install.sh` detecta el SO con `uname -s`: en macOS corre
+`brew install portaudio` en vez del `apt-get`.) Autoriza micrófono y
+accesibilidad (pegado por teclado) en Ajustes del Sistema. Teclas F: usa
+Fn+F9 si tu teclado las mapea a multimedia. (Fuente: `dictado/README.md`.)
+
+Verificado esta vuelta: `bash -n install.sh` → exit 0; rama Linux con stubs
+(`sudo`/`pip`/`instant` falsos) → instala `libportaudio2 xclip xdotool` +
+`setup --yes`, exit 0; rama macOS con stubs (`brew`/`pip`/`instant` falsos)
+→ `brew install portaudio` + `setup --yes`, exit 0. `install.bat`: la línea
+`pip install -e dictado` se ejecutó tal cual (requirements ya satisfechos,
+exit 0); el `setup --yes` completo NO se ejecuta aquí (pesa/red y el daemon
+ajeno está vivo). `pyinstaller` ausente (exit 127): sin build local.
+
+Qué se te pide: nada en modo un-comando (`--yes` no pregunta). Solo se te
+pedirá micrófono y tecla si corres `instant setup` interactivo después;
+el idioma es fijo: español.
+
+## Uso manual (tras instalar)
 
 ```bat
 instant setup
