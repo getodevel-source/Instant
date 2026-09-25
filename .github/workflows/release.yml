@@ -1,0 +1,55 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            output: instant.exe
+          - os: ubuntu-latest
+            output: instant
+          - os: macos-latest
+            output: instant
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: System deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2 xclip xdotool
+
+      - name: System deps (macOS)
+        if: runner.os == 'macOS'
+        run: brew install portaudio
+
+      - name: Install package + PyInstaller
+        run: |
+          pip install -e ./dictado
+          pip install pyinstaller
+
+      - name: Build onefile binary
+        # El modelo (640MB onnx) NO se empaqueta: se descarga en primer
+        # arranque via `instant setup` (ver dictado/src/instant_app/models.py).
+        run: |
+          pyinstaller --onefile --name instant \
+            --hidden-import sherpa_onnx \
+            --hidden-import sounddevice \
+            --collect-all sherpa_onnx \
+            --collect-all sounddevice \
+            dictado/src/instant_app/__main__.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-${{ runner.os }}
+          path: dist/${{ matrix.output }}

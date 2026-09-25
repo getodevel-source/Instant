@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "instant"
+version = "0.1.0"
+description = "Instant hold-to-talk ES offline: Parakeet v3 + Silero VAD, CPU-only"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "sounddevice",
+    "pyperclip",
+    "sherpa-onnx>=1.13",
+    "huggingface_hub",
+    "keyboard; sys_platform == 'win32'",
+    "pynput; sys_platform != 'win32'",
+]
+
+[project.scripts]
+instant = "instant_app.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

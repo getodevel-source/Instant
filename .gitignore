@@ -1,0 +1,18 @@
+# Modelos: se descargan en primer arranque (`instant setup`), nunca en el repo.
+# Se ignora el dir entero: onnx + tokens.txt son todos descargables.
+models/
+*.onnx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env/
+
+# Logs
+*.log
