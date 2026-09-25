@@ -1,5 +1,7 @@
 @echo off
 REM Diagnostico rapido: NO levanta el daemon, solo lo inspecciona.
+REM Modelos: %~dp0models (relativo al repo). Solo default, respeta DICTADO_DATA previa.
+if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
 echo == proceso ==
 tasklist /FI "IMAGENAME eq instant.exe" | findstr /I "instant.exe" >nul
 if %ERRORLEVEL%==0 (

@@ -74,7 +74,48 @@ instant setup --yes --mic 3 --key f9 --threads 4 --no-sound
 Flags avanzados (solo flags, el interactivo no los pregunta):
 `--threads` (default 4), `--sound`/`--no-sound` (default off),
 `--llm-url` (default vacío = off), `--mic`, `--key`, `--no-meter`,
-`--no-probe`, `--yes`.
+`--no-probe`, `--yes`, `--check-deps`, `--fix-deps`.
+
+## Dependencias
+
+`instant setup` chequea las dependencias y te muestra `[OK]`/`[FALTA]`
+en criollo. Con `--yes` solo avisa (nunca frena la config).
+Con `--check-deps` muestra la tabla igual; con `--fix-deps` instala
+lo que el SO deja y vuelve a chequear.
+
+```bash
+instant setup --check-deps
+instant setup --fix-deps
+```
+
+| Qué | Cómo se detecta | Auto | Manual si falta |
+|---|---|---|---|
+| Python >= 3.10 | `sys.version` | no (instalalo vos) | python.org / tienda |
+| pip | `import pip` | sí (`ensurepip`) | `python -m ensurepip` |
+| numpy, sounddevice, sherpa-onnx, pyperclip, huggingface_hub | `importlib` | sí (`pip install`) | `pip install <paquete>` |
+| keyboard (win) / pynput (linux/mac) | `importlib` | sí (`pip install`) | `pip install <paquete>` |
+| portaudio linux (`libportaudio2`) | lib/ldconfig/dpkg | sí (`apt`) solo con sudo sin password o root | `sudo apt install libportaudio2` |
+| xclip/xsel linux | PATH | sí (`apt`) solo con sudo sin password o root | `sudo apt install xclip` |
+| xdotool linux (X11) | PATH | sí (`apt`) solo con sudo sin password o root | `sudo apt install xdotool` |
+| portaudio mac | `brew --prefix portaudio` | sí (`brew`) solo si tenés brew | `brew install portaudio` |
+| Windows: nada del sistema | — | — | no hace falta nada |
+
+Wayland: `xdotool` no anda (sale `[FALTA]`, no es auto, usa sesión X11
+o `wtype` manual). Sin red no se instala nada: queda `[FALTA]` con
+el hint, sin traceback. `install.bat`/`install.sh` las pueden llamar
+así (no se tocan en este cambio): `instant setup --check-deps` para
+mostrar, `instant setup --fix-deps` para autoinstalar lo permitido.
+
+## De dónde saca los modelos (DICTADO_DATA)
+
+Precedencia efectiva:
+
+1. `DICTADO_DATA` gana siempre (aunque no exista, se respeta tal cual).
+2. `./models` con `parakeet-v3-int8/encoder.int8.onnx` gana al dir de usuario.
+3. `./models` sin ese marcador se ignora y cae al dir de usuario.
+4. Si no hay nada, va al dir de usuario (`%LOCALAPPDATA%/instant/models`
+   en win, `~/.local/share/instant/models` en linux,
+   `~/Library/Application Support/instant/models` en mac).
 
 Sin modelos o sin mic, `setup` avisa y sigue (no crashea); `run` sin
 modelos pide correr `setup` con red primero.

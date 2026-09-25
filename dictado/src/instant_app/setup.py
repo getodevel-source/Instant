@@ -50,6 +50,10 @@ def _parse_args(argv=None):
     ap.add_argument("--llm-url", default=None, help="llama-server local (vacio=off)")
     ap.add_argument("--no-meter", action="store_true", help="salta medidor de nivel")
     ap.add_argument("--no-probe", action="store_true", help="salta probe final y warmup")
+    ap.add_argument("--check-deps", action="store_true",
+                    help="muestra tabla de dependencias y sigue")
+    ap.add_argument("--fix-deps", action="store_true",
+                    help="autoinstala lo permitido por el SO y re-chequea")
     return ap.parse_args(argv)
 
 
@@ -68,6 +72,21 @@ def cmd_setup(argv=None):
     print("== instant setup ==")
     cfg = config.load()
     rc = 0
+    from instant_app import deps
+    if o.fix_deps:
+        try:
+            results = deps.ensure(auto=True)
+        except Exception:
+            log.exception("autoinstalacion fallida; sigo con el setup")
+            results = deps.check()
+    else:
+        results = deps.check()
+    print(deps.report(results))
+    if not results.get("sherpa_onnx", {}).get("ok", True) \
+            or not results.get("sounddevice", {}).get("ok", True):
+        print("  AVISO: falta dependencia critica (sherpa_onnx/sounddevice); "
+              "la config se guarda igual.")
+        rc = max(rc, 2)
 
     # 1. Modelos juntos: Parakeet (~670MB) + VAD (~1MB) en un solo paso.
     data_dir = resolve_data_dir()

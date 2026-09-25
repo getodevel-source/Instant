@@ -31,6 +31,10 @@ def main(argv=None):
     p_setup.add_argument("--llm-url", default=None)
     p_setup.add_argument("--no-meter", action="store_true")
     p_setup.add_argument("--no-probe", action="store_true")
+    p_setup.add_argument("--check-deps", action="store_true",
+                         help="muestra tabla de dependencias y sigue")
+    p_setup.add_argument("--fix-deps", action="store_true",
+                         help="autoinstala lo permitido por el SO y re-chequea")
     sub.add_parser("run", help="daemon hold-to-talk")
     sub.add_parser("check", help="boot rapido: tecla + mic + warmup (<5s)")
     args, rest = ap.parse_known_args(argv)
@@ -44,7 +48,8 @@ def main(argv=None):
             v = getattr(args, k)
             if v is not None:
                 fwd += [f"--{k.replace('_', '-')}", str(v)]
-        for flag in ("sound", "no_sound", "no_meter", "no_probe"):
+        for flag in ("sound", "no_sound", "no_meter", "no_probe", "check_deps",
+                     "fix_deps"):
             if getattr(args, flag):
                 fwd.append(f"--{flag.replace('_', '-')}")
         fwd += rest

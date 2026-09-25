@@ -1,19 +1,27 @@
 @echo off
 REM Arranca el daemon hold-to-talk. Sin args -> `run`. Acepta args (ej. --help).
-REM Modelos viven en el repo (C:/PROYECTOS/Instant/models); sin DICTADO_DATA
-REM el exe cae a %LOCALAPPDATA%/instant/models (vacio) y muere FileNotFoundError.
-if not defined DICTADO_DATA set "DICTADO_DATA=C:/PROYECTOS/Instant/models"
-set "EXE=C:\Users\juans\AppData\Roaming\Python\Python314\Scripts\instant.exe"
-if exist "%EXE%" (
+REM Modelos: %~dp0models (relativo al repo). Solo default, respeta DICTADO_DATA previa.
+if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
+where instant.exe >nul 2>nul
+if %ERRORLEVEL%==0 (
   if "%~1"=="" (
-    "%EXE%" run
+    instant.exe run
   ) else (
-    "%EXE%" %*
+    instant.exe %*
   )
 ) else (
-  if "%~1"=="" (
-    python -m instant_app run
+  set "EXE=C:\Users\juans\AppData\Roaming\Python\Python314\Scripts\instant.exe"
+  if exist "%EXE%" (
+    if "%~1"=="" (
+      "%EXE%" run
+    ) else (
+      "%EXE%" %*
+    )
   ) else (
-    python -m instant_app %*
+    if "%~1"=="" (
+      python -m instant_app run
+    ) else (
+      python -m instant_app %*
+    )
   )
 )
