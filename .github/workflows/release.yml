@@ -33,6 +33,7 @@ jobs:
         run: brew install portaudio
 
       - name: Install package + PyInstaller
+        shell: bash
         run: |
           pip install -e ./dictado
           pip install pyinstaller
@@ -40,6 +41,7 @@ jobs:
       - name: Build onefile binary
         # El modelo (640MB onnx) NO se empaqueta: se descarga en primer
         # arranque via `instant setup` (ver dictado/src/instant_app/models.py).
+        shell: bash
         run: |
           pyinstaller --onefile --name instant \
             --hidden-import sherpa_onnx \
