@@ -1,7 +1,8 @@
-"""TUI setup (stdlib): modelos, mic con medidor, tecla, hilos + test punta a punta.
+"""TUI setup simple (stdlib): modelos juntos, mic con medidor, tecla, test final.
 
 Sobrevive sin modelos (avisa y sigue) y sin mic (no crashea).
-Modo no interactivo: `instant setup --yes` (usa defaults/config actual).
+Modo no interactivo: `instant setup --yes` (no pregunta nada; usa config
+actual salvo flags --mic/--key/--threads/--sound/--no-sound/--llm-url).
 """
 import logging
 
@@ -68,7 +69,7 @@ def cmd_setup(argv=None):
     cfg = config.load()
     rc = 0
 
-    # 1. Modelos: si faltan se intenta descarga; sin red se avisa y se sigue.
+    # 1. Modelos juntos: Parakeet (~670MB) + VAD (~1MB) en un solo paso.
     data_dir = resolve_data_dir()
     if data_dir == user_data_dir():
         print(f"  modelos en: {data_dir}")
@@ -78,14 +79,16 @@ def cmd_setup(argv=None):
     status = dl.check(data_dir)
     models_ok = all(status.values())
     if models_ok:
-        print("  modelos OK.")
+        print("  modelos OK (Parakeet + VAD).")
     else:
         missing = sorted(k for k, ok in status.items() if not ok)
-        print(f"  faltan: {', '.join(missing)}. Descargando (~670MB, requiere red)...")
+        print(f"  faltan: {', '.join(missing)}.")
+        print("  descargando modelos juntos: Parakeet (~670MB) + VAD (~1MB)...")
         try:
             dl.download_models(data_dir)
             models_ok = all(dl.check(data_dir).values())
-            print("  modelos OK." if models_ok else "  descarga incompleta, reintenta luego.")
+            print("  modelos OK (Parakeet + VAD)." if models_ok
+                  else "  descarga incompleta, reintenta luego.")
         except Exception:
             log.exception("SIN MODELOS: sin red o sin espacio; el resto se configura igual. "
                           "Re-corre `instant setup` con red para descargar.")
@@ -94,7 +97,7 @@ def cmd_setup(argv=None):
     if not models_ok:
         print("  AVISO: sin modelos `instant run` no transcribe hasta descargarlos.")
 
-    # 2. Microfono (nunca crashea sin mics).
+    # 2. Microfono: lista real + medidor + probe final; guarda mic_index.
     inputs = _real_inputs()
     if not inputs:
         print("  sin dispositivos de entrada. Conecta un mic y re-corre `instant setup`.")
@@ -113,15 +116,20 @@ def cmd_setup(argv=None):
         if o.mic is not None:
             idx, name = o.mic, next((n for i, n, _c, _r in inputs if i == o.mic), None)
             if name is None:
-                print(f"  --mic {o.mic} no es entrada valida; uso default de la lista.")
-                idx, name = inputs[0][0], inputs[0][1]
+                print(f"  --mic {o.mic} no es entrada valida; queda {cfg.get('mic_index')}.")
+                rc = max(rc, 2)
             else:
+                cfg["mic_index"] = idx
+                cfg["mic_hint"] = ""
                 print(f"  elegido (--mic): [{idx}] {name}")
         elif o.yes:
+            # --yes no pisa el mic del usuario: solo muestra el actual.
             cur = cfg.get("mic_index")
-            pick = next((n for n, (i, _n, _c, _r) in enumerate(inputs) if i == cur), 0)
-            idx, name = inputs[pick][0], inputs[pick][1]
-            print(f"  elegido (config actual): [{idx}] {name}")
+            name = next((n for i, n, _c, _r in inputs if i == cur), None)
+            if name is None:
+                print(f"  mic (config actual): [{cur}] (no esta en la lista; se conserva)")
+            else:
+                print(f"  mic (config actual): [{cur}] {name}")
         else:
             cur = cfg.get("mic_index")
             dflt = 0
@@ -130,14 +138,18 @@ def cmd_setup(argv=None):
                     dflt = n
             sel = _ask_int("microfono (numero de la lista)", dflt, 0, len(inputs) - 1)
             idx, name = inputs[sel][0], inputs[sel][1]
-        cfg["mic_index"] = idx
-        cfg["mic_hint"] = ""
-        print(f"  elegido: [{idx}] {name}")
-        if not o.no_meter and not o.yes:
-            if _ask("probar nivel (habla 3s)? s/n", "s").lower().startswith("s"):
-                audio.peak_meter(idx)
+            cfg["mic_index"] = idx
+            cfg["mic_hint"] = ""
+            print(f"  elegido: [{idx}] {name}")
+            if not o.no_meter:
+                if _ask("probar nivel (habla 3s)? s/n", "s").lower().startswith("s"):
+                    audio.peak_meter(idx)
 
-    # 3. Tecla.
+    # 3. Idioma fijo: espanol unico (se guarda para futuro; el engine no cambia).
+    cfg["lang"] = "es"
+    print("  idioma: Español (único)")
+
+    # 4. Tecla con captura: presiona la tecla para asignar.
     keys = hotkey.available_keys()
     if o.key is not None:
         if o.key.lower() in keys:
@@ -148,40 +160,30 @@ def cmd_setup(argv=None):
     elif o.yes:
         print(f"  tecla (config actual): {cfg.get('key', 'f9')}")
     else:
-        print(f"  teclas: {', '.join(keys)} (mantener para dictar, soltar para pegar)")
-        while True:
-            k = _ask("tecla", cfg.get("key", "f9")).lower()
-            if k in keys:
-                cfg["key"] = k
-                break
-            print(f"  tecla invalida. Opciones: {', '.join(keys)}")
+        print(f"  teclas validas: {', '.join(keys)}")
+        cfg["key"] = hotkey.capture_key(
+            "Presiona la tecla para dictar... (Enter = F9)",
+            cfg.get("key", "f9"))
+        print(f"  tecla: {cfg['key']}")
 
-    # 4. Rendimiento + extras.
+    # 5. Avanzados solo por flags (no se preguntan): threads/sound/llm-url.
     import multiprocessing
     max_t = max(1, multiprocessing.cpu_count())
     if o.threads is not None:
         cfg["threads"] = min(max(1, o.threads), max_t)
-    elif not o.yes:
-        cfg["threads"] = _ask_int(f"hilos CPU (1-{max_t})",
-                                  min(cfg.get("threads", 4), max_t), 1, max_t)
     if o.sound:
         cfg["sound"] = True
     elif o.no_sound:
         cfg["sound"] = False
-    elif not o.yes:
-        cfg["sound"] = _ask("pitidos? s/n", "s" if cfg.get("sound") else "n").lower().startswith("s")
     if o.llm_url is not None:
         cfg["llm_url"] = o.llm_url
-    elif not o.yes and not cfg.get("llm_url"):
-        v = _ask("llama-server local para pulido (vacio=off)", "")
-        cfg["llm_url"] = v.strip()
 
     path = config.save(cfg)
 
-    # 5. Test punta a punta: probe mic + warmup modelos.
+    # 6. Test final: probe mic + warmup modelos.
     print(f"  config en: {path}")
     if o.no_probe:
-        print("== listo. Corre `instant run`, manten la tecla y dicta. ==")
+        print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")
         return rc
     mic_ok = True
     if inputs:
@@ -205,7 +207,7 @@ def cmd_setup(argv=None):
             models_ok = False
     else:
         print("  warmup modelos: SKIP (sin modelos)")
-    print("== listo. Corre `instant run`, manten la tecla y dicta. ==")
+    print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")
     if not (mic_ok and models_ok):
         return 2
     return rc

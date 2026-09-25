@@ -18,6 +18,83 @@ def available_keys():
         return tuple(WINDOWS_KEYS)
     return POSIX_KEYS
 
+def normalize_key(raw, default="f9"):
+    """Normaliza nombre de tecla: minusculas, sin espacios; vacio/Enter -> default."""
+    k = "" if raw is None else str(raw).strip().lower()
+    if k in ("", "enter", "return"):
+        return (default or "f9").lower()
+    return k
+
+
+# Scan codes extendidos win (tras prefijo \x00/\xe0) -> nombre. Solo captura.
+_SCAN_WIN = {59: "f1", 60: "f2", 61: "f3", 62: "f4", 63: "f5", 64: "f6",
+             65: "f7", 66: "f8", 67: "f9", 68: "f10", 133: "f11", 134: "f12"}
+# Secuencias xterm posix -> nombre. Solo captura.
+_SEQ_POSIX = {"\x1b[20~": "f9", "\x1b[21~": "f10",
+              "\x1b[23~": "f11", "\x1b[24~": "f12"}
+
+
+def _read_keypress():
+    """Un keypress crudo -> nombre normalizado ("" = Enter) o None si no se pudo.
+    Solo captura para el setup; el dictado sigue con GetAsyncKeyState/pynput."""
+    import sys
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):
+                return _SCAN_WIN.get(ord(msvcrt.getwch()))
+            if ch in ("\r", "\n"):
+                return ""
+            return ch.lower() if len(ch) == 1 else None
+        import select
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":
+                seq = ch
+                while len(seq) < 6 and select.select([sys.stdin], [], [], 0.15)[0]:
+                    seq += sys.stdin.read(1)
+                    if seq in _SEQ_POSIX:
+                        break
+                return _SEQ_POSIX.get(seq, seq.strip().lower() or None)
+            if ch in ("\r", "\n"):
+                return ""
+            return ch.lower() if ch else None
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except Exception:
+        return None
+
+
+def capture_key(prompt="Presiona la tecla para dictar... (Enter = F9)", default="f9"):
+    """Modo captura: presiona la tecla y se asigna si esta en available_keys().
+    Enter = default. Repite hasta tecla valida. Sin TTY usa linea escrita."""
+    keys = available_keys()
+    dflt = (default or "f9").lower()
+    print(f"  {prompt}")
+    while True:
+        pressed = _read_keypress()
+        if pressed is None:
+            try:
+                typed = input(f"  tecla [{dflt}] ({', '.join(keys)}): ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                raise KeyboardInterrupt
+            key = normalize_key(typed, dflt)
+        elif pressed == "":
+            key = dflt
+        else:
+            key = pressed
+            print(f"  detectada: {key}")
+        if key in keys:
+            return key
+        print(f"  '{key}' no valida. Opciones: {', '.join(keys)}. Intenta de nuevo.")
+
 
 class WindowsPolling:
     def __init__(self, key_name):

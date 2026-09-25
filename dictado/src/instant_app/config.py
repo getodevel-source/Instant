@@ -11,6 +11,7 @@ DEFAULTS = {
     "mic_hint": "",
     "mic_index": None,
     "key": "f9",
+    "lang": "es",
     "threads": 4,
     "sound": False,
     "max_seg": 20.0,

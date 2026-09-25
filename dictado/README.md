@@ -4,6 +4,9 @@ Hold-to-talk offline en español. Mantén la tecla, habla 60-120s, suelta y pega
 
 Pipeline: mic 16kHz → Silero VAD (frases) → Parakeet TDT v3 int8 offline
 (`sherpa-onnx`, CPU) → portapapeles + Ctrl+V. Sin nube, sin GPU.
+Idioma: Español (único). Sin selector: el setup muestra
+"Español (único)" y guarda `lang: "es"` en la config para futuro;
+el engine transcribe igual que siempre.
 
 Errores conocidos del modelo (no son bugs de la app): nombres propios
 raros pueden salir deformados (p.ej. "Instant" → "instante"); siglas y
@@ -44,17 +47,34 @@ Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado las mapea a multimedia.
 ## Uso
 
 ```bash
-instant setup   # TUI: descarga modelos (~670MB), elige mic, tecla, hilos
+instant setup   # TUI simple: modelos juntos, mic con medidor, tecla, test final
 instant run     # daemon: mantén la tecla, suelta para transcribir
 instant check   # boot rapido: tecla + mic probe + warmup (<5s)
 ```
 
-No interactivo (usa config actual o flags):
+El setup interactivo hace, en orden:
+
+1. **Modelos juntos**: baja Parakeet (~670MB) + VAD (~1MB) en un solo
+   paso con progreso `[1/2]` y `[2/2]`. Sin modos parciales.
+2. **Micrófono**: lista entradas reales, eliges por número, medidor de
+   nivel de 3s (habla y mira las barras) y probe final. Guarda `mic_index`.
+3. **Idioma**: Español (único), sin selector.
+4. **Tecla**: modo captura — "Presiona la tecla para dictar...
+   (Enter = F9)". Valida contra las teclas válidas y repite si no es válida.
+5. **Test final**: probe del mic + warmup de modelos y mensaje
+   "Listo. Mantén F9 y dicta".
+
+No interactivo (no pregunta nada, conserva tu mic y tu tecla):
 
 ```bash
 instant setup --yes --no-probe
 instant setup --yes --mic 3 --key f9 --threads 4 --no-sound
 ```
+
+Flags avanzados (solo flags, el interactivo no los pregunta):
+`--threads` (default 4), `--sound`/`--no-sound` (default off),
+`--llm-url` (default vacío = off), `--mic`, `--key`, `--no-meter`,
+`--no-probe`, `--yes`.
 
 Sin modelos o sin mic, `setup` avisa y sigue (no crashea); `run` sin
 modelos pide correr `setup` con red primero.
@@ -67,7 +87,7 @@ Config en `%APPDATA%/instant` (win), `~/.config/instant` (linux),
 
 ## Pulido LLM (opcional, off por defecto)
 
-Si tienes `llama-server` local corriendo, `setup` puede guardar su URL
+Si tienes `llama-server` local corriendo, pasa `--llm-url` al setup
 (o env `DICTADO_LLM_URL=http://127.0.0.1:8080`) para corregir tildes y
 puntuación. Sin servidor, el pipeline funciona idéntico sin él.
 Nunca requiere red ni nube: solo ese endpoint local opt-in.
