@@ -61,9 +61,11 @@ El setup interactivo hace, en orden:
 3. **Idioma**: Español (único), sin selector.
 4. **Tecla**: modo captura — "Presiona la tecla para dictar...
    (Enter = F9)". Valida contra las teclas válidas y repite si no es válida.
-5. **Test final**: probe del mic + warmup de modelos y mensaje
+5. **Arranque con el sistema**: te muestra si está activado o no y te
+   pregunta s/n (el default es lo que ya tenés). Lo prende o lo apaga
+   en el acto y lo deja anotado en la config (`autostart`).
+6. **Test final**: probe del mic + warmup de modelos y mensaje
    "Listo. Mantén F9 y dicta".
-
 No interactivo (no pregunta nada, conserva tu mic y tu tecla):
 
 ```bash
@@ -74,7 +76,9 @@ instant setup --yes --mic 3 --key f9 --threads 4 --no-sound
 Flags avanzados (solo flags, el interactivo no los pregunta):
 `--threads` (default 4), `--sound`/`--no-sound` (default off),
 `--llm-url` (default vacío = off), `--mic`, `--key`, `--no-meter`,
-`--no-probe`, `--yes`, `--check-deps`, `--fix-deps`.
+`--no-probe`, `--yes`, `--check-deps`, `--fix-deps`. Arranque sin
+preguntar: `--autostart` lo prende, `--no-autostart` lo apaga; con
+`--yes` pelado no se toca nada (se conserva lo que ya tenés).
 
 ## Dependencias
 
@@ -124,11 +128,43 @@ Teclas: Windows `f9 f10 f20 scroll pause`, Linux/macOS `f9 f10 f11 f12`.
 Config en `%APPDATA%/instant` (win), `~/.config/instant` (linux),
 `~/Library/Application Support/instant` (mac). Env `DICTADO_*` pisa config
 (`DICTADO_MIC`, `DICTADO_KEY`, `DICTADO_THREADS`, `DICTADO_SOUND`,
-`DICTADO_MAX_SEG`, `DICTADO_LLM_URL`).
+`DICTADO_MAX_SEG`, `DICTADO_LLM_URL`, `DICTADO_AUTOSTART=1/0`).
 
 PID file: `run` escribe `instant.pid` junto a la config al arrancar y lo
 borra al salir limpio; los lanzadores `.bat` lo usan para stop/status
 sin tocar procesos ajenos.
+
+## Arranque con el sistema
+
+La casilla "Arranque de Instant" sale en el `setup` justo después de la
+tecla: te dice si está activado y qué va a crear en tu sistema, y te
+pregunta s/n (el default es lo que ya tenés). Si la prendés, el daemon
+arranca solo y oculto en el próximo login; si la apagás, no arranca más.
+
+```bash
+instant setup                       # interactivo: pregunta s/n
+instant setup --yes --no-probe      # no toca nada, conserva lo que hay
+instant setup --autostart           # lo prende sin preguntar
+instant setup --no-autostart        # lo apaga sin preguntar
+```
+
+Qué crea en cada sistema (solo eso, nada más):
+
+- Windows: acceso `Instant Dictado.lnk` en
+  `%APPDATA%/Microsoft/Windows/Start Menu/Programs/Startup`, que apunta
+  a `instant-run.bat` del repo si lo encuentra (modo dev), y si no a
+  `instant.exe run` por PATH o `pythonw -m instant_app run`. Se crea con
+  el powershell que ya trae Windows, sin instalar nada nuevo.
+- Linux: archivo `~/.config/autostart/instant.desktop` (estándar
+  freedesktop) que lanza `instant run` oculto con `nohup`.
+- macOS: `~/Library/LaunchAgents/com.instant.dictado.plist` que lanza
+  `instant run` al iniciar sesión.
+
+Para sacarlo alcanza con correr el setup y decir que no, o con
+`instant setup --no-autostart`. Si lo borrás a mano de esas rutas vale
+igual: el setup lo detecta apagado. Lo que vale de verdad es lo que hay
+en el sistema, no la casilla guardada (`autostart` en la config es solo
+un recordatorio; si no coinciden, el setup te avisa y deja lo del sistema).
 
 ## Pulido LLM (opcional, off por defecto)
 

@@ -32,6 +32,10 @@ def main(argv=None):
     p_setup.add_argument("--sound", action="store_true", default=None)
     p_setup.add_argument("--no-sound", action="store_true")
     p_setup.add_argument("--llm-url", default=None)
+    p_setup.add_argument("--autostart", action="store_true", default=None,
+                         help="activa arranque con el sistema")
+    p_setup.add_argument("--no-autostart", action="store_true",
+                         help="desactiva arranque con el sistema")
     p_setup.add_argument("--no-meter", action="store_true")
     p_setup.add_argument("--no-probe", action="store_true")
     p_setup.add_argument("--check-deps", action="store_true",
@@ -52,7 +56,7 @@ def main(argv=None):
             if v is not None:
                 fwd += [f"--{k.replace('_', '-')}", str(v)]
         for flag in ("sound", "no_sound", "no_meter", "no_probe", "check_deps",
-                     "fix_deps"):
+                     "fix_deps", "autostart", "no_autostart"):
             if getattr(args, flag):
                 fwd.append(f"--{flag.replace('_', '-')}")
         fwd += rest

@@ -1,8 +1,10 @@
-"""TUI setup simple (stdlib): modelos juntos, mic con medidor, tecla, test final.
+"""TUI setup simple (stdlib): modelos juntos, mic con medidor, tecla,
+arranque con el sistema, test final.
 
 Sobrevive sin modelos (avisa y sigue) y sin mic (no crashea).
 Modo no interactivo: `instant setup --yes` (no pregunta nada; usa config
-actual salvo flags --mic/--key/--threads/--sound/--no-sound/--llm-url).
+actual salvo flags --mic/--key/--threads/--sound/--no-sound/--llm-url/
+--autostart/--no-autostart).
 """
 import logging
 
@@ -47,6 +49,10 @@ def _parse_args(argv=None):
     ap.add_argument("--threads", type=int, default=None, help="hilos CPU")
     ap.add_argument("--sound", action="store_true", default=None, help="activa pitidos")
     ap.add_argument("--no-sound", action="store_true", help="apaga pitidos")
+    ap.add_argument("--autostart", action="store_true", default=None,
+                    help="activa arranque con el sistema")
+    ap.add_argument("--no-autostart", action="store_true",
+                    help="desactiva arranque con el sistema")
     ap.add_argument("--llm-url", default=None, help="llama-server local (vacio=off)")
     ap.add_argument("--no-meter", action="store_true", help="salta medidor de nivel")
     ap.add_argument("--no-probe", action="store_true", help="salta probe final y warmup")
@@ -185,7 +191,53 @@ def cmd_setup(argv=None):
             cfg.get("key", "f9"))
         print(f"  tecla: {cfg['key']}")
 
-    # 5. Avanzados solo por flags (no se preguntan): threads/sound/llm-url.
+    # 4b. Arranque con el sistema (casilla): muestra estado real del SO,
+    # pregunta s/n (default = estado actual) y aplica. Flags no interactivos
+    # --autostart/--no-autostart; --yes solo conserva salvo flag. La casilla
+    # se recuerda en cfg["autostart"]; el estado real lo manda el SO.
+    from instant_app import autostart as _as
+    try:
+        real = bool(_as.is_enabled())
+    except Exception:
+        log.exception("autostart is_enabled fallo")
+        real = False
+    try:
+        line = _as.describe()
+    except Exception:
+        line = "Arranque no disponible en este sistema"
+    pref_before = cfg.get("autostart")
+    want = None
+    if o.autostart and o.no_autostart:
+        print("  --autostart y --no-autostart juntos; gana --no-autostart.")
+        want = False
+    elif o.autostart:
+        want = True
+    elif o.no_autostart:
+        want = False
+    elif o.yes:
+        print(f"  arranque: {'activado' if real else 'desactivado'} ({line}; se conserva)")
+    else:
+        print(f"  arranque: {'activado' if real else 'desactivado'} ({line})")
+        ans = _ask("activar arranque con el sistema? s/n",
+                   "s" if real else "n").lower()
+        want = ans.startswith(("s", "y"))
+    if want is not None:
+        try:
+            msg = _as.enable() if want else _as.disable()
+            print(f"  {msg}")
+        except Exception as e:
+            print(f"  autostart no se pudo aplicar: {e}")
+            rc = max(rc, 2)
+        # La casilla pedida queda recordada igual para reintentar luego.
+        cfg["autostart"] = bool(want)
+    else:
+        # Sin cambio pedido: si la casilla guardada difiere del SO, aviso sin pelear.
+        if pref_before is not None and bool(pref_before) != real:
+            print("  AVISO: tu casilla decia %s pero el sistema tiene %s; "
+                  "queda lo del sistema." % (
+                      "activado" if pref_before else "desactivado",
+                      "activado" if real else "desactivado"))
+        cfg["autostart"] = real
     import multiprocessing
     max_t = max(1, multiprocessing.cpu_count())
     if o.threads is not None:

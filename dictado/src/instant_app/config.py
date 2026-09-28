@@ -16,6 +16,7 @@ DEFAULTS = {
     "sound": False,
     "max_seg": 20.0,
     "llm_url": "",
+    "autostart": False,
 }
 
 INT_KEYS = ("threads",)
@@ -41,7 +42,8 @@ def load():
     # Env pisa archivo.
     env_map = {"DICTADO_MIC": "mic_hint", "DICTADO_KEY": "key",
                "DICTADO_THREADS": "threads", "DICTADO_SOUND": "sound",
-               "DICTADO_MAX_SEG": "max_seg", "DICTADO_LLM_URL": "llm_url"}
+               "DICTADO_MAX_SEG": "max_seg", "DICTADO_LLM_URL": "llm_url",
+               "DICTADO_AUTOSTART": "autostart"}
     for env, k in env_map.items():
         v = os.environ.get(env)
         if v is None or v == "":
@@ -58,6 +60,8 @@ def load():
                 log.warning("ignoro %s=%r (no es float)", env, v)
         elif k == "sound":
             cfg[k] = v == "1"
+        elif k == "autostart":
+            cfg[k] = v.strip().lower() in ("1", "true", "yes", "y", "s", "si", "on")
         elif k == "mic_hint" and v.lstrip("-").isdigit():
             cfg["mic_index"] = int(v)
             cfg["mic_hint"] = ""
