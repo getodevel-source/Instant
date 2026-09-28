@@ -16,3 +16,4 @@ venv/
 
 # Logs
 *.log
+*.pid
