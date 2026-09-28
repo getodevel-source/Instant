@@ -94,14 +94,26 @@ rápido — tecla + mic probe + warmup (<5s). Verificado esta vuelta:
 y `instant.exe check` salen 0.)
 
 En Windows el `instant.exe` existe pero NO está en PATH; usa los lanzadores
-del repo (fijan `DICTADO_DATA` al repo, llaman al exe por ruta absoluta,
-con fallback a `python -m instant_app` que hereda el env igual):
+del repo (fijan `DICTADO_DATA` al repo; `setup`/`status` van al exe o
+`python -m instant_app`, y `run` sin args arranca oculto con pythonw):
 
 ```bat
-instant-setup.bat   :: = instant setup (con DICTADO_DATA al repo)
-instant-run.bat     :: = instant run (con DICTADO_DATA al repo)
-instant-status.bat  :: diagnostico: proceso, DICTADO_DATA, log, config
+instant-setup.bat       :: = instant setup (con DICTADO_DATA al repo)
+instant-run.bat         :: sin args = daemon OCULTO (pythonw, sin ventana); con args = passthrough en consola
+instant-status.bat      :: diagnostico: vivo SI/NO (PID + tasklist), DICTADO_DATA, log, config
+instant-stop.bat        :: frena solo la instancia instant (por PID); sale 0
+install-autostart.bat   :: crea acceso en Startup -> instant-run.bat (listo, NO activado)
+uninstall-autostart.bat :: quita el acceso de Startup
 ```
+
+El daemon `run` NUNCA muestra ventana: `instant-run.bat` lo lanza con
+`pythonw.exe -m instant_app run` (primo del `python.exe` que tiene el
+paquete, fallback `C:\Python314\pythonw.exe`, luego `python.exe` oculto
+vía `Start-Process -WindowStyle Hidden`). Sin duplicados: si ya hay
+instancia viva avisa y no lanza otra. PID en
+`%APPDATA%/instant/instant.pid` (se limpia al salir o si queda stale).
+Autostart por acceso en la carpeta Startup del usuario (reversible con
+`uninstall-autostart.bat`); no se activó en esta vuelta.
 
 ## Dónde vive la config
 

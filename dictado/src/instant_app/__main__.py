@@ -9,11 +9,14 @@ def _log_setup():
     from instant_app.paths import config_dir
     d = config_dir()
     os.makedirs(d, exist_ok=True)
+    handlers = [logging.FileHandler(os.path.join(d, "instant.log"), encoding="utf-8")]
+    if sys.stdout is not None and sys.stderr is not None:
+        # Lanzado oculto (pythonw + Hidden): ambos son None, solo log a archivo.
+        handlers.append(logging.StreamHandler())
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.FileHandler(os.path.join(d, "instant.log"), encoding="utf-8"),
-                  logging.StreamHandler()],
+        handlers=handlers,
     )
 
 

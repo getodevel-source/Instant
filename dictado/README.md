@@ -126,6 +126,10 @@ Config en `%APPDATA%/instant` (win), `~/.config/instant` (linux),
 (`DICTADO_MIC`, `DICTADO_KEY`, `DICTADO_THREADS`, `DICTADO_SOUND`,
 `DICTADO_MAX_SEG`, `DICTADO_LLM_URL`).
 
+PID file: `run` escribe `instant.pid` junto a la config al arrancar y lo
+borra al salir limpio; los lanzadores `.bat` lo usan para stop/status
+sin tocar procesos ajenos.
+
 ## Pulido LLM (opcional, off por defecto)
 
 Si tienes `llama-server` local corriendo, pasa `--llm-url` al setup

@@ -13,6 +13,40 @@ from instant_app.overlay import Overlay
 log = logging.getLogger("instant")
 
 
+def pid_path():
+    """Ruta del PID file: %APPDATA%/instant/instant.pid (config_dir)."""
+    from instant_app.paths import config_dir
+    import os
+    return os.path.join(config_dir(), "instant.pid")
+
+
+def write_pid():
+    """Registra el PID al arrancar para stop/status. Nunca tumba el daemon."""
+    import os
+    try:
+        p = pid_path()
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        log.warning("no pude escribir instant.pid", exc_info=True)
+
+
+def clear_pid():
+    """Borra el PID file al salir limpio, solo si es el propio."""
+    import os
+    try:
+        p = pid_path()
+        with open(p, encoding="utf-8") as f:
+            if f.read().strip() != str(os.getpid()):
+                return
+        os.remove(p)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        log.warning("no pude borrar instant.pid", exc_info=True)
+
+
 class Daemon:
     def __init__(self, cfg, data_dir=None):
         self.cfg = cfg
@@ -177,25 +211,29 @@ class Daemon:
         threading.Thread(target=self._job, args=(wav, dur, sid), daemon=True).start()
 
     def run(self):
-        if not audio.probe(self.mic):
-            log.warning("sigue sin default. `instant setup` para elegir mic.")
-        self.engine.recognizer()
-        self.engine.vad()
-        key = self.cfg.get("key", "f9").upper()
-        log.info("listo. Manten %s para dictar (60-120s), suelta para transcribir. Ctrl+C sale.", key)
-        self.hk.start(self.on_press, self.on_release)
+        write_pid()
         try:
-            while True:
-                time.sleep(60)
-                log.info("vivo, esperando %s...", key)
-        except KeyboardInterrupt:
-            self.overlay.hide()
-            log.info("chau.")
-        finally:
+            if not audio.probe(self.mic):
+                log.warning("sigue sin default. `instant setup` para elegir mic.")
+            self.engine.recognizer()
+            self.engine.vad()
+            key = self.cfg.get("key", "f9").upper()
+            log.info("listo. Manten %s para dictar (60-120s), suelta para transcribir. Ctrl+C sale.", key)
+            self.hk.start(self.on_press, self.on_release)
             try:
-                self.hk.stop()
-            except Exception:
-                pass
+                while True:
+                    time.sleep(60)
+                    log.info("vivo, esperando %s...", key)
+            except KeyboardInterrupt:
+                self.overlay.hide()
+                log.info("chau.")
+            finally:
+                try:
+                    self.hk.stop()
+                except Exception:
+                    pass
+        finally:
+            clear_pid()
 
 
 def cmd_check(cfg):
