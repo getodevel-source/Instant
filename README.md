@@ -104,6 +104,7 @@ instant-status.bat      :: diagnostico: vivo SI/NO (PID + tasklist), DICTADO_DAT
 instant-stop.bat        :: frena solo la instancia instant (por PID); sale 0
 install-autostart.bat   :: crea acceso en Startup -> instant-run.bat (listo, NO activado)
 uninstall-autostart.bat :: quita el acceso de Startup
+REM Linux/macOS: instant-run.sh / instant-status.sh / instant-stop.sh (bash, +x; mismo rol que sus primos .bat)
 ```
 
 El daemon `run` NUNCA muestra ventana: `instant-run.bat` lo lanza con
@@ -114,6 +115,79 @@ instancia viva avisa y no lanza otra. PID en
 `%APPDATA%/instant/instant.pid` (se limpia al salir o si queda stale).
 Autostart por acceso en la carpeta Startup del usuario (reversible con
 `uninstall-autostart.bat`); no se activó en esta vuelta.
+
+## Arranque con el sistema
+
+Forma recomendada: la casilla de arranque en `instant setup` (TUI, paso 4b):
+muestra el estado real del SO y pregunta `activar arranque con el sistema? s/n`
+(default = estado actual). NoInteractivo:
+
+```bash
+instant setup --autostart     # activa sin preguntar
+instant setup --no-autostart  # desactiva sin preguntar
+```
+
+Detalles verificados en `dictado/src/instant_app/setup.py` (`_parse_args`,
+paso 4b) y `__main__.py` (forward de flags): con `--yes` solo se conserva el
+estado actual salvo que pases `--autostart`/`--no-autostart`; si se pasan los
+dos juntos gana `--no-autostart`; la preferencia queda en `config.json`
+(`autostart: true/false`) pero el estado real lo manda el SO.
+Arranque manual por SO (equivale a lo que hace la casilla):
+
+### Windows
+
+```bat
+install-autostart.bat     :: crea acceso en Startup -> instant-run.bat (daemon oculto en el proximo login)
+uninstall-autostart.bat   :: quita el acceso (no toca el daemon en curso; usa instant-stop.bat para frenarlo)
+```
+
+### Linux (manual: lo mismo que hace la casilla)
+
+Crea `~/.config/autostart/instant.desktop` apuntando al launcher de este repo:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=Instant Dictado
+Comment=Instant hold-to-talk (daemon oculto)
+Exec=/ruta/al/repo/instant-run.sh
+Path=/ruta/al/repo
+Terminal=false
+X-GNOME-Autostart-enabled=true
+```
+
+Para desactivar: borra el `.desktop` (o `X-GNOME-Autostart-enabled=false`).
+
+### macOS (manual: lo mismo que hace la casilla)
+
+Crea `~/Library/LaunchAgents/com.instant.dictado.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.instant.dictado</string>
+  <key>ProgramArguments</key>
+  <array><string>/ruta/al/repo/instant-run.sh</string></array>
+  <key>WorkingDirectory</key><string>/ruta/al/repo</string>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+```
+
+Activa con `launchctl load ~/Library/LaunchAgents/com.instant.dictado.plist`;
+desactiva con `launchctl unload` + borrar el plist.
+
+### Verificar y frenar (los 3 SO)
+
+```bash
+./instant-status.sh  # Linux/macOS: vivo SI/NO + DICTADO_DATA + log tail + config (no levanta nada)
+./instant-stop.sh    # frena solo la instancia instant por PID; nunca killall
+```
+```bat
+instant-status.bat   :: Windows: lo mismo (PID + tasklist, modelos, log, config)
+instant-stop.bat     :: Windows: frena solo la instancia por PID
+```
 
 ## Dónde vive la config
 

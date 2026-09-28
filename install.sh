@@ -28,3 +28,13 @@ echo ""
 echo "[Instant] Listo. Usa:  instant setup  (para microfono/tecla)  |  instant run  |  instant check"
 echo "Solo se te pedira microfono y tecla si corres 'instant setup' interactivo;"
 echo "el idioma es fijo: español."
+echo ""
+echo "[Instant] Arranque con el sistema: 'instant setup' lo pregunta (casilla s/n);"
+echo "  o activa sin preguntar con:  instant setup --autostart --no-probe"
+echo "  (desactiva con --no-autostart). Ver README 'Arranque con el sistema'."
+# Opt-in no-interactivo: INSTANT_AUTOSTART=1 ./install.sh -> activa autostart sin preguntar.
+# Sin la var se conserva el estado actual (no rompe el flujo --yes).
+if [ "${INSTANT_AUTOSTART:-0}" = "1" ]; then
+  echo "[Instant] Activando arranque con el sistema (--autostart)..."
+  instant setup --autostart --no-probe
+fi

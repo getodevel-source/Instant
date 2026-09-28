@@ -36,3 +36,19 @@ echo [Instant] Listo. Para dictar usa: instant-setup.bat una vez si quieres
 echo cambiar microfono o tecla, y luego instant-run.bat para arrancar.
 echo Solo se te pedira microfono y tecla si corres `instant setup` interactivo;
 echo el idioma es fijo: espanol.
+echo.
+echo [Instant] Arranque con el sistema: `instant setup` lo pregunta ^(casilla s/n^);
+echo   o activa sin preguntar con:  instant setup --autostart --no-probe
+echo   ^(desactiva con --no-autostart^). Ver README "Arranque con el sistema".
+REM Opt-in no-interactivo: set INSTANT_AUTOSTART=1 antes de install.bat para activar sin preguntar.
+REM Sin la var se conserva el estado actual (no rompe el flujo --yes).
+if /i not "%INSTANT_AUTOSTART%"=="1" goto :noautostart
+echo [Instant] Activando arranque con el sistema ^(--autostart^)...
+where instant >nul 2>nul
+if %ERRORLEVEL%==0 (
+  call instant setup --autostart --no-probe
+) else (
+  REM `instant` aun no esta en PATH en esta terminal: mismo fallback que arriba.
+  call python -m instant_app setup --autostart --no-probe
+)
+:noautostart
