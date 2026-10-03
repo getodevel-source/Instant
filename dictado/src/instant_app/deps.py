@@ -32,6 +32,9 @@ _PIP = {
     "pynput": "pynput",
     "pyperclip": "pyperclip",
     "huggingface_hub": "huggingface_hub",
+    "pystray": "pystray",
+    "PIL": "Pillow",
+    "PySide6": "PySide6",
 }
 
 _APT = {
@@ -126,6 +129,8 @@ def check():
     pkgs = ["numpy", "sounddevice", "sherpa_onnx", "pyperclip",
             "huggingface_hub"]
     pkgs.append("keyboard" if plat == "win32" else "pynput")
+    if plat == "win32":
+        pkgs.extend(("pystray", "PIL", "PySide6"))
     for mod in pkgs:
         ok = _importable(mod)
         if ok:
