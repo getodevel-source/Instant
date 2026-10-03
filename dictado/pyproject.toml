@@ -7,17 +7,21 @@ name = "instant"
 version = "0.1.0"
 description = "Instant hold-to-talk ES offline: Parakeet v3 + Silero VAD, CPU-only"
 requires-python = ">=3.10"
+# Versiones fijadas: Instant es una aplicacion, no una libreria, y estas son las
+# que estan probadas en este equipo. `sherpa-onnx` es la de mas riesgo (se usa
+# su API directa: from_transducer, VadModel), y una version nueva puede romper
+# el arranque sin que nadie haya tocado el codigo.
 dependencies = [
-    "numpy",
-    "sounddevice",
-    "pyperclip",
-    "sherpa-onnx>=1.13",
-    "huggingface_hub",
-    "keyboard; sys_platform == 'win32'",
+    "numpy==2.5.3",
+    "sounddevice==0.5.6",
+    "pyperclip==1.11.0",
+    "sherpa-onnx==1.13.8",
+    "huggingface_hub==2.1.1",
+    "keyboard==0.13.5; sys_platform == 'win32'",
     "pynput; sys_platform != 'win32'",
-    "pystray; sys_platform == 'win32'",
-    "Pillow; sys_platform == 'win32'",
-    "PySide6; sys_platform == 'win32'",
+    "pystray==0.19.5; sys_platform == 'win32'",
+    "Pillow==12.3.0; sys_platform == 'win32'",
+    "PySide6==6.11.2; sys_platform == 'win32'",
 ]
 
 [project.scripts]
