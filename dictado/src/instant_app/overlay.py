@@ -9,6 +9,27 @@ import time
 
 log = logging.getLogger("instant")
 
+# Geometria del overlay Tk: la linea base de las barras esta en y=29 y el
+# lienzo del medidor mide 26 px de alto, asi que el semialto se queda en 13.
+_TK_BAR_BASE = 29
+_TK_BAR_MAX = 13
+_TK_SPINNER_SEGMENTS = 8
+
+
+def animation_frame(state, tick):
+    """(alturas de barra, fase del spinner) para el renderer Tk.
+
+    El overlay de Qt Quick anima con QML (`SequentialAnimation` escalonada por
+    indice y una rotacion de 1450 ms). Tk no tiene ese motor, asi que la misma
+    animacion se calcula por cuadro: las barras suben y bajan alternadas con un
+    desfase por indice y el spinner gira en ocho segmentos.
+    """
+    bars = [round(4 + (_TK_BAR_MAX - 4) * (
+        0.5 + 0.5 * math.sin(tick * 0.45 - index * 0.75)))
+        for index in range(5)]
+    spinner = tick % _TK_SPINNER_SEGMENTS
+    return bars, spinner
+
 
 class OverlayTransitions:
     """Reject stale worker updates before they can replace newer visual states."""

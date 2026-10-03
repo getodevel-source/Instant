@@ -35,6 +35,23 @@ _check("error replaces success and stays terminal",
 _check("new press starts a new overlay session",
        _states.accept(2, "starting") is not None)
 
+# The Tk fallback (Linux/macOS) computes its animation per frame; the Qt Quick
+# overlay animates in QML. If this helper goes missing, _animate raises
+# NameError inside the Tk callback and the overlay silently stops animating.
+from instant_app.overlay import animation_frame, _TK_BAR_MAX, _TK_SPINNER_SEGMENTS
+
+_frame_bars, _frame_spin = animation_frame("recording", 0)
+_check("Tk animation frame matches the five drawn bars",
+       len(_frame_bars) == 5
+       and all(0 < height <= _TK_BAR_MAX for height in _frame_bars))
+_check("Tk spinner phase stays inside the eight drawn segments",
+       0 <= _frame_spin < _TK_SPINNER_SEGMENTS)
+_check("Tk animation actually moves between frames",
+       len({tuple(animation_frame("recording", tick)[0]) for tick in range(24)}) > 4)
+_check("Tk spinner covers every segment",
+       sorted(animation_frame("processing", tick)[1] for tick in range(8))
+       == list(range(_TK_SPINNER_SEGMENTS)))
+
 
 class _OverlaySequence:
     def __init__(self):
