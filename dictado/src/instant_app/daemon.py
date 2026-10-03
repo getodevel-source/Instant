@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from instant_app import audio, hotkey, llm, paste
+from instant_app import audio, hotkey, llm
 from instant_app.engine import Engine, SILENCE_PEAK
 from instant_app.overlay import Overlay
 from instant_app.tray import TrayIcon

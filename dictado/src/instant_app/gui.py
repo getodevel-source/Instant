@@ -1099,15 +1099,6 @@ def _main_window_class():
                     return True, 0
             return super().nativeEvent(event_type, message)
 
-        def _maybe_start_daemon_on_open(self):
-            if (not self._start_daemon_on_open or self._closed
-                    or not self._daemon_state_ready or self._daemon_check_pending
-                    or not self._microphones_loaded):
-                return
-            self._start_daemon_on_open = False
-            if not self._last_daemon_running:
-                self._start_daemon(save_settings=False)
-
         def closeEvent(self, event):
             self._closed = True
             self.timer.stop()
