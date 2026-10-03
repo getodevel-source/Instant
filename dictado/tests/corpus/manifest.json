@@ -1,0 +1,43 @@
+{
+  "note": "Corpus etiquetado para comparar motores. El audio se genera con voces neuronales (edge-tts) y NO se versiona: se regenera con generate_corpus.py. El texto de 'text' es la etiqueta de referencia; la puntuacion se evalua aparte.",
+  "voices": ["es-AR-TomasNeural", "es-ES-AlvaroNeural"],
+  "phrases": [
+    {"id": "es01", "category": "espanol_puro", "text": "Necesito que revises el informe antes de la reunion de mañana."},
+    {"id": "es02", "category": "espanol_puro", "text": "El presupuesto del trimestre quedo mas ajustado de lo que esperabamos."},
+    {"id": "es03", "category": "espanol_puro", "text": "Anota en la lista del supermercado que falta comprar cafe y yerba."},
+    {"id": "es04", "category": "espanol_puro", "text": "Ayer estuve dos horas esperando el colectivo bajo la lluvia."},
+    {"id": "es05", "category": "espanol_puro", "text": "Mandame el resumen de la reunion por correo cuando puedas."},
+    {"id": "es06", "category": "espanol_puro", "text": "La computadora tarda cada vez mas en arrancar por la mañana."},
+    {"id": "es07", "category": "espanol_puro", "text": "Guardame un lugar en la mesa del fondo para la cena del viernes."},
+    {"id": "es08", "category": "espanol_puro", "text": "Todavia no me confirmaron la fecha de entrega del pedido."},
+
+    {"id": "en01", "category": "terminos_ingleses", "text": "Hace un commit con el fix del login y despues hace el push a la rama."},
+    {"id": "en02", "category": "terminos_ingleses", "text": "El build fallo porque el workflow no encontraba las dependencias del frontend."},
+    {"id": "en03", "category": "terminos_ingleses", "text": "Subi el deploy a staging y avisame cuando este listo el rollback."},
+    {"id": "en04", "category": "terminos_ingleses", "text": "El script de Python corre el modelo de machine learning en la CPU."},
+    {"id": "en05", "category": "terminos_ingleses", "text": "Pasame el archivo de configuracion del backend para revisar el timeout."},
+    {"id": "en06", "category": "terminos_ingleses", "text": "El teclado y el mouse andan mal, puede ser un problema de drivers."},
+    {"id": "en07", "category": "terminos_ingleses", "text": "Instale el plugin del editor y ahora el atajo de teclado no responde."},
+    {"id": "en08", "category": "terminos_ingleses", "text": "El servidor de staging tiene el certificado vencido desde el lunes."},
+    {"id": "en09", "category": "terminos_ingleses", "text": "Revisa el pull request y deja los comentarios en el codigo."},
+    {"id": "en10", "category": "terminos_ingleses", "text": "La memoria del equipo no alcanza para correr el modelo en paralelo."},
+    {"id": "en11", "category": "terminos_ingleses", "text": "El benchmark del reconocedor tarda menos de un segundo por frase."},
+    {"id": "en12", "category": "terminos_ingleses", "text": "Necesito el feedback del equipo antes de la demo del viernes."},
+
+    {"id": "pr01", "category": "preguntas", "text": "¿Me pasas el enlace de la documentacion actualizada?"},
+    {"id": "pr02", "category": "preguntas", "text": "¿Cuanto tarda el deploy en produccion?"},
+    {"id": "pr03", "category": "preguntas", "text": "¿Probaste el microfono nuevo con la aplicacion de dictado?"},
+    {"id": "pr04", "category": "preguntas", "text": "¿Cuando conviene cambiar de modelo de reconocimiento?"},
+    {"id": "pr05", "category": "preguntas", "text": "¿Por que se corta la grabacion a los pocos segundos?"},
+    {"id": "pr06", "category": "preguntas", "text": "¿Podes revisar el log y decirme que fallo?"},
+    {"id": "pr07", "category": "preguntas", "text": "¿Te parece que el texto quedo bien puntuado?"},
+    {"id": "pr08", "category": "preguntas", "text": "¿Esta configurado el arranque automatico en este equipo?"},
+
+    {"id": "np01", "category": "nombres_propios", "text": "Instant tiene que seguir siendo el motor de dictado por defecto."},
+    {"id": "np02", "category": "nombres_propios", "text": "Parakeet reconoce bien el espanol pero falla con los terminos tecnicos."},
+    {"id": "np03", "category": "nombres_propios", "text": "Qwen es mas lento que Parakeet en este equipo."},
+    {"id": "np04", "category": "nombres_propios", "text": "El repo de GitHub se llama getodevel-source barra Instant."},
+    {"id": "np05", "category": "nombres_propios", "text": "Pedi el informe a Juan y a Mariana para el lunes."},
+    {"id": "np06", "category": "nombres_propios", "text": "El archivo se guarda en la carpeta Documentos del usuario."}
+  ]
+}

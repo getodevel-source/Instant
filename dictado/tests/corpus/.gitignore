@@ -1,0 +1,5 @@
+# El audio del corpus se genera con `generate_corpus.py` (edge-tts + ffmpeg).
+# No se versiona: son ~4 MB regenerables y la etiqueta esta en manifest.json.
+audio/
+*.mp3
+results.json
