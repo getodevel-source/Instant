@@ -17,3 +17,9 @@ venv/
 # Logs
 *.log
 *.pid
+
+# Export de sesiones de DSH: si se ejecuta `dsh` dentro del checkout, el
+# export HTML aterriza en la raiz. No es parte del proyecto.
+Downloads
+dsh-session-*.html
+*_sesion_export_*.html
