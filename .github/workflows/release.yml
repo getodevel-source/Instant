@@ -6,7 +6,13 @@ on:
       - "v*"
 
 jobs:
+  # La suite tiene que pasar antes de construir nada: un tag no deberia poder
+  # publicar un binario de codigo roto.
+  tests:
+    uses: ./.github/workflows/tests.yml
+
   build:
+    needs: tests
     strategy:
       matrix:
         include:

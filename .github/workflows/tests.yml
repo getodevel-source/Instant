@@ -1,0 +1,73 @@
+name: tests
+
+# Puerta de pruebas: corre en cada push y cada PR. El workflow de release solo
+# se dispara al tagear, asi que sin esto un cambio podia llegar a un release
+# sin que nadie hubiera corrido la suite.
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  pull_request:
+  workflow_call:
+
+# Un push nuevo sobre la misma rama cancela la corrida anterior.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    name: suite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Las dependencias de audio y de Qt no hacen falta para la suite: las que
+      # usan Qt informan SKIP solas, y los tests simulan sounddevice. Se instala
+      # solo el paquete y lo minimo para importarlo.
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ./dictado
+          python -m pip install pyflakes
+
+      # PySide6 es dependencia solo de Windows en el paquete, pero en Windows
+      # corre los tests de Qt de verdad: sin el, se saltarian y perderiamos
+      # cobertura de la interfaz.
+      - name: Install Qt on Windows
+        if: runner.os == 'Windows'
+        run: python -m pip install PySide6
+
+      - name: Run test suite
+        working-directory: dictado
+        run: python -m unittest discover -s tests
+
+      # pyflakes no entiende `# noqa`. En `gui.py` los nombres de Qt vuelven por
+      # locals() y las clases los usan por `qt[...]`, asi que aparecen como no
+      # usados; ese ruido conocido se filtra y la verificacion se queda con lo
+      # que importa: nombres indefinidos y redefiniciones.
+      - name: Check for undefined names
+        shell: python
+        run: |
+          import glob, subprocess, sys
+          files = sorted(glob.glob("dictado/src/instant_app/*.py"))
+          result = subprocess.run(
+              [sys.executable, "-m", "pyflakes", *files],
+              capture_output=True, text=True)
+          findings = [line for line in result.stdout.splitlines()
+                      if "imported but unused" not in line]
+          for line in findings:
+              print(line)
+          if findings:
+              sys.exit(f"pyflakes: {len(findings)} hallazgo(s)")
+
+      - name: Check the CLI starts
+        run: python -m instant_app --help

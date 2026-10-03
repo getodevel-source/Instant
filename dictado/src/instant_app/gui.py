@@ -112,9 +112,13 @@ def stop_daemon():
 # The Qt dependency is imported below the Windows GUI entrypoint, not at module
 # import time: the daemon tray may import app_command without creating a GUI.
 def _qt_types():
-    from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot
-    from PySide6.QtGui import QFont, QIcon, QKeySequence
-    from PySide6.QtWidgets import (
+    # Qt se importa aca adentro, no en la cabecera, para que la bandeja del
+    # daemon pueda abrir la ventana en otro proceso sin cargar Qt. Los nombres
+    # vuelven por locals() y las clases los usan por `qt[...]`, asi que el
+    # linter los ve como no usados: el noqa es a proposito, no un descuido.
+    from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot  # noqa: F401
+    from PySide6.QtGui import QFont, QIcon, QKeySequence  # noqa: F401
+    from PySide6.QtWidgets import (  # noqa: F401
         QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
         QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
         QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy,
