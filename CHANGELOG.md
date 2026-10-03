@@ -193,6 +193,11 @@ Windows, Linux y macOS.
   cambia. La ventana trae «Buscar actualizaciones» al lado de Diagnóstico.
   Sin sidecar no hay instalación. El workflow valida versión==tag y publica
   los hashes.
+- **Actualizador con modales mínimos y red de seguridad.** La ventana chequea
+  sola una vez por día y el botón se viste de primario si hay versión (sin
+  modales); la descarga es atómica (`.part` + rename) y el instalador
+  re-verifica el hash, restaura el `.bak` si el daemon nuevo no levanta y
+  reabre la ventana. Sin hash o sin sidecar no instala nada.
 
 ### Corregido
 

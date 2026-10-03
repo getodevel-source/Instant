@@ -110,9 +110,11 @@ def download(url, dest, progress=None, expected_sha256=None):
     """Descarga por stream con hash al vuelo; si no coincide, borra y falla.
 
     Cualquier error de red a mitad de stream también borra el parcial: nunca
-    queda un archivo a medias haciéndose pasar por descarga.
+    queda un archivo a medias haciéndose pasar por descarga. Se escribe en
+    `<dest>.part` y solo aparece en su ruta final tras verificar el hash.
     """
     os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+    part = dest + ".part"
     digest = hashlib.sha256()
     request = urllib.request.Request(url, headers={"User-Agent": "Instant-updater"})
     try:
@@ -121,7 +123,7 @@ def download(url, dest, progress=None, expected_sha256=None):
                 response, "getheader") else None
             total = int(header) if header and header.isdigit() else None
             done = 0
-            with open(dest, "wb") as handle:
+            with open(part, "wb") as handle:
                 while True:
                     block = response.read(CHUNK)
                     if not block:
@@ -133,19 +135,20 @@ def download(url, dest, progress=None, expected_sha256=None):
                         progress(done, total)
     except Exception:
         try:
-            os.remove(dest)
+            os.remove(part)
         except OSError:
             pass
         raise
     actual = digest.hexdigest()
     if expected_sha256 and actual != expected_sha256.lower():
         try:
-            os.remove(dest)
+            os.remove(part)
         except OSError:
             pass
         raise ValueError(
             f"SHA256 no coincide (esperado {expected_sha256[:12]}…, "
-            f"bajado {actual[:12]}…); archivo eliminado.")
+            f"bajado {actual[:12]}…); parcial eliminado.")
+    os.replace(part, dest)
     return dest
 
 

@@ -20,6 +20,7 @@ DEFAULTS = {
     "context_profiles": {"General": []},
     "autostart": False,
     "overlay_style": "classic",
+    "update_last_check": 0,
 }
 
 INT_KEYS = ("threads",)

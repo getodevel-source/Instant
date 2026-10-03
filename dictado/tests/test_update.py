@@ -112,6 +112,30 @@ class DownloadVerifyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             update_module.fetch_expected_sha256(self._file_url(source))
 
+    def test_midstream_failure_leaves_no_part(self):
+        from unittest.mock import MagicMock
+        directory = tempfile.mkdtemp(prefix="instant-update-test-")
+        dest = os.path.join(directory, "Instant.exe")
+        response = MagicMock()
+        response.read.side_effect = [b"mitad", ConnectionError("corte")]
+        context = MagicMock()
+        context.__enter__.return_value = response
+        with patch("urllib.request.urlopen", return_value=context):
+            with self.assertRaises(ConnectionError):
+                update_module.download("https://x/Instant.exe", dest,
+                                       expected_sha256="f" * 64)
+        self.assertFalse(os.path.exists(dest))
+        self.assertFalse(os.path.exists(dest + ".part"))
+
+    def test_verified_file_lands_at_final_path(self):
+        _dir, source, digest = self._fixture(b"final-" * 500)
+        dest = os.path.join(_dir, "Instant.exe")
+        result = update_module.download(
+            self._file_url(source), dest, expected_sha256=digest)
+        self.assertEqual(result, dest)
+        self.assertTrue(os.path.exists(dest))
+        self.assertFalse(os.path.exists(dest + ".part"))
+
 
 try:
     import PySide6  # noqa: F401
@@ -191,6 +215,23 @@ else:
                     window.workers_idle.connect(loop.quit)
                     if window._pending_workers:
                         loop.exec()
+
+        def test_silent_check_dresses_button_without_modals(self):
+            from PySide6.QtWidgets import QMessageBox
+            window = self._window()
+            try:
+                info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
+                        "notes": "", "asset": "Instant.exe", "asset_url": ""}
+                with _patch.object(QMessageBox, "information",
+                                    side_effect=AssertionError("debe ser silencioso")), \
+                        _patch.object(QMessageBox, "question",
+                                      side_effect=AssertionError("debe ser silencioso")):
+                    window._apply_update_available(info)
+                self.assertIn("0.2.0", window.update_button.text())
+                self.assertEqual(window.update_button.objectName(), "primaryButton")
+            finally:
+                if not window._closed:
+                    window.close()
 
 if __name__ == "__main__":
     unittest.main()

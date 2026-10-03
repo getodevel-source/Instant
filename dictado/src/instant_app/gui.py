@@ -408,6 +408,9 @@ def _main_window_class():
             self.timer.start(1000)
             if page == "diagnostics":
                 QTimer.singleShot(150, self.show_diagnostics)
+            self._update_silent_done = False
+            self._available_update = None
+            QTimer.singleShot(8000, self._silent_update_check)
 
         def _worker_finished(self, worker):
             self._pending_workers.discard(worker)
@@ -1202,6 +1205,44 @@ def _main_window_class():
         def _close_diagnostics(self, *_):
             self._diagnostic_window = None; self._diagnostic_text = None
 
+        def _silent_update_check(self):
+            """Chequeo diario silencioso: nunca interrumpe, solo avisa."""
+            if self._update_silent_done or self._closed:
+                return
+            self._update_silent_done = True
+            try:
+                import time
+                if time.time() - float(self.cfg.get("update_last_check", 0)) < 86400:
+                    return
+            except (TypeError, ValueError):
+                pass
+            from instant_app import update as update_module
+            self._run_worker(lambda _emit: update_module.check(),
+                             self._silent_update_result,
+                             lambda _error: None)
+
+        def _silent_update_result(self, info):
+            try:
+                import time
+                self.cfg["update_last_check"] = int(time.time())
+                config.save(self.cfg)
+            except Exception:
+                log.warning("no pude sellar el chequeo de versión", exc_info=True)
+            if self._closed or not info.get("update"):
+                return
+            self._apply_update_available(info)
+
+        def _apply_update_available(self, info):
+            """El botón se viste de primario: la novedad se ve sin modales."""
+            self._available_update = info
+            self.update_button.setText(f"↓ Actualizar a v{info['latest']}")
+            self.update_button.setToolTip(
+                f"Hay versión nueva ({info['latest']}); la tenés en un clic.")
+            self.update_button.setObjectName("primaryButton")
+            polish = self.update_button.style()
+            polish.unpolish(self.update_button)
+            polish.polish(self.update_button)
+
         def check_updates(self):
             """Consulta GitHub sin bloquear: informa o propone descargar."""
             from instant_app import update as update_module
@@ -1220,6 +1261,13 @@ def _main_window_class():
         def _updates_result(self, info):
             self.update_button.setEnabled(True)
             if not info.get("update"):
+                self._available_update = None
+                self.update_button.setText("Buscar actualizaciones")
+                self.update_button.setToolTip("")
+                self.update_button.setObjectName("ghostButton")
+                polish = self.update_button.style()
+                polish.unpolish(self.update_button)
+                polish.polish(self.update_button)
                 QMessageBox.information(
                     self, "Actualizaciones",
                     f"Estás al día (versión {info.get('current') or '?'}).")
@@ -1256,8 +1304,9 @@ def _main_window_class():
             answer = QMessageBox.question(
                 self, "Actualizaciones",
                 f"Descargado y verificado:\n{target}\n\n"
-                "¿Instalar ahora? Se frena el dictado un momento, se "
-                "respalda el exe anterior y se vuelve a arrancar.")
+                "¿Instalar ahora? Se frena el dictado un momento (si estás "
+                "por dictar, mejor después), se respalda el exe anterior "
+                "y se vuelve a arrancar ya actualizado.")
             if answer != QMessageBox.Yes:
                 return
             root = _workdir()

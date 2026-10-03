@@ -94,6 +94,11 @@ o el botón «Buscar actualizaciones» de la ventana: consulta, descarga
 verificada y, si aceptás, frena todo, respalda el exe anterior
 (`Instant.exe.bak`) y arranca el daemon nuevo. Sin `.sha256` no instala.
 
+La ventana consulta sola una vez por día y, si hay versión, el botón se
+viste de primario («↓ Actualizar a vX»): sin modales ni apuros. El
+instalador verifica el hash de nuevo, y si el daemon nuevo no levanta,
+restaura el `.bak` automáticamente y reabre la ventana.
+
 ## Privacidad y datos
 
 - El audio se procesa localmente con Silero VAD y Parakeet; no se sube a un servicio.
