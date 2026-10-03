@@ -3,5 +3,7 @@
 audio/
 audio_b/
 *.mp3
-results.json
+# Resultados de las corridas: se regeneran con evaluate_models.py y
+# robustness.py; los numeros que importan quedan en docs/motores.md.
+results*.json
 robustness.json

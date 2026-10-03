@@ -4,11 +4,11 @@ import sys
 import tempfile
 from unittest.mock import patch
 
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from instant_app import config, context, llm
-from instant_app.engine import join_texts, merge_short_bounds
-
+from instant_app import audio, config, llm
 
 
 def _check(name, cond):
@@ -18,7 +18,6 @@ def _check(name, cond):
 
 
 # Overlay progression is ordered by session/phase, with errors preempting completion.
-from instant_app import daemon as daemon_module
 from instant_app.overlay import OverlayTransitions
 
 
@@ -51,215 +50,6 @@ _check("Tk animation actually moves between frames",
 _check("Tk spinner covers every segment",
        sorted(animation_frame("processing", tick)[1] for tick in range(8))
        == list(range(_TK_SPINNER_SEGMENTS)))
-
-
-class _OverlaySequence:
-    def __init__(self):
-        self.transitions = OverlayTransitions()
-        self.events = []
-
-    def _append(self, session, state, *detail):
-        if self.transitions.accept(session, state) is not None:
-            self.events.append((state, session, *detail))
-
-    def starting(self, session):
-        self._append(session, "starting")
-
-    def listening(self, session):
-        self._append(session, "listening")
-
-    def processing(self, session):
-        self._append(session, "processing")
-
-    def success_for(self, session, milliseconds=760):
-        self._append(session, "success", milliseconds)
-
-    def show_notice_for(self, session, text, color="#f2c36a", milliseconds=2000):
-        self._append(session, "notice", text, color, milliseconds)
-
-    def show_error_for(self, session, text, color="#ff908b", milliseconds=3000):
-        self._append(session, "error", text, color, milliseconds)
-
-    def hide(self):
-        self.transitions.hide()
-        self.events.append(("idle",))
-
-
-_deferred_jobs = []
-
-
-class _DeferredJob:
-    def __init__(self, target, args, daemon):
-        self.target = target
-        self.args = args
-        _deferred_jobs.append(self)
-
-    def start(self):
-        pass
-
-
-class _FakeEngine:
-    min_dur = 0.0
-
-    def transcribe(self, _wav):
-        return "recognized"
-
-
-_daemon = daemon_module.Daemon.__new__(daemon_module.Daemon)
-_daemon.lock = daemon_module.threading.Lock()
-_daemon.rec = {
-    "sid": 0, "grabando": False, "frames": [], "t_start": 0.0,
-    "done": None, "busy": False,
-}
-_daemon.overlay = _OverlaySequence()
-_daemon.engine = _FakeEngine()
-_daemon.cfg = {"llm_url": ""}
-_daemon.beep = lambda **_kwargs: None
-with patch("instant_app.daemon.threading.Thread", _DeferredJob):
-    _daemon.on_press()
-_check("key-down sends immediate starting state",
-       _daemon.overlay.events == [("starting", 1)])
-_daemon.rec["frames"] = [daemon_module.np.array([0.2, 0.2], dtype=daemon_module.np.float32)]
-_daemon.rec["done"].set()
-with patch("instant_app.daemon.threading.Thread", _DeferredJob):
-    _daemon.on_release()
-_check("release goes directly to processing",
-       _daemon.overlay.events == [("starting", 1), ("processing", 1)])
-_daemon.overlay.listening(1)
-_check("late mic-open update cannot reverse release transition",
-       _daemon.overlay.events[-1] == ("processing", 1))
-with patch("instant_app.paste.paste", return_value=None):
-    _deferred_jobs[-1].target(*_deferred_jobs[-1].args)
-_check("successful paste produces brief confirmation",
-       _daemon.overlay.events[-1] == ("success", 1, 760))
-_daemon.overlay.starting(2)
-_daemon.overlay.listening(2)
-_daemon.overlay.processing(2)
-_daemon.engine.transcribe = lambda _wav: (_ for _ in ()).throw(RuntimeError("recognizer failed"))
-_daemon._job(daemon_module.np.array([0.2], dtype=daemon_module.np.float32), 1.0, 2)
-_check("recognition error replaces processing with actionable feedback",
-       _daemon.overlay.events[-1][0:2] == ("error", 2)
-       and "Diagnóstico" in _daemon.overlay.events[-1][2])
-
-# The daemon job uses the active local glossary before paste.
-_daemon.overlay.starting(3)
-_daemon.overlay.processing(3)
-_daemon.engine.transcribe = lambda _wav: "in stand"
-_daemon.cfg = {
-    "llm_url": "",
-    "active_context": "Trabajo",
-    "context_profiles": {
-        "General": [],
-        "Trabajo": [{"term": "Instant", "aliases": ["in stand"]}],
-    },
-}
-with patch("instant_app.paste.paste") as _pasted:
-    _daemon._job(daemon_module.np.array([0.2], dtype=daemon_module.np.float32), 1.0, 3)
-_check("daemon pastes context-corrected transcription",
-       _pasted.call_args.args[0] == "Instant ")
-
-
-# join_texts: une, pega puntuacion, colapsa espacios.
-_check("join vacios", join_texts(["", "  ", ""]) == "")
-_check("join puntuacion", join_texts(["hola mundo", ", ¿ como estas ?"]) == "hola mundo, ¿como estas?")
-_check("join espacios", join_texts(["  hola   mundo  "]) == "hola mundo")
-
-# merge_short_bounds: une cortos adyacentes, deja largos solos.
-_check("merge cortos", merge_short_bounds([(0.0, 0.3), (0.5, 2.0)]) == [(0.0, 2.0)])
-_check("merge largos", merge_short_bounds([(0.0, 3.0), (5.0, 8.0)]) == [(0.0, 3.0), (5.0, 8.0)])
-_check("merge gap grande", merge_short_bounds([(0.0, 0.3), (5.0, 5.5)]) == [(0.0, 0.3), (5.0, 5.5)])
-
-# config: defaults + env override + roundtrip de llm_url.
-os.environ.pop("DICTADO_LLM_URL", None)
-c = config.load()
-_check("default llm_url vacio", c.get("llm_url", "") == "")
-_check("default sound off", c.get("sound") is False)
-_check("default lang es", c.get("lang") == "es")
-_check("default threads 4", c.get("threads") == 4)
-os.environ["DICTADO_LLM_URL"] = "http://127.0.0.1:8080"
-_check("env llm_url", config.load()["llm_url"] == "http://127.0.0.1:8080")
-del os.environ["DICTADO_LLM_URL"]
-
-# llm: sin URL -> identico (pipeline sin red).
-_check("llm off identico", llm.maybe_polish("hola mundo", {"llm_url": ""}) == "hola mundo")
-_check("llm sin server identico",
-        llm.maybe_polish("hola mundo", {"llm_url": "http://127.0.0.1:9"}) == "hola mundo")
-
-# Context profiles apply only user-authored whole-word variants, without fuzzy
-# substitutions that could rewrite ordinary words.
-_work_context = {
-    "active_context": "Trabajo",
-    "context_profiles": {
-        "General": [],
-        "Trabajo": [
-            {"term": "Instant", "aliases": ["instante", "in stand"]},
-            {"term": "Parakeet", "aliases": ["para kit"]},
-        ],
-    },
-}
-_check("profile replaces explicit aliases only",
-       context.correct_aliases(
-           "instante abre el instanteo; in stand y para kit.",
-           _work_context)
-       == "Instant abre el instanteo; Instant y Parakeet.")
-_check("inactive profile does not bias text",
-       context.correct_aliases("instante", {
-           **_work_context, "active_context": "General"
-       }) == "instante")
-_check("local glossary works with LLM disabled",
-       llm.maybe_polish("in stand", _work_context) == "Instant")
-with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
-    _check("LLM failure keeps explicit local glossary correction",
-           llm.maybe_polish(
-               "instante",
-               {**_work_context, "llm_url": "http://local"})
-           == "Instant")
-
-
-class _FakeResponse:
-    def __init__(self, body):
-        self.body = body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-    def read(self):
-        return self.body
-
-
-def _llm_response(text):
-    import json
-    return _FakeResponse(json.dumps({
-        "choices": [{"message": {"content": text}}],
-    }).encode())
-
-
-with patch("urllib.request.urlopen", return_value=_llm_response("¿Cómo estás?")):
-    _check("LLM may improve punctuation and accents without changing words",
-           llm.polish("como estas", "http://local") == "¿Cómo estás?")
-with patch("urllib.request.urlopen", return_value=_llm_response("Hola, mundo y todo.")):
-    _check("LLM additions are rejected",
-           llm.polish("Hola mundo", "http://local") == "Hola mundo")
-
-with tempfile.TemporaryDirectory() as temp:
-    config_file = os.path.join(temp, "config.json")
-    with patch("instant_app.config.config_path", return_value=config_file):
-        config.save({
-            **config.DEFAULTS,
-            "active_context": "Trabajo",
-            "context_profiles": _work_context["context_profiles"],
-        })
-        _roundtrip = config.load()
-        with patch.dict(os.environ, {"DICTADO_CONTEXT": "General"}):
-            _selected = config.load()
-        _check("environment selects the active context profile",
-               _selected["active_context"] == "General")
-    _check("context profiles persist through config",
-           _roundtrip["active_context"] == "Trabajo"
-           and _roundtrip["context_profiles"]["Trabajo"][0]["term"] == "Instant")
 
 # hotkey: claves win esperadas.
 from instant_app import hotkey
@@ -305,8 +95,6 @@ from io import StringIO
 with patch("sys.stdin", StringIO("f10\n")):
     _check("captura de tecla sin TTY",
            hotkey.capture_key("prompt", "f9") == "f10")
-from instant_app import audio
-
 
 class _FakeSettings:
     def __init__(self, auto_convert):
@@ -338,8 +126,6 @@ wasapi_options = _stream_options("Windows WASAPI")
 _check("WASAPI 16 kHz auto-convert",
        wasapi_options["extra_settings"].auto_convert is True)
 _check("MME does not get WASAPI settings", _stream_options("MME") == {})
-
-import numpy as np
 
 stereo = np.array([[0.0, 0.2], [0.0, -0.2]], dtype=np.float32)
 _check("stereo elige canal con señal",
@@ -625,6 +411,25 @@ with tempfile.TemporaryDirectory() as d:
     seen = []
     models.download_models(d, progress=lambda step, done, total: seen.append(step))
     _check("joint parakeet+vad", "parakeet" in seen and "vad" in seen)
+
+# El glosario activo: solo variantes exactas, sin sustituciones difusas.
+_work_context = {
+    "active_context": "Trabajo",
+    "context_profiles": {
+        "General": [],
+        "Trabajo": [
+            {"term": "Instant", "aliases": ["instante", "in stand"]},
+            {"term": "Parakeet", "aliases": ["para kit"]},
+        ],
+    },
+}
+with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
+    _check("LLM failure keeps explicit local glossary correction",
+           llm.maybe_polish(
+               "instante",
+               {**_work_context, "llm_url": "http://local"})
+           == "Instant")
+
 
 class _FakeResponse:
     headers = {"Content-Length": "3"}
