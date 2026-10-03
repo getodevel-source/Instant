@@ -394,8 +394,9 @@ with patch("instant_app.setup.config.load", return_value=_setup_cfg), \
 _check("setup removes a vocabulary term from only the selected profile",
        _saved_setup["active_context"] == "Trabajo"
        and _saved_setup["context_profiles"]["General"] == []
-       and _saved_setup["context_profiles"]["Trabajo"] == [
-           {"term": "Parakeet", "aliases": ["para kit"]}])
+       and [(item["term"], item["aliases"]) for item
+            in _saved_setup["context_profiles"]["Trabajo"]]
+       == [("Parakeet", ["para kit"])])
 
 # modelos: descarga conjunta Parakeet + VAD en un solo paso con progreso claro.
 from instant_app import models

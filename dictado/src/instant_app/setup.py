@@ -292,6 +292,10 @@ def cmd_setup(argv=None):
             for value in o.context_term:
                 term, separator, variants = value.partition("=")
                 term = term.strip()
+                # `~grafia` activa el emparejamiento por sonido del termino.
+                sonido = term.startswith(context.SOUND_PREFIX)
+                if sonido:
+                    term = term[len(context.SOUND_PREFIX):].strip()
                 aliases = [item.strip() for item in variants.split("|") if item.strip()]
                 if not term or (separator and not aliases):
                     print(f"  --context-term invalido: {value!r}; usa grafia=variante1|variante2.")
@@ -300,11 +304,14 @@ def cmd_setup(argv=None):
                 existing = next((item for item in entries
                                  if item["term"].casefold() == term.casefold()), None)
                 if existing is None:
-                    entries.append({"term": term, "aliases": aliases})
+                    entries.append({"term": term, "aliases": aliases,
+                                    "sonido": sonido})
                 else:
                     existing["term"] = term
                     existing["aliases"] = list(dict.fromkeys(existing["aliases"] + aliases))
-            remove = {term.strip().casefold() for term in o.context_remove_term}
+                    existing["sonido"] = existing.get("sonido", False) or sonido
+            remove = {term.strip().lstrip(context.SOUND_PREFIX).strip().casefold()
+                      for term in o.context_remove_term}
             if remove:
                 entries[:] = [item for item in entries
                               if item["term"].casefold() not in remove]

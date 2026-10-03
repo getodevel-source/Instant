@@ -107,4 +107,51 @@ with tempfile.TemporaryDirectory() as temp:
            _roundtrip["active_context"] == "Trabajo"
            and _roundtrip["context_profiles"]["Trabajo"][0]["term"] == "Instant")
 
+# Emparejamiento por sonido: el motor no solo sustituye sonidos, tambien pierde
+# letras («Qwen» -> «ken») y parte palabras («OpenAI» -> «O en Pi»). Se activa
+# por termino con `~` en el editor y nunca debe tocar texto corriente.
+_sonido_context = {
+    "active_context": "General",
+    "context_profiles": {"General": [
+        {"term": "Qwen", "aliases": ["cuentres"], "sonido": True},
+        {"term": "GitHub", "aliases": ["hit hub"], "sonido": True},
+        {"term": "OpenAI", "aliases": [], "sonido": True},
+    ]},
+}
+_check("sound key groups what the recognizer confuses",
+       context._sound_key("Qwen") == context._sound_key("cuen")
+       and context._sound_key("GitHub") == context._sound_key("git hub"))
+_check("sound matching fixes a lost letter",
+       context.correct_aliases("decime si Quen puede hacerlo", _sonido_context)
+       == "decime si Qwen puede hacerlo")
+_check("sound matching fixes a split word",
+       context.correct_aliases("la velocidad con O en Pi y Pi", _sonido_context)
+       == "la velocidad con OpenAI y Pi")
+_check("listed alias still works with sound on",
+       context.correct_aliases("teniendo Cuentres ASR", _sonido_context)
+       == "teniendo Qwen ASR")
+_check("sound matching leaves ordinary Spanish alone",
+       context.correct_aliases(
+           "Preguntale a quien quieras, para que esto funcione y para que sirva.",
+           _sonido_context)
+       == "Preguntale a quien quieras, para que esto funcione y para que sirva.")
+_check("sound matching never rewrites the preferred spelling",
+       context.correct_aliases("Qwen y GitHub y OpenAI", _sonido_context)
+       == "Qwen y GitHub y OpenAI")
+_check("sound off means no guessing",
+       context.correct_aliases("decime si Quen puede", {
+           "context_profiles": {"General": [
+               {"term": "Qwen", "aliases": [], "sonido": False}]}})
+       == "decime si Quen puede")
+
+# El editor marca el sonido con `~` y lo conserva al ida y vuelta.
+_editor = context.editor_text(context.parse_editor("~Qwen\tcuen | quen\nParakeet\tpara kit"))
+_check("editor marks sound terms and round-trips them",
+       _editor.startswith("~Qwen\t") and "Parakeet\t" in _editor
+       and context.parse_editor(_editor)[0]["sonido"] is True
+       and context.parse_editor(_editor)[1]["sonido"] is False)
+_check("editor keeps a term without aliases",
+       context.parse_editor("~GitHub")[0]
+       == {"term": "GitHub", "aliases": [], "sonido": True})
+
 print("OK: contexto y vocabulario verdes.")

@@ -277,11 +277,13 @@ else:
                 self.assertEqual(saved["active_context"], "Trabajo")
                 self.assertEqual(saved["llm_url"], "http://127.0.0.1:8080")
                 self.assertEqual(
-                    saved["context_profiles"]["General"],
-                    [{"term": "Instant", "aliases": ["instante", "in stand"]}])
+                    [(item["term"], item["aliases"])
+                     for item in saved["context_profiles"]["General"]],
+                    [("Instant", ["instante", "in stand"])])
                 self.assertEqual(
-                    saved["context_profiles"]["Trabajo"],
-                    [{"term": "Parakeet", "aliases": ["para kit"]}])
+                    [(item["term"], item["aliases"])
+                     for item in saved["context_profiles"]["Trabajo"]],
+                    [("Parakeet", ["para kit"])])
                 self.assertIn("vocabulario", window.settings_status.text())
                 self.assertIn("LLM", window.settings_status.text())
                 window._settings_daemon_changed(True)
