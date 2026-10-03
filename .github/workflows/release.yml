@@ -11,11 +11,17 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            output: instant.exe
+            platform: windows
+            binary_name: Instant
+            output: Instant.exe
           - os: ubuntu-latest
-            output: instant
+            platform: linux
+            binary_name: instant-linux
+            output: instant-linux
           - os: macos-latest
-            output: instant
+            platform: macos
+            binary_name: instant-macos
+            output: instant-macos
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +41,39 @@ jobs:
       - name: Install package + PyInstaller
         shell: bash
         run: |
-          pip install -e ./dictado
-          pip install pyinstaller
+          pip install ./dictado
+          pip install pyinstaller==6.22.3
 
-      - name: Build onefile binary
-        # El modelo (640MB onnx) NO se empaqueta: se descarga en primer
-        # arranque via `instant setup` (ver dictado/src/instant_app/models.py).
+      - name: Generate Windows icon
+        if: runner.os == 'Windows'
+        run: python dictado/build_icon.py
+
+      - name: Build Windows GUI executable
+        if: runner.os == 'Windows'
         shell: bash
         run: |
-          pyinstaller --onefile --name instant \
+          ICON_PATH="$(python -c 'import os; print(os.path.abspath("dictado/build/instant.ico"))')"
+          # The custom QtQml hook collects only the overlay's QML modules.
+          pyinstaller --onefile --windowed --name "${{ matrix.binary_name }}" \
+            --icon "$ICON_PATH" \
+            --hidden-import instant_app.gui \
+            --hidden-import instant_app.branding \
+            --hidden-import pyexpat \
+            --hidden-import PySide6.QtQml \
+            --hidden-import PySide6.QtQuick \
+            --additional-hooks-dir dictado/hooks \
+            --add-data "dictado/src/instant_app/qml/overlay.qml;instant_app/qml" \
+            --collect-all sherpa_onnx \
+            --collect-all sounddevice \
+            --collect-all pystray \
+            --collect-all PIL \
+            dictado/src/instant_app/__main__.py
+
+      - name: Build Unix CLI executable
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          pyinstaller --onefile --name "${{ matrix.binary_name }}" \
             --hidden-import sherpa_onnx \
             --hidden-import sounddevice \
             --collect-all sherpa_onnx \
@@ -53,5 +83,23 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: instant-${{ runner.os }}
+          name: instant-${{ matrix.platform }}
           path: dist/${{ matrix.output }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: instant-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
