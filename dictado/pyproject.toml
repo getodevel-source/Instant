@@ -9,6 +9,9 @@ name = "instant"
 dynamic = ["version"]
 description = "Instant hold-to-talk ES offline: Parakeet v3 + Silero VAD, CPU-only"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "getodevel-source" }]
 # Versiones fijadas: Instant es una aplicacion, no una libreria, y estas son las
 # que estan probadas en este equipo. `sherpa-onnx` es la de mas riesgo (se usa
 # su API directa: from_transducer, VadModel), y una version nueva puede romper

@@ -102,4 +102,28 @@ para Linux/macOS. Windows usa hooks selectivos de Qt, sin `--collect-all PySide6
 el build local de PyInstaller 6.22.3 pasó de 303.651.236 a 96.099.689 bytes
 (reducción del 68,4 %), ya con la bandeja, el overlay y el perfil de vocabulario.
 El binario mantiene el tema oscuro y empaqueta el overlay QML.
-Aún falta validar el release limpio en CI. Los ejecutables todavía no están firmados.
+
+Los cambios por versión están en [`CHANGELOG.md`](CHANGELOG.md), incluidas las
+limitaciones conocidas.
+
+## Desinstalar
+
+1. Desactivá el arranque con el sistema: `instant-setup.bat` → Preferencias, o
+   `instant setup --no-autostart` (en Linux/macOS, `./uninstall-autostart.bat`
+   en Windows si lo instalaste con el script suelto).
+2. Frená el dictado: `instant-stop.bat` (o `./instant-stop.sh`).
+3. Borrá la carpeta del repositorio, que incluye `.venv` y `models/`.
+4. Si querés borrar también tus datos y configuración:
+   - Windows: `%APPDATA%\instant` (config y log) y `%LOCALAPPDATA%\instant` (modelos).
+   - Linux: `~/.config/instant` y `~/.local/share/instant`.
+   - macOS: `~/Library/Application Support/instant`.
+
+Nada se escribe fuera de esas carpetas.
+
+## Licencia
+
+MIT. Ver [`LICENSE`](LICENSE).
+
+Los ejecutables todavía no están firmados, así que Windows SmartScreen avisa la
+primera vez que se abren. Es esperable hasta que haya un certificado de firma de
+código; no es un indicio de que el binario esté alterado.
