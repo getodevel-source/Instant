@@ -215,16 +215,45 @@ Instant	instante | in stand
 Parakeet	para kit
 ```
 
-Solo se reemplazan esas variantes completas; no se hace coincidencia difusa
-ni se fuerza una palabra del glosario si el texto no contiene una variante.
+Solo se reemplazan esas variantes completas; no se fuerza una palabra del
+glosario si el texto no contiene una variante.
+
+### Emparejamiento por sonido (`~`)
+
+Listar cada grafía que el motor inventa no escala: una marca como `Qwen` salió
+«Quen», «Cuentres», «Quemet» y «cuen» en el mismo log. Un `~` delante de la
+grafía activa el emparejamiento por sonido para ese término, y cubre esas
+variantes sin enumerarlas:
+
+```text
+~Qwen	cuentres | quemet
+~GitHub	hit hub
+~Parakeet	para kit
+```
+
+Con `~`, `Quen`, `cuen` y `Cuen` se corrigen solos, igual que las palabras que
+el motor parte o pega (`O en Pi` → `OpenAI`, `Git Hub` → `GitHub`).
+
+La sustitución por sonido es conservadora a propósito, porque una corrección
+falsa hace más daño que el error que arregla. Solo actúa cuando la palabra:
+
+- tiene cuatro letras o más (las cortas del español son casi todas corrientes);
+- no es una palabra corriente protegida (`quien`, `buen`, `ven`, `para`,
+  `might`, `that`…), así «a quien quieras» y «buen resultados» quedan intactos;
+- no es ya la propia grafía preferida;
+- si son varias palabras, la primera suena como el principio del término y el
+  resto como el final, con solo espacios en medio: la «y» de «Qwen y GitHub»
+  nunca se pierde.
+
+Dejá `~` apagado en términos cuyas variantes sean palabras reales: ahí conviene
+listarlas a mano (`commit`, `staging`). Para ver qué cambiaría sin aplicar
+nada, el perfil se puede probar desde Python con `context.correct_aliases`.
 
 En el pipeline actual estas correcciones se aplican al texto **después** del
-reconocimiento; no son pistas acústicas para Parakeet. sherpa-onnx exige
-`modified_beam_search` y el vocabulario BPE del modelo para hotwords, mientras
-Instant descarga Parakeet con `greedy_search` y el paquete del modelo no trae
-`bpe.vocab`. Cambiar de decodificador sin ese vocabulario y sin probarlo con
-audio real podría empeorar los resultados; por eso las correcciones
-contextuales se limitan a variantes explícitas y exactas.
+reconocimiento; no son pistas acústicas para Parakeet. Se probó el sesgo
+contextual (hotwords) y **no funciona** con este modelo: sherpa-onnx lo
+tokeniza con un `bpe.vocab` de sentencepiece que el paquete de Parakeet v3 no
+trae. Ver [`docs/motores.md`](../docs/motores.md).
 
 Los perfiles y el vocabulario se guardan localmente en la configuración de
 Instant. En Linux/macOS también se pueden gestionar desde setup:
@@ -232,6 +261,13 @@ Instant. En Linux/macOS también se pueden gestionar desde setup:
 ```bash
 instant setup --yes --no-probe --context-profile Trabajo \
   --context-term "Instant=instante|in stand"
+```
+
+Con `~` delante de la grafía se activa el sonido para ese término:
+
+```bash
+instant setup --yes --no-probe --context-profile Trabajo \
+  --context-term "~Qwen=cuentres|quemet"
 ```
 
 Para quitar un término o un perfil en Linux/macOS:
