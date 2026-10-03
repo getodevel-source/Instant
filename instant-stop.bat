@@ -8,6 +8,8 @@ set /p LEPID=<"%PIDFILE%"
 if not defined LEPID goto :empty
 tasklist /FI "PID eq %LEPID%" /FO TABLE /NH 2>nul | findstr /I "instant.exe python.exe pythonw.exe" >nul
 if errorlevel 1 goto :stale
+powershell -NoProfile -Command "if ((Get-CimInstance Win32_Process -Filter \"ProcessId=%LEPID%\").CommandLine -like '*instant*') { exit 0 } else { exit 1 }" >nul 2>&1
+if errorlevel 1 goto :recycled
 taskkill /F /PID %LEPID% >nul 2>nul
 if errorlevel 1 goto :fail
 ping -n 6 127.0.0.1 >nul 2>nul
@@ -15,6 +17,10 @@ tasklist /FI "PID eq %LEPID%" /FO TABLE /NH 2>nul | findstr /I "instant.exe pyth
 if not errorlevel 1 goto :fail
 del "%PIDFILE%" 2>nul
 echo Daemon frenado PID %LEPID%.
+exit /b 0
+:recycled
+del "%PIDFILE%" 2>nul
+echo PID %LEPID% reciclado por el SO (ya no es Instant); PID file limpio, nada que matar.
 exit /b 0
 :empty
 del "%PIDFILE%" 2>nul

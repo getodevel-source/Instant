@@ -57,6 +57,11 @@ jobs:
         if: runner.os == 'Windows'
         run: python dictado/build_icon.py
 
+      - name: Version matches tag
+        shell: bash
+        run: |
+          test "${{ github.ref_name }}" = "v$(python -c 'import sys; sys.path.insert(0, "dictado/src"); from instant_app import __version__; print(__version__)')"
+
       - name: Build Windows GUI executable
         if: runner.os == 'Windows'
         shell: bash
@@ -90,11 +95,18 @@ jobs:
             --collect-all sounddevice \
             dictado/src/instant_app/__main__.py
 
+      - name: Sign binary (SHA256 sidecar for the updater)
+        shell: bash
+        run: |
+          cd dist && sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: instant-${{ matrix.platform }}
-          path: dist/${{ matrix.output }}
+          path: |
+            dist/${{ matrix.output }}
+            dist/${{ matrix.output }}.sha256
 
   publish:
     needs: build

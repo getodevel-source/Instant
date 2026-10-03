@@ -79,6 +79,21 @@ Vive fijo abajo al centro del monitor donde trabajás:
 
 ![Orbe del overlay](docs/screenshots/overlay-orbital.png)
 
+## Actualizaciones
+
+Cada release de GitHub (`v*`) trae el ejecutable de cada sistema más su
+`.sha256`. Sin hacerlo a mano:
+
+```bat
+instant update              :: dice si hay versión nueva
+instant update --download DIR
+instant-update.bat <archivo descargado>
+```
+
+o el botón «Buscar actualizaciones» de la ventana: consulta, descarga
+verificada y, si aceptás, frena todo, respalda el exe anterior
+(`Instant.exe.bak`) y arranca el daemon nuevo. Sin `.sha256` no instala.
+
 ## Privacidad y datos
 
 - El audio se procesa localmente con Silero VAD y Parakeet; no se sube a un servicio.

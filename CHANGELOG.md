@@ -186,6 +186,13 @@ Windows, Linux y macOS.
 - **`instant-run.bat` ya no confunde la ventana con el daemon.** Su chequeo de
   duplicados matcheaba cualquier `pythonw` con "instant" (incluida la ventana
   de ajustes) y se negaba a arrancar; ahora solo mira `instant_app run`.
+- **Actualización desde GitHub sin hacerlo a mano.** `instant update`
+  consulta el último release y compara versiones; con `--download` baja el
+  asset y lo verifica por SHA256 (sidecar `.sha256` publicado por el
+  release). `instant-update.bat` frena todo, respalda el exe anterior y lo
+  cambia. La ventana trae «Buscar actualizaciones» al lado de Diagnóstico.
+  Sin sidecar no hay instalación. El workflow valida versión==tag y publica
+  los hashes.
 
 ### Corregido
 

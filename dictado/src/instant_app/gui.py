@@ -80,9 +80,29 @@ def _display_input_name(name):
     return label
 
 
+def _pid_is_instant(pid):
+    """El PID file puede quedar rancio y el SO reciclar el número: antes de
+    matar se confirma que la línea de comando sea de Instant."""
+    if os.name != "nt":
+        return True
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"],
+            capture_output=True, text=True, timeout=10, creationflags=flags)
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    command = (result.stdout or "").casefold()
+    return "instant" in command
+
+
 def stop_daemon():
     pid = _pid_value()
     if pid is None or not daemon_is_running():
+        return False
+    if not _pid_is_instant(pid):
+        log.warning("PID %d reciclado por el SO (no es Instant); no se mata.", pid)
         return False
     if os.name == "nt":
         try:
@@ -632,8 +652,13 @@ def _main_window_class():
             self.diag_button.setObjectName("ghostButton")
             self.diag_button.setCursor(Qt.PointingHandCursor)
             self.diag_button.clicked.connect(self.show_diagnostics)
+            self.update_button = QPushButton("Buscar actualizaciones")
+            self.update_button.setObjectName("ghostButton")
+            self.update_button.setCursor(Qt.PointingHandCursor)
+            self.update_button.clicked.connect(self.check_updates)
             foot.addStretch(1)
             foot.addWidget(self.diag_button)
+            foot.addWidget(self.update_button)
             foot.addStretch(1)
             layout.addLayout(foot)
             layout.addStretch(1)
@@ -1083,6 +1108,11 @@ def _main_window_class():
                 if restart: self._start_daemon()
                 else: self.refresh_daemon()
                 return
+            if not _pid_is_instant(pid):
+                log.warning("PID %d reciclado por el SO (no es Instant); no se mata.", pid)
+                self.status_detail.setText("El daemon ya no estaba; actualizando estado…")
+                self.refresh_daemon()
+                return
             if os.name == "nt":
                 subprocess.Popen(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             else:
@@ -1171,6 +1201,84 @@ def _main_window_class():
 
         def _close_diagnostics(self, *_):
             self._diagnostic_window = None; self._diagnostic_text = None
+
+        def check_updates(self):
+            """Consulta GitHub sin bloquear: informa o propone descargar."""
+            from instant_app import update as update_module
+            self.update_button.setEnabled(False)
+            self._run_worker(
+                lambda _emit: update_module.check(),
+                self._updates_result,
+                self._updates_failed)
+
+        def _updates_failed(self, error):
+            self.update_button.setEnabled(True)
+            QMessageBox.warning(
+                self, "Actualizaciones",
+                f"No se pudo consultar versiones:\n{error}")
+
+        def _updates_result(self, info):
+            self.update_button.setEnabled(True)
+            if not info.get("update"):
+                QMessageBox.information(
+                    self, "Actualizaciones",
+                    f"Estás al día (versión {info.get('current') or '?'}).")
+                return
+            from instant_app import update as update_module
+            notes = update_module.clean_notes(info.get("notes"))
+            answer = QMessageBox.question(
+                self, "Actualizaciones",
+                f"Hay versión nueva: {info['latest']} "
+                f"(tenés {info.get('current') or '?'}).\n\n"
+                f"{notes}\n\n¿Descargar {info['asset']} verificado?")
+            if answer != QMessageBox.Yes:
+                return
+            self.update_button.setEnabled(False)
+            self._pending_update = info
+            self._run_worker(self._download_update, self._update_ready,
+                             self._updates_failed)
+
+        def _download_update(self, _emit):
+            import os
+            import tempfile
+            from instant_app import update as update_module
+            info = self._pending_update
+            target = os.path.join(tempfile.gettempdir(), "instant_update",
+                                  info["asset"])
+            expected = update_module.fetch_expected_sha256(info["asset_url"])
+            update_module.download(info["asset_url"], target,
+                                   expected_sha256=expected)
+            return target, expected
+
+        def _update_ready(self, payload):
+            self.update_button.setEnabled(True)
+            target, expected = payload
+            answer = QMessageBox.question(
+                self, "Actualizaciones",
+                f"Descargado y verificado:\n{target}\n\n"
+                "¿Instalar ahora? Se frena el dictado un momento, se "
+                "respalda el exe anterior y se vuelve a arrancar.")
+            if answer != QMessageBox.Yes:
+                return
+            root = _workdir()
+            script = os.path.join(root, "instant-update.bat")
+            if not os.path.isfile(script):
+                QMessageBox.warning(
+                    self, "Actualizaciones",
+                    "No encuentro instant-update.bat junto a la app "
+                    "(instalación portable sin scripts).\n\n"
+                    f"Instalá a mano: cerrá Instant por completo y copiá\n{target}\n"
+                    f"sobre tu Instant.exe (SHA256 {expected[:16]}…).")
+                return
+            try:
+                subprocess.Popen(["cmd", "/c", script, target, expected],
+                                 cwd=root)
+            except Exception as exc:
+                QMessageBox.critical(
+                    self, "Actualizaciones",
+                    f"No pude lanzar el instalador:\n{exc}")
+                return
+            self.close()
 
         def begin_key_capture(self):
             if self._key_capture_dialog is not None:

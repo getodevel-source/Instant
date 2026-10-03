@@ -65,6 +65,9 @@ def main(argv=None):
     sub.add_parser("run", help="daemon hold-to-talk")
     sub.add_parser("check", help="diagnóstico de teclado, micrófono y modelos")
     sub.add_parser("diagnostics", help="abre el diagnóstico visual")
+    p_update = sub.add_parser("update", help="busca una versión nueva en GitHub")
+    p_update.add_argument("--download", metavar="DIR", default=None,
+                          help="además descarga y verifica el asset en DIR")
 
     args, rest = ap.parse_known_args(argv)
     _log_setup()
@@ -121,6 +124,10 @@ def main(argv=None):
     if args.cmd == "check":
         from instant_app.daemon import cmd_check
         return cmd_check(cfg)
+
+    if args.cmd == "update":
+        from instant_app import update as update_module
+        return update_module.cmd_update(getattr(args, "download", None))
 
     from instant_app.daemon_lifecycle import (
         acquire_daemon_mutex, release_daemon_mutex)
