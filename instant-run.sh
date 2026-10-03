@@ -5,6 +5,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+  RUN=("$SCRIPT_DIR/.venv/bin/python" -m instant_app)
+elif command -v instant >/dev/null 2>&1; then
+  RUN=(instant)
+else
+  RUN=(python3 -m instant_app)
+fi
 if [ -z "${DICTADO_DATA:-}" ]; then
   DICTADO_DATA="$SCRIPT_DIR/models"
   export DICTADO_DATA
@@ -40,11 +47,7 @@ matches_instant() { # matches_instant <pid> -> 0 si su cmdline es instant
 if [ $# -gt 0 ]; then
   # Passthrough en consola: instant-run.sh check, run --help, etc.
   cd "$SCRIPT_DIR"
-  if command -v instant >/dev/null 2>&1; then
-    exec instant "$@"
-  else
-    exec python3 -m instant_app "$@"
-  fi
+  exec "${RUN[@]}" "$@"
 fi
 
 if [ -f "$PIDFILE" ]; then
@@ -62,10 +65,6 @@ if command -v pgrep >/dev/null 2>&1 && pgrep -f "instant_app run|instant run" >/
 fi
 
 cd "$SCRIPT_DIR"
-if command -v instant >/dev/null 2>&1; then
-  nohup instant run >/dev/null 2>&1 &
-else
-  nohup python3 -m instant_app run >/dev/null 2>&1 &
-fi
+nohup "${RUN[@]}" run >/dev/null 2>&1 &
 disown 2>/dev/null || true
 echo "Daemon lanzado oculto (PID $!). Verifica con instant-status.sh; frena con instant-stop.sh."

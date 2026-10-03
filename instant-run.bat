@@ -31,7 +31,19 @@ exit /b 0
 echo Ya hay instancia viva pythonw oculto con instant. No se lanza otra.
 exit /b 0
 :launch
-powershell -NoProfile -Command "$p=(Get-Command pythonw.exe -ErrorAction SilentlyContinue).Source; if (-not $p -and (Test-Path 'C:\Python314\pythonw.exe')) { $p='C:\Python314\pythonw.exe' }; if ($p) { Start-Process -FilePath $p -ArgumentList '-m instant_app run' -WindowStyle Hidden -WorkingDirectory '%~dp0' } else { Start-Process -FilePath 'python.exe' -ArgumentList '-m instant_app run' -WindowStyle Hidden -WorkingDirectory '%~dp0' }"
+set "INSTANT_PYTHON=%~dp0.venv\Scripts\pythonw.exe"
+if exist "%INSTANT_PYTHON%" goto :start_hidden
+set "INSTANT_PYTHON=%~dp0.venv\Scripts\python.exe"
+if exist "%INSTANT_PYTHON%" goto :start_hidden
+set "INSTANT_PYTHON="
+for /f "delims=" %%P in ('where pythonw.exe 2^>nul') do if not defined INSTANT_PYTHON set "INSTANT_PYTHON=%%P"
+if not defined INSTANT_PYTHON (
+  for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined INSTANT_PYTHON set "INSTANT_PYTHON=%%P"
+)
+if not defined INSTANT_PYTHON goto :fail
+:start_hidden
+set "INSTANT_WORKDIR=%~dp0"
+powershell -NoProfile -Command "try { Start-Process -FilePath $env:INSTANT_PYTHON -ArgumentList '-m instant_app run' -WindowStyle Hidden -WorkingDirectory $env:INSTANT_WORKDIR; exit 0 } catch { Write-Error $_; exit 1 }"
 if errorlevel 1 goto :fail
 echo Daemon lanzado oculto sin ventana. Verifica con instant-status.bat; frena con instant-stop.bat.
 exit /b 0
@@ -39,15 +51,16 @@ exit /b 0
 echo ERROR: no se pudo lanzar el daemon oculto.
 exit /b 1
 :foreground
+if exist "%~dp0.venv\Scripts\python.exe" goto :fg_venv
 where instant.exe >nul 2>nul
 if %ERRORLEVEL%==0 goto :fg_exe
-set "EXE=%APPDATA%\Python\Python314\Scripts\instant.exe"
-if exist "%EXE%" goto :fg_abs
-python -m instant_app %*
+goto :fg_python
+:fg_venv
+"%~dp0.venv\Scripts\python.exe" -m instant_app %*
 exit /b %ERRORLEVEL%
 :fg_exe
 instant.exe %*
 exit /b %ERRORLEVEL%
-:fg_abs
-"%EXE%" %*
+:fg_python
+python -m instant_app %*
 exit /b %ERRORLEVEL%

@@ -1,54 +1,58 @@
 @echo off
-REM Instalador de Instant en un comando (Windows, todo en espanol).
-REM Sin dependencias del sistema: solo necesita Python 3.11+ en PATH.
-REM Hace dos cosas: 1) instala el paquete `instant`, 2) descarga TODO JUNTO
-REM (Parakeet v3 int8 ~670 MB + Silero VAD ~1 MB, espanol unico) con `instant setup --yes`.
-REM Uso: doble clic, o desde terminal:  install.bat
+REM Instala Instant en un entorno virtual del repositorio y abre el asistente.
+setlocal
+if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
 
 where python >nul 2>nul
-if %ERRORLEVEL% neq 0 (
-  echo [Instant] No se encontro Python. Instala Python 3.11+ desde https://www.python.org/downloads/ y reintenta.
+if errorlevel 1 (
+  echo [Instant] Falta Python 3.10 o posterior en PATH.
+  echo Instala Python desde https://www.python.org/downloads/ y reintenta.
+  exit /b 1
+)
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+if errorlevel 1 (
+  echo [Instant] Se requiere Python 3.10 o posterior.
   exit /b 1
 )
 
-echo [Instant] 1/2 Instalando el paquete instant...
-call python -m pip install -e "%~dp0dictado"
-if %ERRORLEVEL% neq 0 (
-  echo [Instant] Fallo `pip install -e dictado`. Revisa tu conexion y reintenta.
+set "VENV_PYTHON=%~dp0.venv\Scripts\python.exe"
+if not exist "%VENV_PYTHON%" (
+  echo [Instant] Creando entorno virtual...
+  python -m venv "%~dp0.venv"
+  if errorlevel 1 (
+    echo [Instant] No se pudo crear .venv.
+    exit /b 1
+  )
+)
+
+echo [Instant] Instalando Instant y sus dependencias...
+call "%VENV_PYTHON%" -m pip install "%~dp0dictado"
+if errorlevel 1 (
+  echo [Instant] Fallo la instalacion del paquete. Revisa tu conexion y reintenta.
   exit /b 1
 )
 
-echo [Instant] 2/2 Descargando modelos en espanol (~670 MB, una sola vez)...
-where instant >nul 2>nul
-if %ERRORLEVEL%==0 (
-  call instant setup --yes
+set "SETUP_ARGS="
+if defined INSTANT_UNATTENDED set "SETUP_ARGS=--yes"
+if /i "%INSTANT_AUTOSTART%"=="1" set "SETUP_ARGS=%SETUP_ARGS% --autostart"
+
+echo [Instant] Configurando modelos, microfono y tecla...
+pushd "%~dp0"
+if defined INSTANT_UNATTENDED (
+  call "%VENV_PYTHON%" -m instant_app setup %SETUP_ARGS%
 ) else (
-  REM `instant` aun no esta en PATH en esta terminal: mismo fallback que instant-setup.bat.
-  call python -m instant_app setup --yes
+  if exist "%~dp0.venv\Scripts\pythonw.exe" (
+    call "%~dp0.venv\Scripts\pythonw.exe" -m instant_app setup %SETUP_ARGS%
+  ) else (
+    call "%VENV_PYTHON%" -m instant_app setup %SETUP_ARGS%
+  )
 )
-if %ERRORLEVEL% neq 0 (
-  echo [Instant] `instant setup` no termino bien. Reintenta con: instant setup
-  exit /b 1
+set "SETUP_RC=%ERRORLEVEL%"
+popd
+if not "%SETUP_RC%"=="0" (
+  echo [Instant] La configuracion no termino correctamente. Reintenta con instant-setup.bat.
+  exit /b %SETUP_RC%
 )
 
 echo.
-echo [Instant] Listo. Para dictar usa: instant-setup.bat una vez si quieres
-echo cambiar microfono o tecla, y luego instant-run.bat para arrancar.
-echo Solo se te pedira microfono y tecla si corres `instant setup` interactivo;
-echo el idioma es fijo: espanol.
-echo.
-echo [Instant] Arranque con el sistema: `instant setup` lo pregunta ^(casilla s/n^);
-echo   o activa sin preguntar con:  instant setup --autostart --no-probe
-echo   ^(desactiva con --no-autostart^). Ver README "Arranque con el sistema".
-REM Opt-in no-interactivo: set INSTANT_AUTOSTART=1 antes de install.bat para activar sin preguntar.
-REM Sin la var se conserva el estado actual (no rompe el flujo --yes).
-if /i not "%INSTANT_AUTOSTART%"=="1" goto :noautostart
-echo [Instant] Activando arranque con el sistema ^(--autostart^)...
-where instant >nul 2>nul
-if %ERRORLEVEL%==0 (
-  call instant setup --autostart --no-probe
-) else (
-  REM `instant` aun no esta en PATH en esta terminal: mismo fallback que arriba.
-  call python -m instant_app setup --autostart --no-probe
-)
-:noautostart
+echo [Instant] Instalacion completa. Arranca con instant-run.bat.

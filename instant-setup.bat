@@ -1,27 +1,49 @@
 @echo off
-REM Abre el setup TUI (descarga modelos ~670MB, elige mic/tecla). Sin args -> `setup`.
-REM Modelos: %~dp0models (relativo al repo). Solo default, respeta DICTADO_DATA previa.
+REM Abre el asistente de configuración de Instant.
+setlocal
 if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
-where instant.exe >nul 2>nul
-if %ERRORLEVEL%==0 (
-  if "%~1"=="" (
-    instant.exe setup
-  ) else (
-    instant.exe %*
-  )
-) else (
-  set "EXE=C:\Users\juans\AppData\Roaming\Python\Python314\Scripts\instant.exe"
-  if exist "%EXE%" (
-    if "%~1"=="" (
-      "%EXE%" setup
-    ) else (
-      "%EXE%" %*
-    )
-  ) else (
-    if "%~1"=="" (
-      python -m instant_app setup
-    ) else (
-      python -m instant_app %*
-    )
-  )
+pushd "%~dp0"
+
+if not "%~1"=="" goto :console
+if exist "dist\Instant.exe" goto :launch_gui_exe
+if exist ".venv\Scripts\pythonw.exe" goto :launch_venv_gui
+goto :path_pythonw
+
+:launch_gui_exe
+start "" "%~dp0dist\Instant.exe" setup
+goto :done
+
+:launch_venv_gui
+start "" ".venv\Scripts\pythonw.exe" -m instant_app setup
+goto :done
+
+:path_pythonw
+set "INSTANT_PYTHONW="
+for /f "delims=" %%P in ('where pythonw.exe 2^>nul') do if not defined INSTANT_PYTHONW set "INSTANT_PYTHONW=%%P"
+if defined INSTANT_PYTHONW goto :system_pythonw
+echo [Instant] No encuentro Instant.exe ni pythonw.exe para abrir la interfaz.
+set "SETUP_RC=1"
+goto :finish
+
+:system_pythonw
+start "" "%INSTANT_PYTHONW%" -m instant_app setup
+goto :done
+
+:console
+if exist ".venv\Scripts\python.exe" (
+  call ".venv\Scripts\python.exe" -m instant_app setup %*
+  goto :done
 )
+
+where instant.exe >nul 2>nul
+if not errorlevel 1 (
+  call instant.exe setup %*
+  goto :done
+)
+call python -m instant_app setup %*
+
+:done
+set "SETUP_RC=%ERRORLEVEL%"
+:finish
+popd
+exit /b %SETUP_RC%
