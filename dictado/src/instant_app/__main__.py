@@ -34,7 +34,10 @@ def _run_gui(*args, **kwargs):
 
 
 def main(argv=None):
+    from instant_app import __version__
+
     ap = argparse.ArgumentParser(prog="instant", description="Dictado local en español.")
+    ap.add_argument("--version", action="version", version=f"instant {__version__}")
     sub = ap.add_subparsers(dest="cmd")
     p_setup = sub.add_parser("setup", help="configuración de Instant")
     p_setup.add_argument("-y", "--yes", action="store_true",

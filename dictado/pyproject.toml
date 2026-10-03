@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "instant"
-version = "0.1.0"
+# La version vive en instant_app/__init__.py: una sola fuente de verdad, para
+# que el paquete instalado y el codigo no puedan desincronizarse.
+dynamic = ["version"]
 description = "Instant hold-to-talk ES offline: Parakeet v3 + Silero VAD, CPU-only"
 requires-python = ">=3.10"
 # Versiones fijadas: Instant es una aplicacion, no una libreria, y estas son las
@@ -29,3 +31,6 @@ instant = "instant_app.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "instant_app.__version__" }
