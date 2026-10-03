@@ -1,6 +1,9 @@
 """User-managed local vocabulary profiles for transcription correction."""
+import logging
 import re
 import unicodedata
+
+log = logging.getLogger("instant")
 
 DEFAULT_PROFILE = "General"
 DEFAULT_PROFILES = {DEFAULT_PROFILE: []}
@@ -373,7 +376,10 @@ def correct_aliases(text, config):
         else:
             out.append(token)
             index += 1
-    return "".join(out)
+    result = "".join(out)
+    if result != text:
+        log.info("vocab: %r -> %r", text[:120], result[:120])
+    return result
 
 
 def prompt_context(config):

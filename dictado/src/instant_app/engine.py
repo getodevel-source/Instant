@@ -26,10 +26,12 @@ def join_texts(texts):
     return s.strip()
 
 
-def merge_short_bounds(bounds, min_len=1.0, max_gap=1.0):
+def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0):
     """Une un segmento corto (<min_len) con su vecino si el hueco <= max_gap.
 
     Evita decodificar palabras sueltas sin contexto (pierden precision).
+    min_len 1.5s (antes 1.0s): los arranques de 1-1.5s sin contexto izquierdo
+    son los que mas colapsan a blank en el transducer.
     `bounds`: [(t0, t1)] en segundos. Devuelve lista nueva.
     """
     bs = [(float(s), float(e)) for s, e in bounds]
@@ -45,17 +47,45 @@ def merge_short_bounds(bounds, min_len=1.0, max_gap=1.0):
     return out
 
 
+def _fit_level(wav):
+    """Sube chunks debiles a un RMS nominal (solo boost, nunca recorta).
+
+    Hablar bajito o lejos cambiaba la hipotesis aunque al oido sonara igual.
+    Con voz presente (pico >= SILENCE_PEAK) y RMS < 0.03, aplica ganancia
+    hasta RMS 0.06 (tope 8x). Devuelve (wav, ganancia).
+    """
+    if wav.size == 0:
+        return wav, 1.0
+    peak = float(np.max(np.abs(wav)))
+    if peak < SILENCE_PEAK:
+        return wav, 1.0
+    rms = float(np.sqrt(np.mean(np.square(wav, dtype=np.float64))))
+    if rms >= 0.03 or rms < 1e-6:
+        return wav, 1.0
+    gain = min(8.0, 0.06 / rms)
+    if gain <= 1.0:
+        return wav, 1.0
+    return np.clip(wav * gain, -1.0, 1.0).astype(np.float32), gain
+
+
 class Engine:
     def __init__(self, data_dir=None, threads=4, max_seg=20.0,
-                 vad_sil=0.5, vad_pad=0.2, min_dur=0.4):
+                 vad_sil=0.5, vad_pad=0.3, min_dur=0.4, save_wavs_dir=None):
         self.paths = model_paths(data_dir)
         self.threads = threads
         self.max_seg = max_seg
         self.vad_sil = vad_sil
         self.vad_pad = vad_pad
         self.min_dur = min_dur
+        # Opt-in (DICTADO_SAVE_WAVS): guarda los wavs que el modelo deja
+        # vacios, para medir con voz real en vez de suponer.
+        self.save_wavs_dir = save_wavs_dir
         self._rec = None
         self._lock = threading.Lock()
+        # La inferencia sobre el recognizer compartido se serializa (_one):
+        # con decodificaciones concurrentes el transducer colapsaba a blank de
+        # forma intermitente (~6% de sesiones). RTF ~0.05x deja margen.
+        self._decode_lock = threading.Lock()
 
     def recognizer(self):
         with self._lock:
@@ -93,7 +123,9 @@ class Engine:
         cfg.silero_vad.model = self.paths["vad"]
         cfg.silero_vad.threshold = 0.5
         cfg.silero_vad.min_silence_duration = self.vad_sil
-        cfg.silero_vad.min_speech_duration = 0.25
+        # 0.20s (antes 0.25s): los ataques suaves de la primera palabra
+        # quedaban marcados como no-voz y el onset se recortaba.
+        cfg.silero_vad.min_speech_duration = 0.2
         cfg.silero_vad.window_size = 512
         cfg.sample_rate = SAMPLE_RATE
         return sherpa_onnx.VadModel.create(cfg)
@@ -158,10 +190,61 @@ class Engine:
     def _one(self, args):
         idx, wav = args
         rec = self.recognizer()
-        s = rec.create_stream()
-        s.accept_waveform(SAMPLE_RATE, np.ascontiguousarray(wav, dtype=np.float32))
-        rec.decode_stream(s)
-        return idx, (s.result.text or "").strip()
+        # Serializa la inferencia: el recognizer es compartido y el decode
+        # concurrente producia vacios intermitentes.
+        with self._decode_lock:
+            s = rec.create_stream()
+            s.accept_waveform(SAMPLE_RATE, np.ascontiguousarray(wav, dtype=np.float32))
+            rec.decode_stream(s)
+            return idx, (s.result.text or "").strip()
+
+    def _recover_empties(self, wav, peak, bounds, chunks, texts):
+        """Reintento secuencial de segmentos vacios con contexto ampliado.
+
+        El transducer colapsa a blank en chunks cortos o cortados a mitad de
+        palabra aunque el pico sea bueno. Solo actua en la via de fallo: sin
+        vacios no decodifica nada extra.
+        """
+        fixed = list(texts)
+        for idx, text in enumerate(fixed):
+            if text:
+                continue
+            s, e = bounds[idx]
+            cpeak = float(np.max(np.abs(chunks[idx][1]))) if chunks[idx][1].size else 0.0
+            cdur = len(chunks[idx][1]) / SAMPLE_RATE
+            if cpeak < SILENCE_PEAK or cdur < 0.3:
+                continue
+            # Contexto +-1s: le devuelve al transducer el arranque que el
+            # corte le saco (la causa del inicio recortado).
+            rs = max(0.0, s - 1.0)
+            re_ = min(len(wav) / SAMPLE_RATE, e + 1.0)
+            rwav, rgain = _fit_level(wav[int(rs * SAMPLE_RATE):int(re_ * SAMPLE_RATE)])
+            try:
+                _, retry = self._one((-1, rwav))
+                retry = (retry or "").strip()
+            except Exception:
+                log.exception("reintento seg %d fail", idx + 1)
+                continue
+            log.info("seg %d/%d reintento (%.1f-%.1fs pico=%.4f g=%.1f): %s",
+                     idx + 1, len(chunks), rs, re_, cpeak, rgain, retry[:80])
+            if retry:
+                fixed[idx] = retry
+        if any(fixed):
+            return fixed
+        # Perdida total con audio fuerte: ultimo intento con el wav completo.
+        if peak >= SILENCE_PEAK and len(wav) / SAMPLE_RATE >= 0.3:
+            full = wav[:int(min(len(wav) / SAMPLE_RATE, 120.0)) * SAMPLE_RATE]
+            try:
+                _, retry = self._one((-1, full))
+                retry = (retry or "").strip()
+            except Exception:
+                log.exception("reintento total fail")
+                return fixed
+            log.info("reintento total (%.1fs): %s",
+                     len(full) / SAMPLE_RATE, retry[:80])
+            if retry:
+                return [retry]
+        return fixed
 
     def transcribe(self, audio):
         """VAD + Parakeet por segmento en paralelo. Devuelve texto unido."""
@@ -171,17 +254,58 @@ class Engine:
         log.info("audio %.1fs pico=%.4f, segmentando...", dur, peak)
         t0 = time.time()
         bounds = merge_short_bounds(self.segment(wav))
-        log.info("%d segmentos en %.2fs.", len(bounds), time.time() - t0)
+        log.info("%d segmentos en %.2fs: %s.", len(bounds), time.time() - t0,
+                 ", ".join(f"{s:.2f}-{e:.2f}" for s, e in bounds))
         if not bounds:
             return ""
-        chunks = [(i, wav[int(s * SAMPLE_RATE):int(e * SAMPLE_RATE)])
-                  for i, (s, e) in enumerate(bounds)]
+        chunks = []
+        for i, (s, e) in enumerate(bounds):
+            raw = wav[int(s * SAMPLE_RATE):int(e * SAMPLE_RATE)]
+            normed, gain = _fit_level(raw)
+            chunks.append((i, normed, gain))
         t0 = time.time()
         texts = [""] * len(chunks)
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(self.threads, len(chunks))) as ex:
-            for idx, text in ex.map(self._one, chunks):
+            for idx, text in ex.map(self._one, [(i, w) for i, w, _g in chunks]):
                 texts[idx] = (text or "").strip()
-                log.info("seg %d/%d: %s", idx + 1, len(chunks), texts[idx][:80])
+                cpeak = float(np.max(np.abs(chunks[idx][1]))) if chunks[idx][1].size else 0.0
+                log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f): %s", idx + 1, len(chunks),
+                         len(chunks[idx][1]) / SAMPLE_RATE, cpeak, chunks[idx][2],
+                         texts[idx][:80])
         log.info("decode %d segs en %.2fs.", len(chunks), time.time() - t0)
+        texts = self._recover_empties(wav, peak, bounds, chunks, texts)
+        if self.save_wavs_dir and not any(t.strip() for t in texts):
+            self._dump_failure(wav, peak, dur, bounds)
         return join_texts(texts)
+
+    def _dump_failure(self, wav, peak, dur, bounds):
+        """Guarda el wav que el modelo dejo vacio + meta, sin tumbar nunca."""
+        try:
+            import datetime
+            import wave
+
+            os.makedirs(self.save_wavs_dir, exist_ok=True)
+            wavs = sorted(
+                (os.path.join(self.save_wavs_dir, f) for f in os.listdir(self.save_wavs_dir)
+                 if f.endswith(".wav")),
+                key=lambda p: os.path.getmtime(p))
+            while len(wavs) >= 50:
+                try:
+                    os.remove(wavs.pop(0))
+                except OSError:
+                    break
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            base = os.path.join(self.save_wavs_dir, f"fallo-{stamp}")
+            pcm = (np.clip(wav, -1.0, 1.0) * 32767).astype(np.int16)
+            with wave.open(base + ".wav", "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(SAMPLE_RATE)
+                w.writeframes(pcm.tobytes())
+            with open(base + ".txt", "w", encoding="utf-8") as f:
+                f.write(f"dur={dur:.1f}s pico={peak:.4f} "
+                        f"bounds={[(round(s, 2), round(e, 2)) for s, e in bounds]}\n")
+            log.info("wav de fallo guardado en %s.", base + ".wav")
+        except Exception:
+            log.exception("no pude guardar wav de fallo")
