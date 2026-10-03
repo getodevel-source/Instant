@@ -86,6 +86,13 @@ with tempfile.TemporaryDirectory() as d:
                 f.write("acceso ajeno\n")
         _cycle("win32", link_fn, _alien_lnk)
 
+        from unittest.mock import patch
+        frozen_exe = os.path.join(d, "Instant.exe")
+        with patch.object(a.sys, "frozen", True, create=True), \
+                patch.object(a.sys, "executable", frozen_exe):
+            _check("binario arranca la instancia de bandeja",
+                   a._resolve_win_launch() == (frozen_exe, "run", d))
+
         # is_enabled nunca crashea con HOME roto.
         os.environ["HOME"] = os.path.join(d, "no-existe-definitivamente")
         os.environ["APPDATA"] = os.path.join(d, "no-existe-definitivamente")

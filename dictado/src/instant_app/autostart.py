@@ -10,7 +10,6 @@ nunca toca archivos ajenos). `is_enabled` nunca crashea.
 """
 import logging
 import os
-import plistlib
 import shlex
 import shutil
 import subprocess
@@ -85,7 +84,10 @@ def _plist_path():
 # --- Resolucion del lanzador ---
 
 def _resolve_win_launch():
-    """(target, args, workdir): .bat del repo si existe, si no instant.exe, si no pythonw."""
+    """(target, args, workdir) para el daemon, incluido el ejecutable congelado."""
+    if getattr(sys, "frozen", False):
+        executable = sys.executable
+        return (executable, "run", os.path.dirname(executable))
     bat = _find_repo_file("instant-run.bat")
     if bat:
         return (bat, "", os.path.dirname(bat))
@@ -346,6 +348,7 @@ def _plist_dict():
 
 def _read_plist(path):
     try:
+        import plistlib
         with open(path, "rb") as f:
             data = plistlib.load(f)
     except Exception:
@@ -376,6 +379,7 @@ def _mac_enable():
             # reescribo igual para dejarlo canonico sin duplicar.
             pass
     try:
+        import plistlib
         with open(path, "wb") as f:
             plistlib.dump(_plist_dict(), f)
     except OSError as e:

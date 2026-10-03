@@ -33,13 +33,18 @@ def _has_models(d):
 
 
 def resolve_data_dir():
-    """DICTADO_DATA > ./models (dev) > user data dir. Solo lo usado, sin magia."""
+    """DICTADO_DATA > cwd/models > frozen checkout models > user data."""
     env = os.environ.get("DICTADO_DATA")
     if env:
         return env
     cwd_models = os.path.join(os.getcwd(), "models")
     if _has_models(cwd_models):
         return cwd_models
+    if getattr(sys, "frozen", False):
+        executable_dir = os.path.dirname(sys.executable)
+        checkout_models = os.path.join(os.path.dirname(executable_dir), "models")
+        if _has_models(checkout_models):
+            return checkout_models
     return user_data_dir()
 
 
