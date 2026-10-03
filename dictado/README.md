@@ -81,24 +81,33 @@ instant run     # daemon: mantén la tecla, suelta para transcribir
 instant check   # boot rapido: tecla + mic probe + warmup (<5s)
 ```
 
-En Windows, `instant setup` abre el centro gráfico PySide6: un panel de inicio
-con estado del dictado y accesos a Audio, Preferencias y Modelos. Audio ofrece
-selector y prueba de micrófono (3 s); Preferencias incluye arranque con Windows
-y captura de tecla individual; Modelos muestra estado y descarga. «Actualizar»
-vuelve a enumerar las entradas disponibles sin cambiar el micrófono elegido si
-sigue presente, incluso si cambian los índices. El panel indica los cambios
-pendientes de guardar y, después de guardar, avisa si el micrófono o la tecla
-requieren reiniciar Instant. El diagnóstico muestra el informe en una ventana
-independiente. La ventana de control puede cerrarse sin detener el daemon, que
-conserva su icono de bandeja y la notificación de grabación independiente.
+En Windows, `instant setup` abre el centro gráfico PySide6: una sola página
+con scroll y cuatro bloques. Arriba, la portada con el estado del dictado, la
+tecla y los botones de iniciar/detener; después, micrófono con selector y
+prueba de nivel (3 s), tarjeta General con tecla y arranque con Windows, y
+**Vocabulario**: tabla por perfil con término, variantes (`a | b | c`), pill
+de sonido (`≈`) y botón de quitar (`✕`). «Añadir término» agrega una fila en
+blanco lista para escribir. El panel indica los cambios pendientes de guardar
+y, después de guardar, avisa si hace falta reiniciar Instant. El diagnóstico
+muestra el informe en una ventana independiente. La ventana puede cerrarse sin
+detener el daemon, que conserva su icono de bandeja.
+
+El overlay de Windows es Qt Quick con dos estilos (`overlay_style` en la
+config): `orbital` (orbe con anillos que respiran con la voz, por defecto) y
+`classic` (pastilla con barras y tecla visible). Ambos comparten la paleta con
+la ventana.
 
 Para retocar la interfaz, los colores están en
 [`branding.py`](dictado/src/instant_app/branding.py) (`PALETTE`, única fuente de
 verdad) y las medidas, la tipografía y los tiempos de animación en
-[`theme.py`](dictado/src/instant_app/theme.py), que arma la hoja de estilo. La
-pastilla flotante repite la paleta en
-[`qml/overlay.qml`](dictado/src/instant_app/qml/overlay.qml) porque se carga sin
-motor de plantillas; `tests/test_overlay_palette.py` falla si se despegan.
+[`theme.py`](dictado/src/instant_app/theme.py), que arma la hoja de estilo. Los
+overlays repiten la paleta a mano en
+[`qml/overlay.qml`](dictado/src/instant_app/qml/overlay.qml) y
+[`qml/overlay_orbital.qml`](dictado/src/instant_app/qml/overlay_orbital.qml)
+porque se cargan sin motor de plantillas;
+`tests/test_overlay_palette.py` falla si se despegan. El tamaño del orbe se
+ajusta con `compositionScale` y su posición con `_OVERLAY_BOTTOM_GAP` en
+`overlay.py`.
 
 En Linux/macOS se conserva el asistente terminal, que hace, en orden:
 

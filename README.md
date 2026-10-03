@@ -1,6 +1,10 @@
-﻿# Instant
+# Instant
 
 Dictado por voz local en español: mantené F9, hablá y soltá. Instant transcribe y pega el texto en el campo enfocado. El reconocimiento corre en CPU; el audio no se envía a la nube.
+
+![Ventana de Instant](docs/screenshots/ventana-ajustes.png)
+
+*Una sola pantalla: estado, micrófono, ajustes y vocabulario. Los botones de cada término (sonido `≈`, quitar `✕`) se ven completos, sin recortes.*
 
 ## Instalación
 
@@ -45,10 +49,18 @@ instant-status.bat
 instant-stop.bat
 ```
 
-Sin argumentos, `instant-setup.bat` abre la página de audio/configuración sin
+Sin argumentos, `instant-setup.bat` abre la ventana de ajustes sin
 dejar una consola abierta y **no** inicia el daemon: usa `dist/Instant.exe setup`
 si el ejecutable está disponible, o `pythonw` en segundo plano. Los argumentos
 explícitos conservan su salida de CLI en consola.
+
+La ventana es una sola página con scroll: portada con estado y tecla,
+micrófono con prueba de nivel, tarjeta General (tecla + arranque con
+Windows) y **Vocabulario**, una tabla por perfil donde cada término lleva
+sus variantes (`a | b | c`), el pill de sonido (`≈`, corrige también lo que
+suena parecido) y el botón para quitarlo (`✕`).
+
+![Tabla de vocabulario](docs/screenshots/vocab-tabla.png)
 
 `dist/Instant.exe` sin argumentos abre el panel y se asegura de que haya un
 solo daemon activo. `Instant.exe setup` es solo configuración. Cerrar la ventana
@@ -60,6 +72,12 @@ el resultado y envía Ctrl+V al campo enfocado. En Windows, el overlay del daemo
 usa Qt Quick, no muestra el contenido dictado y confirma «Copiado»; Linux/macOS
 mantienen el fallback Tk. Windows puede ubicar el icono bajo la flecha de
 iconos ocultos.
+
+Mientras dictás, el orbe respira con tu voz (nivel y espectro reales del
+micrófono); al soltar, un arco barre mientras transcribe y el tilde confirma.
+Vive fijo abajo al centro del monitor donde trabajás:
+
+![Orbe del overlay](docs/screenshots/overlay-orbital.png)
 
 ## Privacidad y datos
 

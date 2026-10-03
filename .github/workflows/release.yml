@@ -72,6 +72,7 @@ jobs:
             --hidden-import PySide6.QtQuick \
             --additional-hooks-dir dictado/hooks \
             --add-data "dictado/src/instant_app/qml/overlay.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/overlay_orbital.qml;instant_app/qml" \
             --collect-all sherpa_onnx \
             --collect-all sounddevice \
             --collect-all pystray \

@@ -17,7 +17,7 @@ log = logging.getLogger("instant")
 _OVERLAY_SHADOW_MARGIN = 12
 # La pastilla del dictado vive fija abajo al centro, estilo asistente de voz:
 # siempre en el mismo lugar, sin tapar el campo donde se escribe.
-_OVERLAY_BOTTOM_GAP = 76
+_OVERLAY_BOTTOM_GAP = 60
 
 # Geometria del overlay Tk: la linea base de las barras esta en y=29 y el
 # lienzo del medidor mide 26 px de alto, asi que el semialto se queda en 13.

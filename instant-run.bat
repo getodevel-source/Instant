@@ -21,14 +21,14 @@ del "%PIDFILE%" 2>nul
 :scan
 tasklist /FI "IMAGENAME eq instant.exe" 2>nul | findstr /I "instant.exe" >nul
 if not errorlevel 1 goto :dup_exe
-powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'pythonw.exe' -and $_.CommandLine -like '*instant*' }) { exit 1 } else { exit 0 }" >nul 2>nul
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'pythonw.exe' -and $_.CommandLine -like '*instant_app run*' }) { exit 1 } else { exit 0 }" >nul 2>nul
 if errorlevel 1 goto :dup_pyw
 goto :launch
 :dup_exe
 echo Ya hay instancia viva instant.exe sin PID file. No se lanza otra.
 exit /b 0
 :dup_pyw
-echo Ya hay instancia viva pythonw oculto con instant. No se lanza otra.
+echo Ya hay daemon vivo pythonw con instant_app run. No se lanza otro.
 exit /b 0
 :launch
 set "INSTANT_PYTHON=%~dp0.venv\Scripts\pythonw.exe"

@@ -20,14 +20,25 @@ Window {
     property string keyLabel: "F9"
     property string previousMode: ""
 
-    // Voz real del daemon: nivel global, espectro y tono.
+    // Voz real del daemon: nivel global, espectro y tono. Gesto contenido y
+    // sedoso: el nivel se suaviza en 90 ms y los anillos/núcleo acompañan
+    // sin saltos.
     property real level: 0
-    Behavior on level { NumberAnimation { duration: 60; easing.type: Easing.OutCubic } }
+    Behavior on level { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
     property var bandLevels: [0, 0, 0, 0, 0, 0, 0, 0, 0]
     property real pitch: 0.5
     Behavior on pitch { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
     readonly property bool feedback: mode === "error" || mode === "notice"
+    // Modos con animación viva: anillos y núcleo solo existen acá. En idle
+    // (incluida la despedida) se ocultan para que el éxito no "rebote" a la
+    // animación por unos frames al expirar.
+    readonly property bool active: mode === "starting" || mode === "listening"
+        || mode === "processing"
+    // Escala global de la composición (1 = tamaño original). La ventana sigue
+    // igual; todo el orbe se dibuja más chico y centrado. Un solo número
+    // para ajustar el tamaño sin romper proporciones.
+    readonly property real compositionScale: 0.56
     readonly property int orbSize: feedback ? 0 : 200
     width: (feedback ? 384 : 200) + shadowMargin * 2
     height: (feedback ? 150 : 200) + shadowMargin * 2
@@ -98,7 +109,7 @@ Window {
         id: entrance
         NumberAnimation {
             target: stage; property: "scale"
-            from: 0.92; to: 1; duration: 380
+            from: orbital.compositionScale * 0.92; to: orbital.compositionScale; duration: 380
             easing.type: Easing.BezierSpline
             easing.bezierCurve: [0.32, 0.72, 0, 1]
         }
@@ -119,7 +130,7 @@ Window {
         id: departure
         NumberAnimation {
             target: stage; property: "scale"
-            to: 0.94; duration: 260; easing.type: Easing.InCubic
+            to: orbital.compositionScale * 0.94; duration: 260; easing.type: Easing.InCubic
         }
         NumberAnimation {
             target: stage; property: "opacity"
@@ -151,6 +162,18 @@ Window {
         id: stage
         anchors.fill: parent
         transformOrigin: Item.Center
+        scale: orbital.compositionScale
+
+        // Velo de fondo: halo apenas más grande que la composición, con el
+        // vidrio de la marca a baja alfa. Sin el velo a sangre completa: la
+        // huella se achica y un glitch de composición se lee como sombra.
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 26
+            radius: 24
+            antialiasing: true
+            color: orbital.tint(orbital.glassBottom, 0.38)
+        }
 
         // Sombra suave del orbe.
         Rectangle {
@@ -158,6 +181,19 @@ Window {
             width: 120; height: 120
             radius: 60
             color: Qt.rgba(0, 0, 0, 0.25)
+            visible: !orbital.feedback
+        }
+
+        // Escenario: fondito traslúcido detrás de los anillos. Les da
+        // contraste en cualquier fondo, también en los oscuros.
+        Rectangle {
+            anchors.centerIn: parent
+            width: 170; height: 170
+            radius: 85
+            antialiasing: true
+            color: orbital.tint(orbital.glassTop, 0.35)
+            border.width: 1
+            border.color: orbital.tint(orbital.ink, 0.05)
             visible: !orbital.feedback
         }
 
@@ -170,25 +206,26 @@ Window {
             ]
             delegate: Rectangle {
                 anchors.centerIn: parent
-                width: (modelData.base + orbital.bandAvg(modelData.lo, modelData.hi) * 20) * 2
+                width: (modelData.base + orbital.bandAvg(modelData.lo, modelData.hi) * 15) * 2
                 height: width
                 radius: width / 2
                 antialiasing: true
-                visible: !orbital.feedback && orbital.mode !== "success"
+                visible: orbital.active
                 color: "transparent"
                 border.width: index === 0 ? 2 : 1.5
-                border.color: orbital.tint(orbital.accent, modelData.alpha + orbital.level * 0.2)
+                border.color: orbital.tint(orbital.accent, modelData.alpha + orbital.level * 0.15)
             }
         }
 
-        // Núcleo: la voz hecha punto. Crece con el nivel y respira en reposo.
+        // Núcleo: la voz hecha punto. Más chico y contenido: crece con el
+        // nivel sin exagerar y respira en reposo.
         Rectangle {
             id: core
             anchors.centerIn: parent
-            width: 14 + orbital.level * 16; height: width
+            width: 11 + orbital.level * 12; height: width
             radius: width / 2
             antialiasing: true
-            visible: !orbital.feedback && orbital.mode !== "success"
+            visible: orbital.active
             color: orbital.voiceLo
             opacity: 0.85
             SequentialAnimation on opacity {
@@ -222,7 +259,7 @@ Window {
                     layer.samples: 4
                     ShapePath {
                         strokeColor: orbital.accent
-                        strokeWidth: 3
+                        strokeWidth: 3.5
                         fillColor: "transparent"
                         capStyle: ShapePath.RoundCap
                         PathAngleArc {

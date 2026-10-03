@@ -133,18 +133,22 @@ QHeaderView::section {{
 }}
 QTableWidget::item {{ padding:6px 8px; border:0; }}
 QTableWidget::item:selected {{ background:{rgba(c['accent'], 0.16)}; color:{c['text']}; }}
+/* Envoltorios de los botones de cada fila: transparentes para no pintar
+   un cuadrado detrás del pill / círculo (el fondo global de QWidget los
+   tapaba con otro tono). */
+QTableWidget QWidget#vocabCell {{ background:transparent; border:0; }}
 QPushButton#rowDelete {{
     background:transparent; color:{c['muted']};
-    border:1px solid {rgba(c['line'], 0.7)}; border-radius:16px;
-    min-width:32px; max-width:32px; min-height:32px; max-height:32px;
-    padding:0; font-weight:600;
+    border:1px solid {rgba(c['line'], 0.7)}; border-radius:15px;
+    min-width:30px; max-width:30px; min-height:30px; max-height:30px;
+    padding:0; font-size:10pt; font-weight:600;
 }}
 QPushButton#rowDelete:hover {{ color:{c['red']}; border-color:{rgba(c['red'], 0.5)}; background:transparent; }}
 QPushButton#soundToggle {{
     background:transparent; color:{c['faint']};
-    border:1px solid {rgba(c['line'], 0.7)}; border-radius:12px;
-    min-width:56px; max-width:56px; min-height:30px; max-height:30px;
-    padding:0; font-size:14pt; font-weight:600;
+    border:1px solid {rgba(c['line'], 0.7)}; border-radius:14px;
+    min-width:56px; max-width:56px; min-height:28px; max-height:28px;
+    padding:0; font-size:11pt; font-weight:600;
 }}
 QPushButton#soundToggle:hover {{ color:{c['muted']}; border-color:{rgba(c['accent'], 0.5)}; }}
 QPushButton#soundToggle:checked {{

@@ -171,6 +171,21 @@ Windows, Linux y macOS.
   pill; sin nombres de modelos en la UI ("la voz"); sin campo de LLM visible
   (vive en config/CLI); fuera la pastilla verde (solo un punto de estado); ✕
   circular para quitar términos.
+- **Botones de vocabulario rehechos.** El pill `≈` y la `✕` se recortaban
+  arriba/abajo (`resizeRowsToContents` dejaba filas más bajas que el botón y la
+  fuente desbordaba) y la `✕` mostraba un cuadrado detrás (el envoltorio
+  heredaba el fondo global de `QWidget`). Ahora: filas de 46 px mínimo
+  garantizado, botones 30/28 px con fuentes contenidas, envoltorios
+  transparentes y sin foco visible. Verificado con tests Qt y captura real.
+- **Overlay Orbital afinado.** Velo y escenario traslúcidos (se notan también
+  en fondos oscuros), voz contenida en dos pasadas, núcleo más chico, flash de
+  despedida eliminado (mic/anillos/tilde ya no reaparecen en `idle`),
+  composición global con `compositionScale` (0.56) y pastilla 16 px más abajo
+  (`_OVERLAY_BOTTOM_GAP` 60). Arco de transcripción apenas más nítido; el
+  movimiento (entrada/salida/tilde/giro) intacto.
+- **`instant-run.bat` ya no confunde la ventana con el daemon.** Su chequeo de
+  duplicados matcheaba cualquier `pythonw` con "instant" (incluida la ventana
+  de ajustes) y se negaba a arrancar; ahora solo mira `instant_app run`.
 
 ### Corregido
 

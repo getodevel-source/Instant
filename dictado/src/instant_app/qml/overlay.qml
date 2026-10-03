@@ -20,11 +20,12 @@ Window {
     property string keyLabel: "F9"
     property string previousMode: ""
     // Nivel de voz 0..1 que empuja el daemon ~20 veces por segundo mientras
-    // se dicta: es tu micrófono de verdad, no un adorno. Con 0 la animación
-    // apenas respira; al hablar, la onda se estira hasta ~1.85x, el anillo se
-    // expande y la pastilla vibra. Suavizado en 60 ms para seguir a la voz.
+    // se dicta: es tu micrófono de verdad, no un adorno. Gesto contenido:
+    // con 0 la animación apenas respira; al hablar, las barras llegan al
+    // tope justo sin saltos y el anillo acompaña con un leve ensanche.
+    // Suavizado en 90 ms para seguir a la voz sin tirones.
     property real level: 0
-    Behavior on level { NumberAnimation { duration: 60; easing.type: Easing.OutCubic } }
+    Behavior on level { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
     // Espectro en 9 bandas (una por barra, 80 Hz..7.5 kHz): cada barra sigue
     // a su frecuencia de verdad. Cantá grave y se mueven las del centro;
     // silbá agudo y saltan las de los bordes.
@@ -37,6 +38,11 @@ Window {
     readonly property color voiceLo: Qt.hsla(0.47 + pitch * 0.07, 0.62, 0.58, 1)
 
     readonly property bool feedback: mode === "error" || mode === "notice"
+    // Modos con animación viva: el mic y la tecla solo existen acá. En idle
+    // (incluida la despedida) se ocultan para que el tilde no "rebote" a la
+    // animación por unos frames al expirar el éxito.
+    readonly property bool active: mode === "starting" || mode === "listening"
+        || mode === "processing"
     // La pastilla de aviso se ajusta al texto: ni aire de más ni cortes raros.
     // Un poco más de píxeles que antes (300x78): las curvas finas necesitan
     // resolución para no verse pixeladas al escalar en pantallas HiDPI.
@@ -166,6 +172,17 @@ Window {
         id: content
         anchors.fill: parent
 
+        // Velo de fondo (prueba): tiñe apenas la ventana completa con el
+        // vidrio de la marca a baja alfa. La pastilla deja de flotar en
+        // crudo sobre fondos ruidosos y un glitch de composición se lee
+        // como sombra, no como un cuadrado recortado.
+        Rectangle {
+            anchors.fill: parent
+            radius: 26
+            antialiasing: true
+            color: overlay.tint(overlay.glassBottom, 0.38)
+        }
+
         // Sombra por capas: el overlay no usa shaders, así que se simula con
         // rectángulos de alfa decreciente. Cinco pasos se leen como un blur suave.
         Repeater {
@@ -213,6 +230,19 @@ Window {
             Behavior on border.color { ColorAnimation { duration: 260 } }
             Behavior on radius { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
+            // Escenario: fondito traslúcido detrás de la animación. Le da un
+            // segundo nivel a la pastilla y contrasta el orbe en cualquier
+            // fondo, también en los oscuros donde el velo exterior no se nota.
+            Rectangle {
+                x: 10; y: 10
+                width: parent.width - 20; height: parent.height - 20
+                radius: 14
+                antialiasing: true
+                color: overlay.tint(overlay.glassTop, 0.35)
+                border.width: 1
+                border.color: overlay.tint(overlay.ink, 0.05)
+            }
+
             // Luz de canto superior: separa la pastilla del fondo sin recargarla.
             Rectangle {
                 x: shell.radius * 0.7
@@ -228,10 +258,10 @@ Window {
                 id: orb
                 x: 16
                 anchors.verticalCenter: parent.verticalCenter
-                width: 44; height: 44
+                width: 34; height: 34
                 // El anillo acompaña a la voz con un gesto mínimo.
-                scale: 1 + overlay.level * 0.10
-                Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
+                scale: 1 + overlay.level * 0.045
+                Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
                 // Anillo base: da el color del estado sin llenar el círculo.
                 Rectangle {
@@ -241,7 +271,7 @@ Window {
                     antialiasing: true
                     color: "transparent"
                     border.width: 1
-                    border.color: overlay.tint(overlay.accent, 0.34 + overlay.level * 0.25)
+                    border.color: overlay.tint(overlay.accent, 0.32 + overlay.level * 0.11)
                     Behavior on border.color { ColorAnimation { duration: 260 } }
                 }
 
@@ -252,8 +282,8 @@ Window {
                     anchors.margins: 3
                     radius: width / 2
                     antialiasing: true
-                    color: overlay.tint(overlay.accent, 0.16 + overlay.level * 0.14)
-                    opacity: 0.7 + overlay.level * 0.3
+                    color: overlay.tint(overlay.accent, 0.15 + overlay.level * 0.07)
+                    opacity: 0.72 + overlay.level * 0.15
                     Behavior on color { ColorAnimation { duration: 260 } }
                     SequentialAnimation on opacity {
                         running: overlay.mode === "listening"
@@ -293,12 +323,14 @@ Window {
                 }
 
                 // Micrófono de trazo fino: la marca, sin el disco macizo de antes.
+                // Escala 0.77: acompaña al orbe chico sin redibujar los trazos.
                 Item {
                     id: micGlyph
                     anchors.centerIn: parent
                     width: 30; height: 30
+                    scale: 0.77
                     transformOrigin: Item.Center
-                    visible: !overlay.feedback && overlay.mode !== "success"
+                    visible: overlay.active
                     opacity: overlay.mode === "processing" ? 0.8 : 1
                     Behavior on opacity { NumberAnimation { duration: 220 } }
 
@@ -332,7 +364,14 @@ Window {
                 }
 
                 // Listo: tilde dibujada (no depende de la tipografía del sistema).
-                Shape {
+                // El envoltorio la achica con el orbe; el pop anima adentro.
+                Item {
+                    anchors.centerIn: parent
+                    width: 30; height: 30
+                    scale: 0.77
+                    transformOrigin: Item.Center
+                    visible: overlay.mode === "success"
+                    Shape {
                     id: checkGlyph
                     anchors.centerIn: parent
                     width: 30; height: 30
@@ -341,7 +380,6 @@ Window {
                     layer.enabled: true
                     layer.smooth: true
                     layer.samples: 4
-                    visible: overlay.mode === "success"
                     ShapePath {
                         strokeColor: overlay.brandGreen
                         strokeWidth: 2.6
@@ -353,13 +391,14 @@ Window {
                         PathLine { x: 13.5; y: 19.5 }
                         PathLine { x: 21; y: 10.5 }
                     }
+                    }
                 }
 
                 Text {
                     anchors.centerIn: parent
                     text: "!"
                     color: overlay.accent
-                    font.pixelSize: 19
+                    font.pixelSize: 15
                     font.weight: Font.Bold
                     renderType: Text.NativeRendering
                     visible: overlay.feedback
@@ -373,8 +412,8 @@ Window {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: !overlay.feedback && overlay.mode !== "success"
                 // La pastilla acompaña a la voz con un gesto mínimo.
-                scale: 1 + overlay.level * 0.06
-                Behavior on scale { NumberAnimation { duration: 100; easing.type: Easing.OutCubic } }
+                scale: 1 + overlay.level * 0.026
+                Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
                 // Arranque: tres puntos que respiran en secuencia.
                 Item {
@@ -425,14 +464,14 @@ Window {
                             GradientStop { position: 0; color: overlay.voiceHi }
                             GradientStop { position: 1; color: overlay.voiceLo }
                         }
-                        opacity: ((0.35 + (1 - Math.abs(index - 4) / 4.5) * 0.45) * (0.30 + 0.70 * bar.act)) + bar.act * 0.25
+                        opacity: ((0.35 + (1 - Math.abs(index - 4) / 4.5) * 0.45) * (0.30 + 0.70 * bar.act)) + bar.act * 0.14
                         visible: overlay.mode === "listening"
                         SequentialAnimation {
                             running: overlay.mode === "listening"
                             loops: Animation.Infinite
-                            PauseAnimation { duration: index * 55 }
-                            NumberAnimation { target: bar; property: "height"; to: Math.min(32, bar.highHeight * (0.30 * (0.12 + 0.88 * bar.act) + bar.band * 1.4 + overlay.level * 0.2)); duration: 200; easing.type: Easing.OutCubic }
-                            NumberAnimation { target: bar; property: "height"; to: bar.lowHeight * (0.25 + 0.45 * bar.act + overlay.level * 0.3); duration: 440; easing.type: Easing.InOutSine }
+                            PauseAnimation { duration: index * 45 }
+                            NumberAnimation { target: bar; property: "height"; to: Math.min(32, bar.highHeight * (0.24 * (0.12 + 0.88 * bar.act) + bar.band * 0.86 + overlay.level * 0.09)); duration: 240; easing.type: Easing.OutCubic }
+                            NumberAnimation { target: bar; property: "height"; to: bar.lowHeight * (0.25 + 0.38 * bar.act + overlay.level * 0.17); duration: 520; easing.type: Easing.InOutSine }
                         }
                     }
                 }
@@ -479,7 +518,7 @@ Window {
                             // se lee premium; tres se leen ruido.
                             ShapePath {
                                 strokeColor: overlay.accent
-                                strokeWidth: 3.2
+                                strokeWidth: 3.5
                                 fillColor: "transparent"
                                 capStyle: ShapePath.RoundCap
                                 PathAngleArc {
@@ -496,7 +535,7 @@ Window {
                     }
                     Item {
                         anchors.fill: parent
-                        opacity: 0.35
+                        opacity: 0.38
                         Shape {
                             anchors.fill: parent
                             antialiasing: true
@@ -547,7 +586,7 @@ Window {
                 color: overlay.tint(overlay.ink, 0.05)
                 border.width: 1
                 border.color: overlay.tint(overlay.accent, 0.20)
-                visible: !overlay.feedback && overlay.mode !== "success"
+                visible: overlay.active
                 Text {
                     id: keyText
                     anchors.centerIn: parent

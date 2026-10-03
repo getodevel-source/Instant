@@ -585,11 +585,12 @@ def _main_window_class():
             header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
             header.setSectionResizeMode(1, QHeaderView.Stretch)
             header.setSectionResizeMode(2, QHeaderView.Fixed)
-            header.resizeSection(2, 78)
+            header.resizeSection(2, 76)
             header.setSectionResizeMode(3, QHeaderView.Fixed)
-            header.resizeSection(3, 62)
+            header.resizeSection(3, 54)
             self.vocab_table.verticalHeader().setVisible(False)
-            self.vocab_table.verticalHeader().setDefaultSectionSize(42)
+            self.vocab_table.verticalHeader().setMinimumSectionSize(46)
+            self.vocab_table.verticalHeader().setDefaultSectionSize(46)
             self.vocab_table.setMinimumHeight(160)
             self.vocab_table.setShowGrid(False)
             self.vocab_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -710,39 +711,60 @@ def _main_window_class():
                 self._vocab_loading = False
                 table.blockSignals(False)
             table.resizeRowsToContents()
+            # resizeRowsToContents puede dejar filas más bajas que el botón:
+            # se impone un mínimo para que el pill (≈) y la X nunca se recorten.
+            for row in range(table.rowCount()):
+                if table.rowHeight(row) < 46:
+                    table.setRowHeight(row, 46)
             self._vocab_fit_height()
 
         def _vocab_append_row(self, term="", aliases=(), sonido=False):
             table = self.vocab_table
             row = table.rowCount()
             table.insertRow(row)
+            table.setRowHeight(row, 46)
             table.setItem(row, 0, QTableWidgetItem(str(term)))
             table.setItem(row, 1, QTableWidgetItem(" | ".join(aliases)))
-            wrap = QWidget()
-            centered = QHBoxLayout(wrap)
-            centered.setContentsMargins(0, 0, 0, 0)
-            centered.setAlignment(Qt.AlignCenter)
+            # Botón Sonido (≈): pill centrada en un envoltorio transparente.
+            # El envoltorio no pinta fondo (ver QSS #vocabCell): antes heredaba
+            # el fondo global de QWidget y se veía un recuadro detrás.
+            sound_wrap = QWidget()
+            sound_wrap.setObjectName("vocabCell")
+            sound_wrap.setAttribute(Qt.WA_StyledBackground, False)
+            sound_layout = QHBoxLayout(sound_wrap)
+            sound_layout.setContentsMargins(0, 0, 0, 0)
+            sound_layout.setSpacing(0)
+            sound_layout.setAlignment(Qt.AlignCenter)
             sound = QPushButton("≈")
             sound.setObjectName("soundToggle")
             sound.setCheckable(True)
             sound.setChecked(bool(sonido))
             sound.setCursor(Qt.PointingHandCursor)
+            sound.setFocusPolicy(Qt.NoFocus)
+            sound.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             sound.setToolTip("Corrige también lo que suena parecido (≈)")
             sound.toggled.connect(lambda _value: self._vocab_changed(-1, -1))
-            centered.addWidget(sound)
-            table.setCellWidget(row, 2, wrap)
+            sound_layout.addWidget(sound)
+            table.setCellWidget(row, 2, sound_wrap)
+            # Botón eliminar (✕): círculo centrado, mismo envoltorio
+            # transparente para que no quede ningún cuadrado alrededor.
             delete = QPushButton("✕")
             delete.setObjectName("rowDelete")
             delete.setCursor(Qt.PointingHandCursor)
+            delete.setFocusPolicy(Qt.NoFocus)
+            delete.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             delete.setToolTip("Quitar término")
             delete.clicked.connect(
                 lambda _checked=False, button=delete: self._vocab_delete_row(button))
             del_wrap = QWidget()
-            del_wrap.setFixedWidth(56)
-            del_centered = QHBoxLayout(del_wrap)
-            del_centered.setContentsMargins(6, 0, 6, 0)
-            del_centered.setAlignment(Qt.AlignCenter)
-            del_centered.addWidget(delete)
+            del_wrap.setObjectName("vocabCell")
+            del_wrap.setAttribute(Qt.WA_StyledBackground, False)
+            del_wrap.setFixedWidth(48)
+            del_layout = QHBoxLayout(del_wrap)
+            del_layout.setContentsMargins(0, 0, 0, 0)
+            del_layout.setSpacing(0)
+            del_layout.setAlignment(Qt.AlignCenter)
+            del_layout.addWidget(delete)
             table.setCellWidget(row, 3, del_wrap)
 
         def _vocab_rows(self):
@@ -768,7 +790,7 @@ def _main_window_class():
         def _vocab_fit_height(self):
             """La tabla crece con las filas hasta ~7 visibles y luego scrollea."""
             table = self.vocab_table
-            table.setMinimumHeight(min(160 + table.rowCount() * 42, 480))
+            table.setMinimumHeight(min(160 + table.rowCount() * 46, 480))
 
         def _vocab_set_rows(self, rows):
             """Carga filas como si las hubiera escrito el usuario (tests y UI)."""
