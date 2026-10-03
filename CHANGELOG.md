@@ -7,9 +7,10 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 Todavía no hay una versión publicada. El primer release será `0.1.0` y se
 publica tageando `v0.1.0`: el workflow construye los binarios de los tres
-sistemas y los adjunta al release, pero solo después de que la suite pase.
+sistemas y los adjunta al release, pero solo después de que la suite pase en
+Windows, Linux y macOS.
 
-## [0.1.0] — pendiente de publicar
+## [0.1.0] — 2026-10-03
 
 Primera versión con la aplicación completa. Todo el reconocimiento corre local,
 en CPU; el audio nunca sale del equipo.
