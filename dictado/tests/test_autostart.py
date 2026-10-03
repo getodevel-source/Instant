@@ -80,13 +80,20 @@ with tempfile.TemporaryDirectory() as d:
                 plistlib.dump({"Label": "otro.programa"}, f)
         _cycle("darwin", plist_fn, _alien_plist)
 
-        # Windows con plataforma forzada (stub de texto marcado, sin COM real).
+        # Windows con plataforma forzada. El camino de Windows usa PowerShell
+        # para crear el acceso; aca se fuerza su ausencia (FileNotFoundError)
+        # para que el test ejercite el stub y no dependa de si el runner tiene
+        # PowerShell instalado: en macOS el runner si lo tiene y el COM de
+        # Windows falla, que es como se descubrio este fallo.
         def _alien_lnk(p):
             with open(p, "w", encoding="utf-8") as f:
                 f.write("acceso ajeno\n")
-        _cycle("win32", link_fn, _alien_lnk)
 
         from unittest.mock import patch
+        with patch.object(a, "_powershell",
+                          side_effect=FileNotFoundError("powershell")):
+            _cycle("win32", link_fn, _alien_lnk)
+
         frozen_exe = os.path.join(d, "Instant.exe")
         with patch.object(a.sys, "frozen", True, create=True), \
                 patch.object(a.sys, "executable", frozen_exe):

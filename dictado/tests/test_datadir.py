@@ -17,8 +17,20 @@ def _touch(root):
     return p
 
 
+def _same_path(got, want):
+    """Compara rutas resolviendo symlinks.
+
+    En macOS `/var` es un symlink a `/private/var`, asi que `os.getcwd()`
+    devuelve una forma y `tempfile` la otra: sin resolver, el chequeo falla por
+    como esta escrito el mismo directorio, no por una diferencia real.
+    """
+    if not isinstance(got, str) or not isinstance(want, str):
+        return got == want
+    return os.path.realpath(got) == os.path.realpath(want)
+
+
 def _check(name, got, want):
-    ok = got == want
+    ok = _same_path(got, want)
     print(("PASS " if ok else "FAIL ") + name)
     if not ok:
         print(f"  got={got!r} want={want!r}")
