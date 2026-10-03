@@ -12,7 +12,8 @@ palabras, que no alcanza para afirmar nada.
 | `manifest.json` | Las frases con `id`, `category` y `text` (la etiqueta). Es lo único versionado del corpus. |
 | `generate_corpus.py` | Genera el audio: voz neuronal con `edge-tts` y conversión a 16 kHz mono con `ffmpeg`. |
 | `evaluate_models.py` | Corre los motores, calcula WER, frases exactas, signos de apertura y tiempos. |
-| `audio/` | WAV generados. **No se versiona**: se regenera con el script. |
+| `robustness.py` | Repite la medición sobre dos pasadas de audio y dice si el ranking se sostiene. |
+| `audio/`, `audio_b/` | WAV generados. **No se versionan**: se regeneran con el script. |
 
 ## Categorías
 
@@ -33,11 +34,22 @@ python dictado/tests/corpus/generate_corpus.py
 python dictado/tests/corpus/evaluate_models.py
 python dictado/tests/corpus/evaluate_models.py --engines parakeet
 python dictado/tests/corpus/evaluate_models.py --engines qwen,qwen-sin-hotwords --save results.json
+
+# 3. Robustez: segunda pasada con otras voces y otro ritmo
+python dictado/tests/corpus/generate_corpus.py --out dictado/tests/corpus/audio_b \
+    --voice-set voices_pass_b --rate=-12%
+python dictado/tests/corpus/robustness.py
 ```
 
 `--hotwords terminos` (por defecto) le pasa a Qwen la lista de términos técnicos
 del manifiesto, que es lo que un usuario escribiría en su perfil de vocabulario.
 Comparar contra `--hotwords ninguno` responde si esa función aporta algo.
+
+La segunda pasada existe porque una sola generación de audio no alcanza para
+decidir: cambia las voces (`voices_pass_b` en el manifiesto) y el ritmo, y
+`robustness.py` avisa si el ganador cambia entre pasadas. Con el corpus actual
+**cambia**, así que la comparación de precisión no cierra la decisión por sí
+sola.
 
 ## Cómo se mide
 

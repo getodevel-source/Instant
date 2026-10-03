@@ -40,14 +40,17 @@ def find_ffmpeg():
     return found
 
 
-async def _synthesize(text, voice, destination):
+async def _synthesize(text, voice, destination, rate=None):
     import edge_tts
 
-    await edge_tts.Communicate(text, voice).save(destination)
+    options = {}
+    if rate:
+        options["rate"] = rate
+    await edge_tts.Communicate(text, voice, **options).save(destination)
 
 
-def synthesize(text, voice, destination):
-    asyncio.run(_synthesize(text, voice, destination))
+def synthesize(text, voice, destination, rate=None):
+    asyncio.run(_synthesize(text, voice, destination, rate))
 
 
 def to_wav(source, destination, ffmpeg):
@@ -80,12 +83,17 @@ def main(argv=None):
                         help="ids separados por coma (default: todas)")
     parser.add_argument("--voice", default="",
                         help="fuerza una voz; default: alterna las del manifiesto")
+    parser.add_argument("--voice-set", default="voices",
+                        help="clave del manifiesto con la lista de voces "
+                             "(default: voices; usa voices_pass_b para la pasada B)")
+    parser.add_argument("--rate", default="",
+                        help="ritmo de la voz, p.ej. -15%% (default: el normal)")
     parser.add_argument("--keep-mp3", action="store_true",
                         help="conserva el mp3 intermedio")
     args = parser.parse_args(argv)
 
     manifest = load_manifest(args.manifest)
-    voices = manifest.get("voices") or ["es-AR-TomasNeural"]
+    voices = manifest.get(args.voice_set) or manifest.get("voices") or ["es-AR-TomasNeural"]
     phrases = manifest["phrases"]
     wanted = {value.strip() for value in args.only.split(",") if value.strip()}
     if wanted:
@@ -101,7 +109,7 @@ def main(argv=None):
         voice = args.voice or voices[position % len(voices)]
         wav_path = os.path.join(args.out, phrase["id"] + ".wav")
         mp3_path = os.path.join(args.out, phrase["id"] + ".mp3")
-        synthesize(phrase["text"], voice, mp3_path)
+        synthesize(phrase["text"], voice, mp3_path, args.rate or None)
         to_wav(mp3_path, wav_path, ffmpeg)
         if not args.keep_mp3:
             os.remove(mp3_path)

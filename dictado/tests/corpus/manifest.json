@@ -1,6 +1,7 @@
 {
   "note": "Corpus etiquetado para comparar motores. El audio se genera con voces neuronales (edge-tts) y NO se versiona: se regenera con generate_corpus.py. El texto de 'text' es la etiqueta de referencia; la puntuacion se evalua aparte.",
   "voices": ["es-AR-TomasNeural", "es-ES-AlvaroNeural"],
+  "voices_pass_b": ["es-MX-JorgeNeural", "es-CO-GonzaloNeural"],
   "phrases": [
     {"id": "es01", "category": "espanol_puro", "text": "Necesito que revises el informe antes de la reunion de mañana."},
     {"id": "es02", "category": "espanol_puro", "text": "El presupuesto del trimestre quedo mas ajustado de lo que esperabamos."},
