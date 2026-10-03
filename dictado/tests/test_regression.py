@@ -1,4 +1,4 @@
-"""Regresion minima: solo comportamiento consumidor-visible."""
+﻿"""Regresion minima: solo comportamiento consumidor-visible."""
 import os
 import sys
 import tempfile
@@ -56,7 +56,7 @@ from instant_app import hotkey
 _check("keys win", set(hotkey.WINDOWS_KEYS) == {"f9", "f10", "f20", "scroll", "pause"})
 _check("keys posix", tuple(hotkey.POSIX_KEYS) == ("f9", "f10", "f11", "f12"))
 
-# hotkey: normalización para captura (vacío = default, case-insensitive).
+# hotkey: normalizaciÃ³n para captura (vacÃ­o = default, case-insensitive).
 _check("normalize enter", hotkey.normalize_key("", "f9") == "f9")
 _check("normalize none", hotkey.normalize_key(None, "f9") == "f9")
 _check("normalize named enter", hotkey.normalize_key("enter", "f9") == "enter")
@@ -128,14 +128,14 @@ _check("WASAPI 16 kHz auto-convert",
 _check("MME does not get WASAPI settings", _stream_options("MME") == {})
 
 stereo = np.array([[0.0, 0.2], [0.0, -0.2]], dtype=np.float32)
-_check("stereo elige canal con señal",
+_check("stereo elige canal con seÃ±al",
        np.array_equal(audio.to_mono(stereo), stereo[:, 1]))
 _check("mono conserva el canal",
        np.array_equal(audio.to_mono(stereo[:, 1:2]), stereo[:, 1]))
 
 fake_sd = _FakeSounddevice("MME")
 with patch.dict(sys.modules, {"sounddevice": fake_sd}):
-    _check("captura estéreo cuando el mic ofrece dos canales",
+    _check("captura estÃ©reo cuando el mic ofrece dos canales",
            audio.input_channels(26) == 2)
 
 class _FakeMicDevices:
@@ -435,7 +435,8 @@ with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
 class _FakeResponse:
     headers = {"Content-Length": "3"}
 
-    def __init__(self):
+    def __init__(self, body=b"vad"):
+        self.body = body
         self.done = False
 
     def __enter__(self):
@@ -448,21 +449,84 @@ class _FakeResponse:
         if self.done:
             return b""
         self.done = True
-        return b"vad"
+        return self.body
+
+
+# La descarga real baja 670 MB, asi que la prueba usa checksums falsos con
+# contenido chico: recorre el mismo camino (bajar, verificar sha256, publicar
+# con os.replace) sin la red ni el disco.
+import hashlib as _hashlib
+
+_FAKE_PARAKEET = {
+    name: (len(f"contenido de {name}".encode()),
+           _hashlib.sha256(f"contenido de {name}".encode()).hexdigest())
+    for name in models.PARAKEET_FILES}
+_FAKE_VAD_BODY = b"vad de prueba"
+_FAKE_VAD = (len(_FAKE_VAD_BODY), _hashlib.sha256(_FAKE_VAD_BODY).hexdigest())
 
 
 def _snapshot_download(repo_id, *, local_dir, allow_patterns):
     os.makedirs(local_dir, exist_ok=True)
     for filename in allow_patterns:
         with open(os.path.join(local_dir, filename), "wb") as model_file:
-            model_file.write(b"model")
+            model_file.write(f"contenido de {filename}".encode())
 
 
 fake_hub = type("FakeHub", (), {"snapshot_download": staticmethod(_snapshot_download)})
 with tempfile.TemporaryDirectory() as d:
-    with patch.dict(sys.modules, {"huggingface_hub": fake_hub}):
-        with patch("urllib.request.urlopen", return_value=_FakeResponse()):
-            models.download_models(d)
+    with patch.dict(sys.modules, {"huggingface_hub": fake_hub}), \
+            patch.object(models, "PARAKEET_SHA256", _FAKE_PARAKEET), \
+            patch.object(models, "VAD_SHA256", _FAKE_VAD), \
+            patch("urllib.request.urlopen", return_value=_FakeResponse(_FAKE_VAD_BODY)):
+        models.download_models(d)
     _check("descarga usa la API actual de Hugging Face", all(models.check(d).values()))
+    _check("los archivos descargados verifican su sha256",
+           all(value is True for value in models.check_integrity(d, _FAKE_PARAKEET, _FAKE_VAD).values()))
+
+# Un archivo presente pero corrupto se vuelve a descargar en lugar de darse por
+# bueno: es el caso que antes dejaba la aplicaciÃ³n rota sin explicaciÃ³n.
+with tempfile.TemporaryDirectory() as d:
+    mdir = os.path.join(d, "parakeet-v3-int8")
+    os.makedirs(mdir)
+    for name in models.PARAKEET_FILES:
+        with open(os.path.join(mdir, name), "wb") as handle:
+            handle.write(b"truncado")
+    calls = []
+
+    def _counting_download(repo_id, *, local_dir, allow_patterns):
+        calls.append(repo_id)
+        _snapshot_download(repo_id, local_dir=local_dir, allow_patterns=allow_patterns)
+
+    counting_hub = type("FakeHub", (), {
+        "snapshot_download": staticmethod(_counting_download)})
+    with patch.dict(sys.modules, {"huggingface_hub": counting_hub}), \
+            patch.object(models, "PARAKEET_SHA256", _FAKE_PARAKEET), \
+            patch.object(models, "VAD_SHA256", _FAKE_VAD), \
+            patch("urllib.request.urlopen", return_value=_FakeResponse(_FAKE_VAD_BODY)):
+        models.download_models(d)
+    _check("un modelo corrupto se vuelve a descargar", len(calls) == 1)
+    _check("tras re-descargar, todo verifica",
+           all(value is True for value in models.check_integrity(d, _FAKE_PARAKEET, _FAKE_VAD).values()))
+
+# Un VAD que llega mal no se publica y el error lo explica.
+with tempfile.TemporaryDirectory() as d:
+    vdir = os.path.join(d, "silero-vad")
+    os.makedirs(vdir)
+    _check("un VAD corrupto se detecta",
+           models.verify_file(
+               os.path.join(vdir, "silero_vad.onnx"), _FAKE_VAD)[0] is False)
+    try:
+        with patch.object(models, "VAD_SHA256", _FAKE_VAD), \
+                patch.object(models, "DOWNLOAD_ATTEMPTS", 1), \
+                patch("urllib.request.urlopen",
+                      return_value=_FakeResponse(b"contenido equivocado")):
+            models._download_vad(os.path.join(vdir, "silero_vad.onnx"),
+                                 lambda *args: None)
+        _check("un VAD que no verifica corta la descarga", False)
+    except models.ModelIntegrityError:
+        _check("un VAD que no verifica corta la descarga", True)
+    _check("y no deja el archivo a medias",
+           not os.path.isfile(os.path.join(vdir, "silero_vad.onnx"))
+           and not os.path.isfile(os.path.join(vdir, "silero_vad.onnx.part")))
 
 print("OK: regresion minima verde.")
