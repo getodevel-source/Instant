@@ -8,7 +8,9 @@ name = "instant"
 # que el paquete instalado y el codigo no puedan desincronizarse.
 dynamic = ["version"]
 description = "Instant hold-to-talk ES offline: Parakeet v3 + Silero VAD, CPU-only"
-requires-python = ">=3.10"
+# 3.12 y no 3.10: las versiones fijadas de abajo lo exigen (numpy 2.5.3 pide
+# >=3.12) y es la version con la que corre la suite en los tres sistemas.
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "getodevel-source" }]

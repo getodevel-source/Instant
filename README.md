@@ -1,10 +1,10 @@
-# Instant
+﻿# Instant
 
 Dictado por voz local en español: mantené F9, hablá y soltá. Instant transcribe y pega el texto en el campo enfocado. El reconocimiento corre en CPU; el audio no se envía a la nube.
 
 ## Instalación
 
-Los instaladores preparan un entorno virtual dentro del checkout y abren el asistente de configuración. Python 3.10 o posterior es un requisito.
+Los instaladores preparan un entorno virtual dentro del checkout y abren el asistente de configuración. Python 3.12 o posterior es un requisito.
 
 ### Windows
 

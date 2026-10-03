@@ -132,7 +132,7 @@ instant setup --fix-deps
 
 | Qué | Cómo se detecta | Auto | Manual si falta |
 |---|---|---|---|
-| Python >= 3.10 | `sys.version` | no (instalalo vos) | python.org / tienda |
+| Python >= 3.12 | `sys.version` | no (instalalo vos) | python.org / tienda |
 | pip | `import pip` | sí (`ensurepip`) | `python -m ensurepip` |
 | numpy, sounddevice, sherpa-onnx, pyperclip, huggingface_hub | `importlib` | sí (`pip install`) | `pip install <paquete>` |
 | keyboard (win) / pynput (linux/mac) | `importlib` | sí (`pip install`) | `pip install <paquete>` |

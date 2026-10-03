@@ -34,7 +34,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # Tiene que coincidir con lo que exigen las dependencias fijadas y con
+          # la version que usa la suite: numpy 2.5.3 pide Python 3.12 o mas, y
+          # con 3.11 la instalacion falla antes de construir.
+          python-version: "3.12"
 
       - name: System deps (Linux)
         if: runner.os == 'Linux'

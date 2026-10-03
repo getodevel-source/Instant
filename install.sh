@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # Instala Instant en un entorno virtual del repositorio y abre el asistente.
 set -euo pipefail
 
@@ -6,11 +6,11 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 OS="$(uname -s)"
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "[Instant] Falta Python 3.10 o posterior." >&2
+  echo "[Instant] Falta Python 3.12 o posterior." >&2
   exit 1
 fi
-if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"; then
-  echo "[Instant] Se requiere Python 3.10 o posterior." >&2
+if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)"; then
+  echo "[Instant] Se requiere Python 3.12 o posterior." >&2
   exit 1
 fi
 

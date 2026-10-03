@@ -1,17 +1,17 @@
-@echo off
+﻿@echo off
 REM Instala Instant en un entorno virtual del repositorio y abre el asistente.
 setlocal
 if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
 
 where python >nul 2>nul
 if errorlevel 1 (
-  echo [Instant] Falta Python 3.10 o posterior en PATH.
+  echo [Instant] Falta Python 3.12 o posterior en PATH.
   echo Instala Python desde https://www.python.org/downloads/ y reintenta.
   exit /b 1
 )
-python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)"
 if errorlevel 1 (
-  echo [Instant] Se requiere Python 3.10 o posterior.
+  echo [Instant] Se requiere Python 3.12 o posterior.
   exit /b 1
 )
 
