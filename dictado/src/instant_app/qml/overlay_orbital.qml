@@ -30,6 +30,12 @@ Window {
     Behavior on pitch { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
     readonly property bool feedback: mode === "error" || mode === "notice"
+    // El aviso se ajusta al texto como en el clásico: con tamaño fijo, un
+    // error largo desbordaba la caja y se leía cortado.
+    readonly property int feedbackWidth:
+        Math.min(440, Math.max(320, messageMeasure.implicitWidth + 96))
+    readonly property int feedbackHeight:
+        Math.max(110, messageText.implicitHeight + 72)
     // Modos con animación viva: anillos y núcleo solo existen acá. En idle
     // (incluida la despedida) se ocultan para que el éxito no "rebote" a la
     // animación por unos frames al expirar.
@@ -40,8 +46,8 @@ Window {
     // para ajustar el tamaño sin romper proporciones.
     readonly property real compositionScale: 0.56
     readonly property int orbSize: feedback ? 0 : 200
-    width: (feedback ? 384 : 200) + shadowMargin * 2
-    height: (feedback ? 150 : 200) + shadowMargin * 2
+    width: (feedback ? feedbackWidth : 200) + shadowMargin * 2
+    height: (feedback ? feedbackHeight : 200) + shadowMargin * 2
     color: "transparent"
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     visible: false
@@ -172,7 +178,7 @@ Window {
             anchors.margins: 26
             radius: 24
             antialiasing: true
-            color: orbital.tint(orbital.glassBottom, 0.38)
+            color: orbital.tint(orbital.glassBottom, 0.45)
         }
 
         // Sombra suave del orbe.
@@ -191,7 +197,7 @@ Window {
             width: 170; height: 170
             radius: 85
             antialiasing: true
-            color: orbital.tint(orbital.glassTop, 0.35)
+            color: orbital.tint(orbital.glassTop, 0.42)
             border.width: 1
             border.color: orbital.tint(orbital.ink, 0.05)
             visible: !orbital.feedback
@@ -317,6 +323,15 @@ Window {
             wrapMode: Text.WordWrap
             renderType: Text.NativeRendering
             visible: orbital.feedback
+        }
+
+        // Medida sin wrap: define el ancho del aviso.
+        Text {
+            id: messageMeasure
+            visible: false
+            text: orbital.message
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
         }
     }
 }
