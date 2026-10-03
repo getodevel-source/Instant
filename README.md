@@ -98,7 +98,8 @@ La decisión de motor (por qué Parakeet y qué se descartó) está en
 La interfaz de control de Windows usa PySide6/Qt Widgets; el icono de bandeja
 y el overlay de Qt Quick del daemon son superficies independientes. El workflow
 de tags `v*` configura PySide6 en el ejecutable Windows y mantiene binarios CLI
-para Linux/macOS. Windows usa hooks selectivos de Qt, sin `--collect-all PySide6`;
-el build local de PyInstaller 6.22.3 pasó de 303.651.236 a 94.977.013 bytes
-(reducción del 68,7 %). El binario mantiene el tema oscuro y empaqueta el overlay QML.
+para Linux/macOS. Windows usa hooks selectivos de Qt, sin `--collect-all PySide6`:
+el build local de PyInstaller 6.22.3 pasó de 303.651.236 a 96.099.689 bytes
+(reducción del 68,4 %), ya con la bandeja, el overlay y el perfil de vocabulario.
+El binario mantiene el tema oscuro y empaqueta el overlay QML.
 Aún falta validar el release limpio en CI. Los ejecutables todavía no están firmados.
