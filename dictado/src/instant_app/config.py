@@ -16,6 +16,8 @@ DEFAULTS = {
     "sound": False,
     "max_seg": 20.0,
     "llm_url": "",
+    "active_context": "General",
+    "context_profiles": {"General": []},
     "autostart": False,
 }
 
@@ -43,6 +45,7 @@ def load():
     env_map = {"DICTADO_MIC": "mic_hint", "DICTADO_KEY": "key",
                "DICTADO_THREADS": "threads", "DICTADO_SOUND": "sound",
                "DICTADO_MAX_SEG": "max_seg", "DICTADO_LLM_URL": "llm_url",
+               "DICTADO_CONTEXT": "active_context",
                "DICTADO_AUTOSTART": "autostart"}
     for env, k in env_map.items():
         v = os.environ.get(env)

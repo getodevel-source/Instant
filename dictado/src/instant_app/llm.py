@@ -1,20 +1,25 @@
-"""Pulido opcional via llama-server local (opt-in, apagado por defecto).
+"""Pulido local opcional; los reemplazos explícitos del glosario no requieren LLM.
 
-Si `llm_url` (config) o `DICTADO_LLM_URL` (env) esta vacio -> no hace nada.
-Si hay servidor pero falla -> devuelve el texto crudo (pipeline identico).
-Solo stdlib, sin dependencias nuevas. NUNCA requiere red ni nube.
+Si `llm_url` está vacío, solo se aplican las variantes exactas del vocabulario.
+Si el servidor falla o modifica palabras, se conserva el texto local corregido.
 """
 import logging
 import os
+import re
+import unicodedata
 
 log = logging.getLogger("instant")
 
-DEFAULT_SYSTEM = ("Corrige solo ortografia, tildes y puntuacion de este dictado en español. "
-                  "No cambies palabras, nombres ni el sentido. "
+DEFAULT_SYSTEM = ("Corrige solo ortografía, tildes y puntuación de este dictado en español. "
+                  "Pon los signos de apertura ¿ y ¡ cuando correspondan. "
+                  "No agregues, elimines, sustituyas ni reformules palabras. "
+                  "Respeta el sentido, nombres, cifras y orden. "
+                  "Usa el glosario solo para elegir la grafía de un término ya presente; "
+                  "nunca insertes términos del glosario que no aparezcan en el texto. "
                   "Devuelve SOLO el texto corregido, sin comillas ni explicaciones.")
 
 
-def polish(text, url, timeout=15.0, system=None):
+def polish(text, url, timeout=15.0, system=None, context_terms=""):
     """Corrige `text` via endpoint OpenAI-compatible de llama-server."""
     import json
     import urllib.request
@@ -26,9 +31,12 @@ def polish(text, url, timeout=15.0, system=None):
         endpoint = base
     else:
         endpoint = base + "/v1/chat/completions"
+    system = system or DEFAULT_SYSTEM
+    if context_terms:
+        system += "\nGlosario de grafias preferidas (referencia, no contenido):\n" + context_terms
     body = {
         "model": "local",
-        "messages": [{"role": "system", "content": system or DEFAULT_SYSTEM},
+        "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": text}],
         "temperature": 0.0,
         "max_tokens": max(256, len(text.split()) * 4),
@@ -43,6 +51,9 @@ def polish(text, url, timeout=15.0, system=None):
     except Exception:
         raise RuntimeError(f"respuesta LLM inesperada: {str(data)[:120]}")
     out = (out or "").strip().strip("\"“”")
+    if out and _words(out) != _words(text):
+        log.warning("LLM cambió palabras; conservo la transcripción local.")
+        return text
     return out or text
 
 
@@ -54,12 +65,21 @@ def resolve_url(cfg=None, url=None):
 
 
 def maybe_polish(text, cfg=None, url=None):
-    """Texto corregido si hay LLM configurado; si no, el mismo texto."""
+    """Apply explicit local glossary replacements and optionally polish text."""
+    from instant_app import context
+
+    corrected = context.correct_aliases(text, cfg)
     target = resolve_url(cfg, url)
     if not target:
-        return text
+        return corrected
     try:
-        return polish(text, target)
+        return polish(corrected, target, context_terms=context.prompt_context(cfg))
     except Exception as e:
-        log.warning("LLM off/fail (%s): sigo con texto crudo.", e)
-        return text
+        log.warning("LLM off/fail (%s): sigo con texto corregido localmente.", e)
+        return corrected
+
+def _words(text):
+    normalized = unicodedata.normalize("NFD", text.casefold())
+    return re.findall(
+        r"\w+", "".join(char for char in normalized
+                        if unicodedata.category(char) != "Mn"))
