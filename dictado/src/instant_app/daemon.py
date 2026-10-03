@@ -7,8 +7,9 @@ import time
 import numpy as np
 
 from instant_app import audio, hotkey, llm, paste
-from instant_app.engine import Engine, SAMPLE_RATE, SILENCE_PEAK
+from instant_app.engine import Engine, SILENCE_PEAK
 from instant_app.overlay import Overlay
+from instant_app.tray import TrayIcon
 
 log = logging.getLogger("instant")
 
@@ -53,12 +54,16 @@ class Daemon:
         self.engine = Engine(data_dir,
                              threads=cfg.get("threads", 4),
                              max_seg=cfg.get("max_seg", 20.0))
-        self.overlay = Overlay()
-        self.mic = audio.resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
+        self.overlay = Overlay(hotkey.key_label(cfg.get("key", "f9")))
+        self.mic = audio.resolve_mic(
+            cfg.get("mic_hint", ""), cfg.get("mic_index"),
+            strict_hint=bool(cfg.get("mic_hint")))
         self.hk = hotkey.create(cfg.get("key", "f9"))
         self.rec = {"sid": 0, "grabando": False, "frames": [], "t_start": 0.0,
                     "done": None, "busy": False}
         self.lock = threading.Lock()
+        self._shutdown = threading.Event()
+        self.tray = TrayIcon(self._shutdown)
 
     def beep(self, freq=880, ms=120):
         if not self.cfg.get("sound"):
@@ -75,7 +80,6 @@ class Daemon:
 
     # ---- sesion ----
     def _record(self, sid, done):
-        import sounddevice as sd
 
         q = queue.Queue()
         frames = []
@@ -86,22 +90,27 @@ class Daemon:
             q.put(indata.copy())
 
         try:
-            stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=audio.CHANNELS,
-                                    dtype="float32", device=self.mic, callback=cb)
-            stream.start()
+            mic = audio.resolve_mic(
+                self.cfg.get("mic_hint", ""), self.cfg.get("mic_index"),
+                strict_hint=True)
+            if self.cfg.get("mic_hint") and mic is None:
+                raise RuntimeError(
+                    f"Configured microphone '{self.cfg['mic_hint']}' is no longer available")
+            stream, mic = audio.open_input_stream(mic, callback=cb)
         except Exception:
             log.exception("ERROR abriendo microfono")
             with self.lock:
                 if self.rec["sid"] == sid:
                     self.rec["grabando"] = False
-            self.overlay.hide()
+            self.overlay.show_error_for(
+                sid,
+                "No se pudo iniciar el micrófono. Revisá conexión, permiso del sistema y "
+                "que otra app no lo esté usando. El log tiene el error detallado.",
+                "#f87171", 6000)
             done.set()
             return
-        key = self.cfg.get("key", "f9").upper()
         log.info("grabando sesion %d...", sid)
-        self.overlay.show(f"Grabando... (suelta {key})", "#ff4444")
-        self.beep(freq=880)
-        last_sec = -1
+        self.overlay.listening(sid)
         try:
             while True:
                 try:
@@ -122,11 +131,6 @@ class Daemon:
                 frames.append(blk)
                 with self.lock:
                     alive = self.rec["grabando"] and self.rec["sid"] == sid
-                n = sum(int(f.shape[0]) for f in frames)
-                sec = n // SAMPLE_RATE
-                if sec != last_sec:
-                    last_sec = sec
-                    self.overlay.show(f"Grabando... {sec}s (suelta {key})", "#ff4444")
                 if not alive:
                     try:
                         while True:
@@ -147,14 +151,17 @@ class Daemon:
         done.set()
 
     def _job(self, wav, dur, sid):
-        self.overlay.show("Transcribiendo...", "#ffcc00")
         try:
             if dur < self.engine.min_dur:
                 log.info("muy corto (<%.1fs), descarto.", self.engine.min_dur)
+                key = hotkey.key_label(self.cfg.get("key", "f9"))
+                self.overlay.show_notice_for(
+                    sid, f"Dictado muy corto — mantené {key} un poco más.", "#f2c36a")
                 return
             peak = float(np.max(np.abs(wav))) if wav.size else 0.0
             if peak < SILENCE_PEAK:
                 log.info("silencio (pico %.4f), descarto sin inferencia.", peak)
+                self.overlay.show_notice_for(sid, "No detecté voz.", "#f2c36a")
                 return
             t0 = time.time()
             text = self.engine.transcribe(wav)
@@ -162,15 +169,22 @@ class Daemon:
             dt = time.time() - t0
             if not text:
                 log.info("vacio tras %.1fs audio (%.2fs), nada que pegar.", dur, dt)
+                self.overlay.show_notice_for(
+                    sid,
+                    "No pude reconocer el audio. Probá hablar más cerca del micrófono.",
+                    "#f2c36a", 2600)
                 return
             log.info("[%.1fs audio -> %.2fs, RTF=%.2fx] %s",
                      dur, dt, dt / max(dur, 0.1), text[:200])
             import instant_app.paste as _paste_mod
             _paste_mod.paste(text + " ")
+            self.overlay.success_for(sid)
         except Exception:
             log.exception("ERROR transcripcion sesion %d", sid)
+            self.overlay.show_error_for(
+                sid, "No se pudo completar el dictado. Abrí Diagnóstico.",
+                "#ff908b", 3000)
         finally:
-            self.overlay.hide()
             with self.lock:
                 self.rec["busy"] = False
             self.beep(freq=440)
@@ -189,6 +203,7 @@ class Daemon:
             done = threading.Event()
             self.rec["done"] = done
             sid = self.rec["sid"]
+        self.overlay.starting(sid)
         threading.Thread(target=self._record, args=(sid, done), daemon=True).start()
 
     def on_release(self):
@@ -199,40 +214,48 @@ class Daemon:
             dur = time.time() - self.rec["t_start"]
             done = self.rec["done"]
             sid = self.rec["sid"]
-        self.overlay.hide()
+        self.overlay.processing(sid)
         if done is not None and not done.wait(timeout=10.0):
             log.warning("sesion %d no cerro mic en 10s, transcribo lo que hay.", sid)
         with self.lock:
             frames = self.rec["frames"]
             self.rec["frames"] = []
             self.rec["busy"] = True
-        wav = np.concatenate(frames, axis=0).flatten() if frames else np.zeros(0, dtype=np.float32)
+        wav = audio.to_mono(np.concatenate(frames, axis=0)) if frames \
+            else np.zeros(0, dtype=np.float32)
         log.info("soltado tras %.1fs, %d bloques -> VAD+Parakeet.", dur, len(frames))
         threading.Thread(target=self._job, args=(wav, dur, sid), daemon=True).start()
 
     def run(self):
         write_pid()
         try:
-            if not audio.probe(self.mic):
-                log.warning("sigue sin default. `instant setup` para elegir mic.")
+            if self.cfg.get("mic_hint") and self.mic is None:
+                log.error("micrófono configurado no encontrado; no pruebo otro default.")
+            elif not audio.probe(self.mic):
+                log.warning("mic probe FAIL; revisá conexión, permisos y uso por otra app.")
             self.engine.recognizer()
             self.engine.vad()
-            key = self.cfg.get("key", "f9").upper()
+            try:
+                self.tray.start()
+            except Exception:
+                log.exception("no pude iniciar el icono de bandeja")
+            key = hotkey.key_label(self.cfg.get("key", "f9"))
             log.info("listo. Manten %s para dictar (60-120s), suelta para transcribir. Ctrl+C sale.", key)
             self.hk.start(self.on_press, self.on_release)
-            try:
-                while True:
-                    time.sleep(60)
+            if not self.overlay.run_event_loop(
+                    self._shutdown, lambda: log.info("vivo, esperando %s...", key)):
+                while not self._shutdown.wait(60):
                     log.info("vivo, esperando %s...", key)
-            except KeyboardInterrupt:
-                self.overlay.hide()
-                log.info("chau.")
-            finally:
-                try:
-                    self.hk.stop()
-                except Exception:
-                    pass
+        except KeyboardInterrupt:
+            log.info("chau.")
         finally:
+            self._shutdown.set()
+            self.overlay.hide()
+            try:
+                self.hk.stop()
+            except Exception:
+                pass
+            self.tray.stop()
             clear_pid()
 
 
@@ -246,10 +269,17 @@ def cmd_check(cfg):
     except (ValueError, RuntimeError) as e:
         print(f"  tecla: FAIL ({e}). Opciones: {', '.join(hotkey.available_keys())}")
         return 2
-    print(f"  tecla: {key} OK")
-    mic = audio.resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
-    ok = audio.probe(mic)
-    print(f"  mic probe: {'OK' if ok else 'FAIL (revisa uso exclusivo)'}")
+    print(f"  tecla: {hotkey.key_label(key)} OK")
+    hint = cfg.get("mic_hint", "")
+    mic = audio.resolve_mic(hint, cfg.get("mic_index"), strict_hint=bool(hint))
+    if hint and mic is None:
+        ok = False
+        print("  mic callback probe: FAIL (micrófono guardado no encontrado; "
+              "reconectalo o elegí otro en Configuración)")
+    else:
+        ok = audio.probe(mic)
+        print("  mic callback probe: "
+              f"{'OK' if ok else 'FAIL (revisa conexión, permisos y uso por otra app)'}")
     try:
         eng = Engine(threads=cfg.get("threads", 4), max_seg=cfg.get("max_seg", 20.0))
         eng.recognizer()
