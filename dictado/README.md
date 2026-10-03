@@ -92,14 +92,6 @@ requieren reiniciar Instant. El diagnóstico muestra el informe en una ventana
 independiente. La ventana de control puede cerrarse sin detener el daemon, que
 conserva su icono de bandeja y la notificación de grabación independiente.
 
-En Modelos, «Grabar 15 s y comparar» ejecuta Parakeet y Qwen3-ASR 0.6B sobre
-la misma captura; muestra transcripción y tiempo de cada uno, no pega el texto
-ni guarda o envía el audio. Detén el daemon antes de comparar. Qwen recibe el
-vocabulario del perfil activo; Parakeet sigue siendo el motor del dictado.
-El Qwen de prueba es una conversión ONNX comunitaria y no se descarga con el
-setup normal: sus archivos se instalan en
-`<DICTADO_DATA>/qwen3-asr-0.6b-int8-2026-03-25` (o junto a los modelos del
-usuario si no se define `DICTADO_DATA`). [Repositorio del modelo](https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25).
 En Linux/macOS se conserva el asistente terminal, que hace, en orden:
 
 1. **Modelos**: descarga Parakeet (~670 MB) y VAD (~1 MB) si faltan.

@@ -289,37 +289,6 @@ else:
             finally:
                 self._close_and_wait(window)
 
-        def test_model_page_offers_ab_comparison_when_both_models_are_installed(self):
-            Window = gui._main_window_class()
-            cfg = {"mic_hint": "USB Mic", "mic_index": 5,
-                   "key": "f9", "autostart": False}
-            with patch("instant_app.gui.config.load", return_value=cfg), \
-                    patch("instant_app.gui.models.check",
-                          return_value={"parakeet": True, "vad": True}), \
-                    patch("instant_app.gui.models.check_qwen3_asr",
-                          return_value={"conv_frontend": True, "encoder": True,
-                                        "decoder": True, "tokenizer": True}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices",
-                          return_value=[(5, "USB Mic", 1, 48000)]), \
-                    patch("instant_app.gui.audio.preferred_input_index",
-                          side_effect=lambda default, _rows: default), \
-                    patch("instant_app.gui.autostart.is_enabled",
-                          return_value=False), \
-                    patch.dict(sys.modules, {
-                        "sounddevice": SimpleNamespace(
-                            default=SimpleNamespace(device=(5, -1)))}):
-                window = Window(autostart_override=False)
-                window.show()
-                try:
-                    self._wait_idle(window)
-                    window.navigate("models")
-                    self.assertTrue(window.compare_button.isVisible())
-                    self.assertTrue(window.compare_button.isEnabled())
-                    self.assertIn("Qwen 0.6B listo", window.compare_status.text())
-                finally:
-                    self._close_and_wait(window)
-
         def test_close_keeps_daemon_independent(self):
             window = self._window()
             try:

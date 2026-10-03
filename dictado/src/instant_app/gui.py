@@ -558,23 +558,6 @@ def _main_window_class():
             self.model_status = self._label("Comprobando modelos…", "muted"); box.addWidget(self.model_status)
             self.model_progress = QProgressBar(); self.model_progress.setRange(0, 0); self.model_progress.hide(); box.addWidget(self.model_progress)
             self.model_button = QPushButton("Descargar modelos"); self.model_button.setObjectName("primaryButton"); self.model_button.clicked.connect(self.download_models); box.addWidget(self.model_button, alignment=Qt.AlignLeft)
-            compare_card, compare_box = self._card(
-                layout, "Comparar Parakeet y Qwen",
-                "Detén el dictado y habla durante 15 segundos. Ambos modelos reciben la misma grabación; se procesa en memoria, sin guardarla, copiarla ni subirla.")
-            self.compare_button = QPushButton("Grabar 15 s y comparar")
-            self.compare_button.setEnabled(False)
-            self.compare_button.clicked.connect(self.compare_models)
-            compare_box.addWidget(self.compare_button, alignment=Qt.AlignLeft)
-            self.compare_status = self._label(
-                "Qwen se usa solo en esta prueba; el dictado normal sigue con Parakeet.",
-                "muted")
-            compare_box.addWidget(self.compare_status)
-            self.compare_results = QPlainTextEdit()
-            self.compare_results.setReadOnly(True)
-            self.compare_results.setMaximumHeight(150)
-            self.compare_results.setPlaceholderText(
-                "Las transcripciones y tiempos aparecerán aquí.")
-            compare_box.addWidget(self.compare_results)
             self.stack.addWidget(page); self.pages["models"] = self.stack.count()-1
 
         def _init_settings(self, autostart_override):
@@ -789,91 +772,6 @@ def _main_window_class():
                 self.meter_text.setText(f"Señal detectada ({peak:.3f})." if peak > .005 else "No detecté señal; revisá micrófono/volumen.")
             self._run_worker(capture, done, lambda error: (self.test_button.setEnabled(True), QMessageBox.warning(self, "Prueba de micrófono", str(error))), progress)
 
-        def compare_models(self):
-            if not self._daemon_state_ready:
-                QMessageBox.information(
-                    self, "Comparación de modelos",
-                    "Espera a que Instant compruebe el estado del daemon.")
-                return
-            if self._last_daemon_running:
-                QMessageBox.information(
-                    self, "Comparación de modelos",
-                    "Detén el dictado normal antes de comparar; ambos modelos usan CPU y el mismo micrófono.")
-                return
-            if not self.model_ready or not self.qwen_ready:
-                QMessageBox.warning(
-                    self, "Modelos pendientes",
-                    "La comparación requiere Parakeet y los archivos locales de Qwen3-ASR 0.6B.")
-                return
-            from instant_app.comparison import RECORD_SECONDS
-            self._snapshot()
-            cfg = dict(self.cfg)
-            self.compare_button.setEnabled(False)
-            self.compare_status.setText(
-                f"Grabando {int(RECORD_SECONDS)} segundos… di tu frase una sola vez.")
-            self.compare_results.clear()
-
-            def run(emit):
-                import time
-                import numpy as np
-
-                mic = audio.resolve_mic(
-                    cfg.get("mic_hint", ""), cfg.get("mic_index"),
-                    strict_hint=bool(cfg.get("mic_hint")))
-                if cfg.get("mic_hint") and mic is None:
-                    raise RuntimeError("El micrófono guardado no está disponible.")
-                frames = []
-
-                def callback(indata, _frames, _time_info, status):
-                    if status:
-                        log.warning("comparación de audio: %s", status)
-                    frames.append(indata.copy())
-
-                stream, _selected = audio.open_input_stream(mic, callback=callback)
-                try:
-                    end = time.monotonic() + RECORD_SECONDS
-                    while True:
-                        remaining = end - time.monotonic()
-                        if remaining <= 0:
-                            break
-                        emit(("recording", RECORD_SECONDS - remaining))
-                        time.sleep(min(0.1, remaining))
-                finally:
-                    stream.stop()
-                    stream.close()
-                if not frames:
-                    raise RuntimeError("El micrófono no entregó audio.")
-                wav = audio.to_mono(np.concatenate(frames, axis=0))
-                from instant_app.comparison import compare_models as compare
-                return compare(
-                    wav, cfg, self.data_dir,
-                    progress=lambda message: emit(("processing", message)))
-
-            def progress(event):
-                kind, value = event
-                if kind == "recording":
-                    self.compare_status.setText(
-                        f"Grabando… {int(value) + 1}/{int(RECORD_SECONDS)} s. Habla normal.")
-                else:
-                    self.compare_status.setText(value)
-
-            def done(results):
-                self.compare_button.setEnabled(
-                    self.qwen_ready and self.model_ready
-                    and self._daemon_state_ready and not self._last_daemon_running)
-                self.compare_status.setText(
-                    "Comparación completa. Se usó el mismo audio y el contexto activo.")
-                from instant_app.comparison import format_results
-                self.compare_results.setPlainText(format_results(results))
-
-            def failed(error):
-                self.compare_button.setEnabled(
-                    self.qwen_ready and self.model_ready
-                    and self._daemon_state_ready and not self._last_daemon_running)
-                self.compare_status.setText(f"No se pudo comparar: {error}")
-
-            self._run_worker(run, done, failed, progress)
-
         def save_config(self, show_message=True):
             selected = self._selected_device()
             if selected:
@@ -991,9 +889,6 @@ def _main_window_class():
                 if running != self._last_daemon_running:
                     self._last_daemon_running = running; self._settings_daemon_changed(running)
                 self._update_save_enabled()
-                if hasattr(self, "qwen_ready"):
-                    self.compare_button.setEnabled(
-                        self.model_ready and self.qwen_ready and not running)
                 self.header_state.setText("●  Instant activo" if running else "●  Listo para dictar")
                 self.header_state.setProperty("active", running); self.header_state.style().unpolish(self.header_state); self.header_state.style().polish(self.header_state)
                 if running:
@@ -1013,16 +908,6 @@ def _main_window_class():
                 self.model_status.setText("Parakeet y VAD listos en este equipo."); self.model_button.setText("Modelos listos"); self.model_button.setEnabled(False)
             else:
                 self.model_status.setText("Faltan modelos; se descargan una sola vez (~670 MB)."); self.model_button.setText("Descargar modelos"); self.model_button.setEnabled(True)
-            self.qwen_ready = all(models.check_qwen3_asr(self.data_dir).values())
-            self.compare_button.setEnabled(
-                self.model_ready and self.qwen_ready
-                and self._daemon_state_ready and not self._last_daemon_running)
-            if self.qwen_ready:
-                self.compare_status.setText(
-                    "Qwen 0.6B listo. La comparación usa el vocabulario del perfil activo.")
-            else:
-                self.compare_status.setText(
-                    "Faltan los archivos opcionales Qwen3-ASR 0.6B INT8 para comparar.")
 
         def download_models(self):
             if self.model_ready: return

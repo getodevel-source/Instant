@@ -1,9 +1,0 @@
-# El audio del corpus se genera con `generate_corpus.py` (edge-tts + ffmpeg).
-# No se versiona: son ~8 MB regenerables y la etiqueta esta en manifest.json.
-audio/
-audio_b/
-*.mp3
-# Resultados de las corridas: se regeneran con evaluate_models.py y
-# robustness.py; los numeros que importan quedan en docs/motores.md.
-results*.json
-robustness.json

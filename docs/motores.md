@@ -1,14 +1,13 @@
 # Motores de reconocimiento: Parakeet o Qwen3-ASR
 
-Decisión medida sobre el corpus de [`dictado/tests/corpus/`](../dictado/tests/corpus/README.md),
-no sobre impresiones. Reproducible con:
+Registro histórico de una decisión ya tomada: **Parakeet es el motor de dictado
+y Qwen3-ASR se retiró del proyecto** (el modelo, la comparación A/B del panel y
+el arnés de medición). Este documento queda para no repetir el trabajo.
 
-```bash
-python dictado/tests/corpus/generate_corpus.py
-python dictado/tests/corpus/generate_corpus.py --out dictado/tests/corpus/audio_b \
-    --voice-set voices_pass_b --rate=-12%
-python dictado/tests/corpus/robustness.py
-```
+La decisión se midió sobre un corpus etiquetado de 34 frases en español con
+términos ingleses, preguntas y nombres propios, con dos pasadas de audio (voces
+`es-AR`/`es-ES` a ritmo normal, y `es-MX`/`es-CO` un 12 % más lento). El corpus
+y los scripts se eliminaron con Qwen; los números que importan quedan abajo.
 
 ## Decisión
 
@@ -93,8 +92,57 @@ dominaba el code-switching; la segunda lo desmiente.
   Es el escenario que se quería medir, pero no es lo mismo que un hablante
   bilingüe alternando idiomas.
 - **La decisión sobre precisión sigue abierta** y depende de la voz real del
-  usuario: es la única forma de desempatar. Para cerrarla hay que grabar las
-  mismas 34 frases (o unas 10) y poner los WAV en
-  `dictado/tests/corpus/audio/` con el mismo `id` del manifiesto; el arnés los
-  usa sin cambiar nada. Mientras tanto, la decisión por defecto se apoya en
-  velocidad y puntuación, que sí son concluyentes.
+  usuario: es la única forma de desempatar. Mientras tanto, la decisión por
+  defecto se apoya en velocidad y puntuación, que sí son concluyentes.
+
+## Vías descartadas, para no repetirlas
+
+**1. Hotwords (sesgo contextual) en Parakeet: no funcionan.** Es lo que la
+documentación de sherpa-onnx recomienda para marcas y términos técnicos, y se
+probó con 17 hotwords (`Qwen`, `Parakeet`, `Instant`, `GitHub`, `commit`,
+`deploy`, `staging`, `rollback`, `workflow`, `frontend`, `backend`, `Python`,
+`machine learning`, `plugin`, `benchmark`, `driver`, `getodevel`):
+
+| config            | pasada A             | pasada B             |
+|-------------------|----------------------|----------------------|
+| greedy (actual)   | 20 err, 0,056, 0,21s | 30 err, 0,083, 0,24s |
+| beam sin hotwords | 19 err, 0,053, 0,23s | 30 err, 0,083, 0,25s |
+| beam + hotwords   | 20 err, 0,056, 0,24s | 30 err, 0,083, 0,25s |
+
+Causa: sherpa-onnx tokeniza los hotwords con un `bpe.vocab` de sentencepiece y
+el paquete de Parakeet v3 no lo trae (solo `tokens.txt`). Usar `tokens.txt` como
+bpe_vocab no alcanza: «Qwen» siguió saliendo «O en» / «Wen» con el hotword en la
+lista. `greedy_search` además rechaza hotwords con `ValueError`.
+
+**2. `modified_beam_search`: no mejora por sí solo.** La ventaja de 1 error en
+la pasada A desaparece en la B (idéntico). Era ruido.
+
+**3. Modelo de puntuación en español: no existe** en sherpa-onnx (solo inglés y
+chino). El `¿` de apertura queda para el pulido LLM local.
+
+**4. HomophoneReplacer: solo caracteres chinos.** La documentación lo repite tres
+veces. No sirve para español.
+
+**5. Parakeet v2 / unified: solo inglés.** No sirven para dictado en español.
+
+**6. Fusión de los dos motores (estilo ROVER): no vale el costo.** Alineando las
+dos hipótesis por palabra y votando, la fusión con desempate por Parakeet bajó a
+48 errores sobre 720 palabras, contra 53 de Parakeet solo y 52 de Qwen solo. Pero
+en la pasada B perdía contra Qwen solo (30 contra 27), la mejora total era de 5
+errores en 720 palabras (dentro del ruido) y correr los dos motores triplica el
+tiempo por frase (0,25 s → ~1,0 s). Además descarta la puntuación, que es donde
+Parakeet es claramente mejor.
+
+**7. Clave fonética sola para marcas: insuficiente.** Se probó normalizar por
+sonido (`Qwen`→`quen`, `cuen`→`kuen`) y no alcanza: `Bill`→`bi` contra
+`build`→`build`. Sirve como sugerencia a confirmar por el usuario, nunca como
+sustitución automática.
+
+## Qué queda para mejorar la precisión
+
+Lo único que ataca las marcas y los términos técnicos sin tocar el motor ni
+perder velocidad es el **perfil de vocabulario** (sustitución de variantes
+exactas, en texto, después del reconocimiento), y el **pulido LLM local** para
+los signos de apertura. Al retirar Qwen, el perfil de vocabulario quedó vacío en
+este equipo: cargarlo es el siguiente paso pendiente.
+

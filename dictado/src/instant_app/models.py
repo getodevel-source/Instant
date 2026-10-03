@@ -87,16 +87,3 @@ def check(data_dir):
 
     p = model_paths(data_dir)
     return {k: os.path.isfile(v) for k, v in p.items()}
-
-
-def check_qwen3_asr(data_dir):
-    """Check the optional Qwen3-ASR INT8 trial model and tokenizer files."""
-    from instant_app.paths import qwen3_asr_paths
-
-    p = qwen3_asr_paths(data_dir)
-    result = {name: os.path.isfile(p[name])
-              for name in ("conv_frontend", "encoder", "decoder")}
-    result["tokenizer"] = all(os.path.isfile(os.path.join(
-        p["tokenizer"], name)) for name in (
-            "tokenizer_config.json", "vocab.json", "merges.txt"))
-    return result

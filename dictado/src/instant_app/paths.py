@@ -5,7 +5,6 @@ import sys
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PARAKEET_SUBDIR = "parakeet-v3-int8"
-QWEN3_ASR_SUBDIR = "qwen3-asr-0.6b-int8-2026-03-25"
 VAD_SUBDIR = "silero-vad"
 
 
@@ -59,33 +58,3 @@ def model_paths(data_dir=None):
         "tokens": os.path.join(mdir, "tokens.txt"),
         "vad": os.path.join(d, VAD_SUBDIR, "silero_vad.onnx"),
     }
-
-
-def qwen3_asr_paths(data_dir=None):
-    """Prefer the active model directory, then the user-data Qwen trial model."""
-    roots = [data_dir or resolve_data_dir()]
-    user = user_data_dir()
-    if user not in roots:
-        roots.append(user)
-
-    def paths(root):
-        model_dir = os.path.join(root, QWEN3_ASR_SUBDIR)
-        return {
-            "conv_frontend": os.path.join(model_dir, "conv_frontend.onnx"),
-            "encoder": os.path.join(model_dir, "encoder.int8.onnx"),
-            "decoder": os.path.join(model_dir, "decoder.int8.onnx"),
-            "tokenizer": os.path.join(model_dir, "tokenizer"),
-        }
-
-    def complete(candidate):
-        required = ("conv_frontend", "encoder", "decoder")
-        tokenizer = candidate["tokenizer"]
-        return (all(os.path.isfile(candidate[name]) for name in required)
-                and all(os.path.isfile(os.path.join(tokenizer, name))
-                        for name in ("tokenizer_config.json", "vocab.json", "merges.txt")))
-
-    for root in roots:
-        candidate = paths(root)
-        if complete(candidate):
-            return candidate
-    return paths(roots[0])

@@ -80,7 +80,7 @@ python -m unittest discover -s tests
 También se puede correr archivo por archivo. Los que usan Qt informan `SKIP` si PySide6 no está instalado:
 
 ```bash
-python dictado/tests/test_regression.py     # overlay/daemon, setup, modelos
+python dictado/tests/test_regression.py     # overlay, setup, audio y modelos
 python dictado/tests/test_context.py        # perfiles de vocabulario y pulido LLM
 python dictado/tests/test_daemon_overlay.py # progreso por sesion y feedback
 python dictado/tests/test_datadir.py        # precedencia de DICTADO_DATA
@@ -91,6 +91,9 @@ python dictado/tests/test_gui_settings.py
 python dictado/tests/test_gui_lifecycle.py
 python dictado/tests/test_qml_success.py
 ```
+
+La decisión de motor (por qué Parakeet y qué se descartó) está en
+[`docs/motores.md`](docs/motores.md).
 
 La interfaz de control de Windows usa PySide6/Qt Widgets; el icono de bandeja
 y el overlay de Qt Quick del daemon son superficies independientes. El workflow
