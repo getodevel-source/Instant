@@ -88,6 +88,7 @@ def check(data_dir):
     p = model_paths(data_dir)
     return {k: os.path.isfile(v) for k, v in p.items()}
 
+
 def check_qwen3_asr(data_dir):
     """Check the optional Qwen3-ASR INT8 trial model and tokenizer files."""
     from instant_app.paths import qwen3_asr_paths
