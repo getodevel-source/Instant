@@ -27,6 +27,8 @@ def _check(name, got, want):
 
 old_env = os.environ.get("DICTADO_DATA")
 old_cwd = os.getcwd()
+old_frozen = getattr(sys, "frozen", None)
+old_executable = sys.executable
 try:
     # 1. DICTADO_DATA gana sobre todo.
     with tempfile.TemporaryDirectory() as env_d, tempfile.TemporaryDirectory() as cwd_d:
@@ -47,7 +49,25 @@ try:
         os.chdir(old_cwd)
         _check("cwd con marcador", got, os.path.join(cwd_d, "models"))
 
-    # 3. cwd sin marcador cae al user dir.
+    # 3. Frozen dist/Instant.exe can use the checkout's sibling models directory.
+    with tempfile.TemporaryDirectory() as checkout:
+        dist = os.path.join(checkout, "dist")
+        os.makedirs(dist)
+        _touch(os.path.join(checkout, "models"))
+        old_frozen = getattr(sys, "frozen", None)
+        old_executable = sys.executable
+        sys.frozen = True
+        sys.executable = os.path.join(dist, "Instant.exe")
+        os.chdir(dist)
+        got = paths.resolve_data_dir()
+        os.chdir(old_cwd)
+        _check("frozen sibling models", got, os.path.join(checkout, "models"))
+        if old_frozen is None:
+            del sys.frozen
+        else:
+            sys.frozen = old_frozen
+        sys.executable = old_executable
+
     with tempfile.TemporaryDirectory() as cwd_d:
         os.chdir(cwd_d)
         got = paths.resolve_data_dir()
@@ -67,5 +87,11 @@ finally:
         os.environ.pop("DICTADO_DATA", None)
     else:
         os.environ["DICTADO_DATA"] = old_env
+    if old_frozen is None:
+        if hasattr(sys, "frozen"):
+            del sys.frozen
+    else:
+        sys.frozen = old_frozen
+    sys.executable = old_executable
 
 print("OK: precedencia DICTADO_DATA verde.")

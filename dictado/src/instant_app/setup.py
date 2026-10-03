@@ -4,17 +4,15 @@ arranque con el sistema, test final.
 Sobrevive sin modelos (avisa y sigue) y sin mic (no crashea).
 Modo no interactivo: `instant setup --yes` (no pregunta nada; usa config
 actual salvo flags --mic/--key/--threads/--sound/--no-sound/--llm-url/
+--context-profile/--context-term/--context-remove-term/--context-delete-profile/
 --autostart/--no-autostart).
 """
 import logging
 
-from instant_app import audio, config, hotkey
+from instant_app import audio, config, context, hotkey
 from instant_app.paths import resolve_data_dir, user_data_dir
 
 log = logging.getLogger("instant")
-
-SKIP_DEVICES = ("sound mapper", "primary sound", "stereo mix", "what u hear",
-                "wave out", "loopback", "speakers wave", "microphone wave")
 
 
 def _ask(prompt, default=None):
@@ -54,6 +52,14 @@ def _parse_args(argv=None):
     ap.add_argument("--no-autostart", action="store_true",
                     help="desactiva arranque con el sistema")
     ap.add_argument("--llm-url", default=None, help="llama-server local (vacio=off)")
+    ap.add_argument("--context-profile", default=None,
+                    help="activa o crea un perfil de vocabulario local")
+    ap.add_argument("--context-term", action="append", default=[],
+                    help="añade grafía preferida=variante1|variante2 al perfil")
+    ap.add_argument("--context-remove-term", action="append", default=[],
+                    help="elimina del perfil el término con esa grafía preferida")
+    ap.add_argument("--context-delete-profile", action="store_true",
+                    help="elimina el perfil indicado por --context-profile")
     ap.add_argument("--no-meter", action="store_true", help="salta medidor de nivel")
     ap.add_argument("--no-probe", action="store_true", help="salta probe final y warmup")
     ap.add_argument("--check-deps", action="store_true",
@@ -64,13 +70,12 @@ def _parse_args(argv=None):
 
 
 def _real_inputs():
-    """Lista de mics reales; [] si no hay backend/mics (nunca crashea)."""
+    """Lista entradas útiles sin aliases de backend repetidos."""
     try:
-        all_in = audio.list_inputs()
+        return audio.input_choices()
     except Exception:
         log.exception("sin backend de audio (instala PortAudio?)")
         return []
-    return [t for t in all_in if not any(s in t[1].lower() for s in SKIP_DEVICES)]
 
 
 def cmd_setup(argv=None):
@@ -122,53 +127,61 @@ def cmd_setup(argv=None):
     if not models_ok:
         print("  AVISO: sin modelos `instant run` no transcribe hasta descargarlos.")
 
-    # 2. Microfono: lista real + medidor + probe final; guarda mic_index.
+    # 2. Microfono: lista con backend, medidor y seleccion persistente por nombre.
     inputs = _real_inputs()
     if not inputs:
         print("  sin dispositivos de entrada. Conecta un mic y re-corre `instant setup`.")
         rc = max(rc, 2)
-    else:
-        print("  microfonos:")
-        for n, (i, name, ch, _rate) in enumerate(inputs):
-            mark = ""
-            try:
-                import sounddevice as sd
-                if tuple(sd.default.device)[0] == i:
-                    mark = "  (default del sistema)"
-            except Exception:
-                pass
-            print(f"    {n}. [{i}] {name} ({ch}ch){mark}")
-        if o.mic is not None:
-            idx, name = o.mic, next((n for i, n, _c, _r in inputs if i == o.mic), None)
-            if name is None:
-                print(f"  --mic {o.mic} no es entrada valida; queda {cfg.get('mic_index')}.")
-                rc = max(rc, 2)
-            else:
-                cfg["mic_index"] = idx
-                cfg["mic_hint"] = ""
-                print(f"  elegido (--mic): [{idx}] {name}")
-        elif o.yes:
-            # --yes no pisa el mic del usuario: solo muestra el actual.
-            cur = cfg.get("mic_index")
-            name = next((n for i, n, _c, _r in inputs if i == cur), None)
-            if name is None:
-                print(f"  mic (config actual): [{cur}] (no esta en la lista; se conserva)")
-            else:
-                print(f"  mic (config actual): [{cur}] {name}")
+    elif o.mic is not None:
+        idx = audio.preferred_input_index(o.mic, inputs)
+        name = next((n for i, n, _c, _r in inputs if i == idx), None)
+        if name is None:
+            print(f"  --mic {o.mic} no es entrada valida; queda la config actual.")
+            rc = max(rc, 2)
         else:
-            cur = cfg.get("mic_index")
-            dflt = 0
-            for n, (i, _n, _c, _r) in enumerate(inputs):
-                if cur is not None and i == cur:
-                    dflt = n
-            sel = _ask_int("microfono (numero de la lista)", dflt, 0, len(inputs) - 1)
-            idx, name = inputs[sel][0], inputs[sel][1]
             cfg["mic_index"] = idx
-            cfg["mic_hint"] = ""
-            print(f"  elegido: [{idx}] {name}")
-            if not o.no_meter:
-                if _ask("probar nivel (habla 3s)? s/n", "s").lower().startswith("s"):
-                    audio.peak_meter(idx)
+            cfg["mic_hint"] = name
+            print(f"  elegido (--mic): {name} — {audio.input_hostapi(idx)}")
+    elif o.yes:
+        current = audio.resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
+        current = audio.preferred_input_index(current, inputs)
+        name = next((n for i, n, _c, _r in inputs if i == current), None)
+        if current is None:
+            print("  mic (config actual): predeterminado del sistema.")
+        else:
+            print(f"  mic (config actual): {name or current}")
+    else:
+        print("  microfonos disponibles:")
+        try:
+            import sounddevice as sd
+            raw_default = tuple(sd.default.device)[0]
+        except Exception:
+            raw_default = None
+        default = audio.preferred_input_index(raw_default, inputs)
+        current = audio.resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
+        if current is None:
+            current = raw_default
+        current = audio.preferred_input_index(current, inputs)
+        for number, (index, name, channels, _rate) in enumerate(inputs, start=1):
+            mark = " (predeterminado)" if index == default else ""
+            try:
+                backend = audio.input_hostapi(index)
+            except Exception:
+                backend = "backend desconocido"
+            print(f"    {number}. {name} — {backend} ({channels}ch, dispositivo {index}){mark}")
+        selected_number = next(
+            (number for number, (index, _name, _ch, _rate) in enumerate(inputs, start=1)
+             if index == current),
+            1,
+        )
+        selected = _ask_int("microfono (numero de la lista)", selected_number, 1, len(inputs)) - 1
+        idx, name, _ch, _rate = inputs[selected]
+        cfg["mic_index"] = idx
+        cfg["mic_hint"] = name
+        print(f"  elegido: {name} ({audio.input_hostapi(idx)})")
+        if not o.no_meter:
+            if _ask("probar nivel (habla 3s)? s/n", "s").lower().startswith("s"):
+                audio.peak_meter(idx)
 
     # 3. Idioma fijo: espanol unico (se guarda para futuro; el engine no cambia).
     cfg["lang"] = "es"
@@ -177,19 +190,19 @@ def cmd_setup(argv=None):
     # 4. Tecla con captura: presiona la tecla para asignar.
     keys = hotkey.available_keys()
     if o.key is not None:
-        if o.key.lower() in keys:
-            cfg["key"] = o.key.lower()
+        if hotkey.is_valid_key(o.key):
+            cfg["key"] = hotkey.normalize_key(o.key)
         else:
             print(f"  --key invalida. Opciones: {', '.join(keys)}; queda {cfg.get('key')}.")
             rc = max(rc, 2)
     elif o.yes:
-        print(f"  tecla (config actual): {cfg.get('key', 'f9')}")
+        print(f"  tecla (config actual): {hotkey.key_label(cfg.get('key', 'f9'))}")
     else:
-        print(f"  teclas validas: {', '.join(keys)}")
+        print(f"  teclas disponibles: {', '.join(keys)} o una tecla individual")
         cfg["key"] = hotkey.capture_key(
-            "Presiona la tecla para dictar... (Enter = F9)",
+            "Presiona la tecla para dictar... (Enter = mantener la actual)",
             cfg.get("key", "f9"))
-        print(f"  tecla: {cfg['key']}")
+        print(f"  tecla: {hotkey.key_label(cfg['key'])}")
 
     # 4b. Arranque con el sistema (casilla): muestra estado real del SO,
     # pregunta s/n (default = estado actual) y aplica. Flags no interactivos
@@ -249,6 +262,55 @@ def cmd_setup(argv=None):
     if o.llm_url is not None:
         cfg["llm_url"] = o.llm_url
 
+    context_requested = (
+        o.context_profile is not None or bool(o.context_term)
+        or bool(o.context_remove_term) or o.context_delete_profile)
+    if context_requested:
+        profiles = context.profiles(cfg)
+        name = (o.context_profile or cfg.get(
+            "active_context", context.DEFAULT_PROFILE)).strip()
+        if not name:
+            print("  --context-profile no puede estar vacio.")
+            rc = max(rc, 2)
+        elif o.context_delete_profile:
+            if o.context_profile is None:
+                print("  --context-delete-profile requiere --context-profile.")
+                rc = max(rc, 2)
+            elif name == context.DEFAULT_PROFILE:
+                print("  no se puede eliminar el perfil General.")
+                rc = max(rc, 2)
+            elif o.context_term or o.context_remove_term:
+                print("  no combines eliminar perfil con cambios de términos.")
+                rc = max(rc, 2)
+            else:
+                profiles.pop(name, None)
+                profiles.setdefault(context.DEFAULT_PROFILE, [])
+                cfg["context_profiles"] = profiles
+                cfg["active_context"] = context.DEFAULT_PROFILE
+        else:
+            entries = profiles.setdefault(name, [])
+            for value in o.context_term:
+                term, separator, variants = value.partition("=")
+                term = term.strip()
+                aliases = [item.strip() for item in variants.split("|") if item.strip()]
+                if not term or (separator and not aliases):
+                    print(f"  --context-term invalido: {value!r}; usa grafia=variante1|variante2.")
+                    rc = max(rc, 2)
+                    continue
+                existing = next((item for item in entries
+                                 if item["term"].casefold() == term.casefold()), None)
+                if existing is None:
+                    entries.append({"term": term, "aliases": aliases})
+                else:
+                    existing["term"] = term
+                    existing["aliases"] = list(dict.fromkeys(existing["aliases"] + aliases))
+            remove = {term.strip().casefold() for term in o.context_remove_term}
+            if remove:
+                entries[:] = [item for item in entries
+                              if item["term"].casefold() not in remove]
+            cfg["context_profiles"] = profiles
+            cfg["active_context"] = name
+
     path = config.save(cfg)
 
     # 6. Test final: probe mic + warmup modelos.
@@ -259,7 +321,7 @@ def cmd_setup(argv=None):
     mic_ok = True
     if inputs:
         from instant_app.audio import probe, resolve_mic
-        mic = resolve_mic("", cfg.get("mic_index"))
+        mic = resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
         mic_ok = probe(mic)
         print(f"  mic probe: {'OK' if mic_ok else 'FAIL (revisa uso exclusivo)'}")
     else:

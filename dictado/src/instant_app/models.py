@@ -38,21 +38,25 @@ def download_models(data_dir, progress=None):
     os.makedirs(mdir, exist_ok=True)
     missing = [f for f in PARAKEET_FILES if not os.path.isfile(os.path.join(mdir, f))]
     if missing:
-        print("  [1/2] Parakeet v3 int8 (~670MB)...")
+        if progress is None:
+            print("  [1/2] Parakeet v3 int8 (~670MB)...")
         log.info("descargando parakeet v3 int8 (~670MB)...")
-        snapshot_download(PARAKEET_REPO, local_dir=mdir, local_dir_use_symlinks=False,
+        snapshot_download(PARAKEET_REPO, local_dir=mdir,
                           allow_patterns=PARAKEET_FILES)
         _report("parakeet", 1, 1)
-        print("  [1/2] Parakeet OK.")
+        if progress is None:
+            print("  [1/2] Parakeet OK.")
     else:
         log.info("parakeet v3 int8 ya presente.")
-        print("  [1/2] Parakeet ya presente.")
+        if progress is None:
+            print("  [1/2] Parakeet ya presente.")
         _report("parakeet", 1, 1)
     vdir = os.path.join(data_dir, VAD_SUBDIR)
     os.makedirs(vdir, exist_ok=True)
     vad = os.path.join(vdir, "silero_vad.onnx")
     if not os.path.isfile(vad):
-        print("  [2/2] Silero VAD (~1MB)...")
+        if progress is None:
+            print("  [2/2] Silero VAD (~1MB)...")
         log.info("descargando silero VAD (~1MB)...")
         req = urllib.request.Request(VAD_URL, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=120) as r, open(vad, "wb") as f:
@@ -68,10 +72,12 @@ def download_models(data_dir, progress=None):
                 f.write(chunk)
                 done += len(chunk)
                 _report("vad", done, total)
-        print("  [2/2] VAD OK.")
+        if progress is None:
+            print("  [2/2] Silero VAD OK.")
     else:
         log.info("silero VAD ya presente.")
-        print("  [2/2] VAD ya presente.")
+        if progress is None:
+            print("  [2/2] Silero VAD ya presente.")
         _report("vad", 1, 1)
     return data_dir
 
@@ -81,3 +87,15 @@ def check(data_dir):
 
     p = model_paths(data_dir)
     return {k: os.path.isfile(v) for k, v in p.items()}
+
+def check_qwen3_asr(data_dir):
+    """Check the optional Qwen3-ASR INT8 trial model and tokenizer files."""
+    from instant_app.paths import qwen3_asr_paths
+
+    p = qwen3_asr_paths(data_dir)
+    result = {name: os.path.isfile(p[name])
+              for name in ("conv_frontend", "encoder", "decoder")}
+    result["tokenizer"] = all(os.path.isfile(os.path.join(
+        p["tokenizer"], name)) for name in (
+            "tokenizer_config.json", "vocab.json", "merges.txt"))
+    return result

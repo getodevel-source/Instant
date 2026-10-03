@@ -11,19 +11,130 @@ log = logging.getLogger("instant")
 WINDOWS_KEYS = {"f9": 0x78, "f10": 0x79, "f20": 0x83, "scroll": 0x91, "pause": 0x13}
 POSIX_KEYS = ("f9", "f10", "f11", "f12")
 
+_WINDOWS_NAME_VKS = {
+    "backspace": 0x08, "tab": 0x09, "enter": 0x0D, "return": 0x0D,
+    "shift": 0x10, "control": 0x11, "ctrl": 0x11, "alt": 0x12,
+    "pause": 0x13, "caps_lock": 0x14, "escape": 0x1B, "esc": 0x1B,
+    "space": 0x20, "page_up": 0x21, "prior": 0x21, "page_down": 0x22,
+    "next": 0x22, "end": 0x23, "home": 0x24, "left": 0x25,
+    "up": 0x26, "right": 0x27, "down": 0x28, "print_screen": 0x2C,
+    "insert": 0x2D, "delete": 0x2E, "win": 0x5B, "num_lock": 0x90,
+    "scroll_lock": 0x91, "shift_l": 0xA0, "shift_r": 0xA1,
+    "control_l": 0xA2, "control_r": 0xA3, "alt_l": 0xA4, "alt_r": 0xA5,
+    "semicolon": 0xBA, "equal": 0xBB, "comma": 0xBC, "minus": 0xBD,
+    "period": 0xBE, "slash": 0xBF, "grave": 0xC0, "bracketleft": 0xDB,
+    "backslash": 0xDC, "bracketright": 0xDD, "apostrophe": 0xDE,
+}
+_WINDOWS_SHIFTED_VKS = {
+    "!": 0x31, "@": 0x32, "#": 0x33, "$": 0x34, "%": 0x35,
+    "^": 0x36, "&": 0x37, "*": 0x38, "(": 0x39, ")": 0x30,
+    "_": 0xBD, "+": 0xBB, ":": 0xBA, '"': 0xDE, "<": 0xBC,
+    ">": 0xBE, "?": 0xBF, "~": 0xC0, "{": 0xDB, "}": 0xDD,
+    "|": 0xDC,
+}
+_VK_LABELS = {
+    0x08: "Backspace", 0x09: "Tab", 0x0D: "Enter", 0x10: "Shift",
+    0x11: "Ctrl", 0x12: "Alt", 0x13: "Pause", 0x14: "Caps Lock",
+    0x1B: "Esc", 0x20: "Space", 0x21: "Page Up", 0x22: "Page Down",
+    0x23: "End", 0x24: "Home", 0x25: "←", 0x26: "↑", 0x27: "→",
+    0x28: "↓", 0x2C: "Print Screen", 0x2D: "Insert", 0x2E: "Delete",
+    0x5B: "Win", 0x5C: "Win", 0x90: "Num Lock", 0x91: "Scroll Lock",
+    0xA0: "Shift", 0xA1: "Shift", 0xA2: "Ctrl", 0xA3: "Ctrl",
+    0xA4: "Alt", 0xA5: "Alt", 0xBA: ";", 0xBB: "=", 0xBC: ",",
+    0xBD: "-", 0xBE: ".", 0xBF: "/", 0xC0: "`", 0xDB: "[",
+    0xDC: "\\", 0xDD: "]", 0xDE: "'",
+}
+_POSIX_SPECIAL_KEYS = {
+    "backspace": "backspace", "tab": "tab", "enter": "enter",
+    "return": "enter", "esc": "esc", "escape": "esc", "space": "space",
+    "delete": "delete", "insert": "insert", "home": "home", "end": "end",
+    "page_up": "page_up", "page_down": "page_down", "left": "left",
+    "right": "right", "up": "up", "down": "down", "caps_lock": "caps_lock",
+    "num_lock": "num_lock", "scroll_lock": "scroll_lock", "pause": "pause",
+    "print_screen": "print_screen",
+}
+
+
+def _windows_vk(key_name):
+    key = _key_name(key_name)
+    if key.startswith("vk:"):
+        try:
+            vk = int(key[3:])
+        except ValueError:
+            return None
+        return vk if 8 <= vk <= 0xFE else None
+    if key in WINDOWS_KEYS:
+        return WINDOWS_KEYS[key]
+    if key in _WINDOWS_NAME_VKS:
+        return _WINDOWS_NAME_VKS[key]
+    if key in _WINDOWS_SHIFTED_VKS:
+        return _WINDOWS_SHIFTED_VKS[key]
+    if len(key) == 1 and key.isascii():
+        char = key.upper()
+        if "A" <= char <= "Z" or "0" <= char <= "9":
+            return ord(char)
+    if key.startswith("f") and key[1:].isdigit():
+        number = int(key[1:])
+        if 1 <= number <= 24:
+            return 0x70 + number - 1
+    return None
+
+
+def is_valid_key(key_name):
+    import sys
+
+    key = _key_name(key_name)
+    if sys.platform == "win32":
+        return _windows_vk(key) is not None
+    return (
+        key in POSIX_KEYS
+        or key in _POSIX_SPECIAL_KEYS
+        or (len(key) == 1 and key.isprintable())
+    )
+
+
+def key_label(key_name):
+    key = _key_name(key_name)
+    vk = _windows_vk(key)
+    if vk is not None:
+        if 0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A:
+            return chr(vk)
+        if 0x60 <= vk <= 0x69:
+            return f"Num {vk - 0x60}"
+        if 0x70 <= vk <= 0x87:
+            return f"F{vk - 0x70 + 1}"
+        return _VK_LABELS.get(vk, f"VK {vk:02X}")
+    if key in _POSIX_SPECIAL_KEYS:
+        return {
+            "space": "Space", "enter": "Enter", "return": "Enter",
+            "esc": "Esc", "escape": "Esc", "page_up": "Page Up",
+            "page_down": "Page Down", "caps_lock": "Caps Lock",
+            "num_lock": "Num Lock", "scroll_lock": "Scroll Lock",
+        }.get(key, key.replace("_", " ").title())
+    return key.upper()
+
+
+def _pynput_key_name(key_name):
+    key = _key_name(key_name)
+    return _POSIX_SPECIAL_KEYS.get(key, key)
+
 
 def available_keys():
+    """Teclas comunes; captura acepta otras teclas individuales admitidas."""
     import sys
     if sys.platform == "win32":
         return tuple(WINDOWS_KEYS)
     return POSIX_KEYS
 
+
+def _key_name(raw):
+    return "" if raw is None else str(raw).strip().lower()
+
+
 def normalize_key(raw, default="f9"):
-    """Normaliza nombre de tecla: minusculas, sin espacios; vacio/Enter -> default."""
-    k = "" if raw is None else str(raw).strip().lower()
-    if k in ("", "enter", "return"):
-        return (default or "f9").lower()
-    return k
+    """Normaliza el nombre; una entrada vacía conserva la tecla actual."""
+    key = _key_name(raw)
+    return key if key else (default or "f9").lower()
 
 
 # Scan codes extendidos win (tras prefijo \x00/\xe0) -> nombre. Solo captura.
@@ -39,6 +150,8 @@ def _read_keypress():
     Solo captura para el setup; el dictado sigue con GetAsyncKeyState/pynput."""
     import sys
     try:
+        if sys.stdin is None or not sys.stdin.isatty():
+            return None
         if sys.platform == "win32":
             import msvcrt
             ch = msvcrt.getwch()
@@ -46,6 +159,8 @@ def _read_keypress():
                 return _SCAN_WIN.get(ord(msvcrt.getwch()))
             if ch in ("\r", "\n"):
                 return ""
+            if ch == " ":
+                return "space"
             return ch.lower() if len(ch) == 1 else None
         import select
         import termios
@@ -64,6 +179,8 @@ def _read_keypress():
                 return _SEQ_POSIX.get(seq, seq.strip().lower() or None)
             if ch in ("\r", "\n"):
                 return ""
+            if ch == " ":
+                return "space"
             return ch.lower() if ch else None
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
@@ -71,9 +188,11 @@ def _read_keypress():
         return None
 
 
-def capture_key(prompt="Presiona la tecla para dictar... (Enter = F9)", default="f9"):
-    """Modo captura: presiona la tecla y se asigna si esta en available_keys().
-    Enter = default. Repite hasta tecla valida. Sin TTY usa linea escrita."""
+def capture_key(
+    prompt="Presiona la tecla para dictar... (Enter = tecla actual)",
+    default="f9",
+):
+    """Captura una tecla individual admitida por el backend del sistema."""
     keys = available_keys()
     dflt = (default or "f9").lower()
     print(f"  {prompt}")
@@ -81,7 +200,8 @@ def capture_key(prompt="Presiona la tecla para dictar... (Enter = F9)", default=
         pressed = _read_keypress()
         if pressed is None:
             try:
-                typed = input(f"  tecla [{dflt}] ({', '.join(keys)}): ")
+                typed = input(
+                    f"  tecla [{dflt}] ({', '.join(keys)} o una tecla individual): ")
             except (EOFError, KeyboardInterrupt):
                 print()
                 raise KeyboardInterrupt
@@ -91,17 +211,17 @@ def capture_key(prompt="Presiona la tecla para dictar... (Enter = F9)", default=
         else:
             key = pressed
             print(f"  detectada: {key}")
-        if key in keys:
+        if is_valid_key(key):
             return key
-        print(f"  '{key}' no valida. Opciones: {', '.join(keys)}. Intenta de nuevo.")
+        print(f"  '{key}' no es una tecla admitida. Intenta otra.")
 
 
 class WindowsPolling:
     def __init__(self, key_name):
         import ctypes
-        vk = WINDOWS_KEYS.get(key_name.lower())
+        vk = _windows_vk(key_name)
         if vk is None:
-            raise ValueError(f"tecla {key_name!r} no soportada en Windows: {tuple(WINDOWS_KEYS)}")
+            raise ValueError(f"tecla {key_name!r} no soportada en Windows")
         self.vk = vk
         self._user32 = ctypes.windll.user32
         self._stop = threading.Event()
@@ -131,21 +251,28 @@ class WindowsPolling:
 
 class PynputHotkey:
     def __init__(self, key_name):
-        key_name = key_name.lower()
-        if key_name not in POSIX_KEYS:
-            raise ValueError(f"tecla {key_name!r} no soportada fuera de Windows: {POSIX_KEYS}")
+        key_name = _key_name(key_name)
+        if not is_valid_key(key_name) or key_name.startswith("vk:"):
+            raise ValueError(f"tecla {key_name!r} no soportada fuera de Windows")
         try:
             from pynput import keyboard as _pk
         except ImportError:
             raise RuntimeError("falta pynput: pip install 'instant' en linux/mac lo incluye; "
                                "si falla, instala pynput manual.") from None
         self._pk = _pk
-        self._target = getattr(_pk.Key, key_name)
+        if len(key_name) == 1 and key_name.isprintable():
+            self._target = _pk.KeyCode.from_char(key_name)
+        else:
+            self._target = getattr(_pk.Key, _pynput_key_name(key_name))
         self._listener = None
         self._down = False
 
     def _norm(self, key):
         try:
+            target_char = getattr(self._target, "char", None)
+            char = getattr(key, "char", None)
+            if target_char is not None and char is not None:
+                return char.casefold() == target_char.casefold()
             return key == self._target
         except Exception:
             return False
