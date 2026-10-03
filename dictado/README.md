@@ -10,25 +10,54 @@ el engine transcribe igual que siempre.
 
 Errores conocidos del modelo (no son bugs de la app): nombres propios
 raros pueden salir deformados (p.ej. "Instant" → "instante"); siglas y
-anglicismos se transcriben por fonética. El pulido LLM opcional ayuda
-con tildes y puntuación, no con estos casos.
+anglicismos se transcriben por fonética. Un perfil de vocabulario permite
+corregir variantes reconocidas explícitamente; el pulido LLM por sí solo
+ayuda con tildes y puntuación, pero no reemplaza el reconocimiento de audio.
 
-## Instalar
+## Instalación
+
+Desde la raíz del repositorio, `install.bat` (Windows) o `./install.sh` (Linux/macOS) crea `.venv`, instala Instant y abre el asistente de configuración. `INSTANT_UNATTENDED=1` conserva el modo sin preguntas.
+
+Para desarrollar el paquete desde `dictado/`:
 
 ```bash
-pip install -e .
+python -m venv .venv
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Linux/macOS: source .venv/bin/activate
+python -m pip install -e .
 ```
+
+Los ejemplos de CLI siguientes suponen ese entorno virtual activo. Los instaladores del repositorio usan el `.venv` de la raíz automáticamente.
 
 ### Windows
 
 Sin dependencias del sistema. Si la tecla no responde en apps elevadas,
 corre la terminal como administrador.
 
+En Windows, las entradas WASAPI se abren en modo compartido con conversión
+automática a 16 kHz cuando el dispositivo usa otra frecuencia (por ejemplo,
+48 kHz), requerida por VAD y Parakeet. En micrófonos estéreo se capturan
+hasta dos canales y se usa el de mayor energía.
+El selector de configuración consolida alias repetidos entre host APIs y
+prioriza WASAPI; si un backend ofrece varias entradas con el mismo nombre,
+las conserva y las distingue por índice.
+Al iniciar cada dictado se vuelve a resolver el micrófono guardado. Si el
+inicio por callback falla, Instant intenta aliases del mismo nombre y deja
+constancia del backend usado o del error en el log; el diagnóstico abre también
+una captura por callback para comprobar ese mismo modo.
+
+Al cerrar la ventana, la interfaz se cierra para liberar sus recursos; el
+dictado sigue activo en la bandeja. Abrir Instant desde el icono enfoca una
+ventana existente o abre una nueva, sin duplicar ventanas. Clic derecho ofrece
+«Abrir ventana de Instant», «Configurar micrófono y tecla», «Diagnóstico» y
+«Salir de Instant» (que detiene el dictado).
+Windows puede ubicar el icono bajo la flecha de iconos ocultos; su visibilidad
+fija se configura en la barra de tareas.
+
 ### Linux (X11)
 
 ```bash
-sudo apt install libportaudio2 xclip xdotool
-pip install -e .
+sudo apt install python3-venv libportaudio2 xclip xdotool
 ```
 
 Wayland: el pegado con `xdotool` no funciona; usa sesión X11 o
@@ -38,7 +67,6 @@ Wayland: el pegado con `xdotool` no funciona; usa sesión X11 o
 
 ```bash
 brew install portaudio
-pip install -e .
 ```
 
 Autoriza micrófono y accesibilidad (pegado por teclado) en
@@ -46,39 +74,57 @@ Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado las mapea a multimedia.
 
 ## Uso
 
+Con el entorno virtual activado:
 ```bash
-instant setup   # TUI simple: modelos juntos, mic con medidor, tecla, test final
+instant setup   # ventana de configuración en Windows; asistente terminal en Linux/macOS
 instant run     # daemon: mantén la tecla, suelta para transcribir
 instant check   # boot rapido: tecla + mic probe + warmup (<5s)
 ```
 
-El setup interactivo hace, en orden:
+En Windows, `instant setup` abre el centro gráfico PySide6: un panel de inicio
+con estado del dictado y accesos a Audio, Preferencias y Modelos. Audio ofrece
+selector y prueba de micrófono (3 s); Preferencias incluye arranque con Windows
+y captura de tecla individual; Modelos muestra estado y descarga. «Actualizar»
+vuelve a enumerar las entradas disponibles sin cambiar el micrófono elegido si
+sigue presente, incluso si cambian los índices. El panel indica los cambios
+pendientes de guardar y, después de guardar, avisa si el micrófono o la tecla
+requieren reiniciar Instant. El diagnóstico muestra el informe en una ventana
+independiente. La ventana de control puede cerrarse sin detener el daemon, que
+conserva su icono de bandeja y la notificación de grabación independiente.
 
-1. **Modelos juntos**: baja Parakeet (~670MB) + VAD (~1MB) en un solo
-   paso con progreso `[1/2]` y `[2/2]`. Sin modos parciales.
-2. **Micrófono**: lista entradas reales, eliges por número, medidor de
-   nivel de 3s (habla y mira las barras) y probe final. Guarda `mic_index`.
-3. **Idioma**: Español (único), sin selector.
-4. **Tecla**: modo captura — "Presiona la tecla para dictar...
-   (Enter = F9)". Valida contra las teclas válidas y repite si no es válida.
-5. **Arranque con el sistema**: te muestra si está activado o no y te
-   pregunta s/n (el default es lo que ya tenés). Lo prende o lo apaga
-   en el acto y lo deja anotado en la config (`autostart`).
-6. **Test final**: probe del mic + warmup de modelos y mensaje
-   "Listo. Mantén F9 y dicta".
-No interactivo (no pregunta nada, conserva tu mic y tu tecla):
+En Modelos, «Grabar 15 s y comparar» ejecuta Parakeet y Qwen3-ASR 0.6B sobre
+la misma captura; muestra transcripción y tiempo de cada uno, no pega el texto
+ni guarda o envía el audio. Detén el daemon antes de comparar. Qwen recibe el
+vocabulario del perfil activo; Parakeet sigue siendo el motor del dictado.
+El Qwen de prueba es una conversión ONNX comunitaria y no se descarga con el
+setup normal: sus archivos se instalan en
+`<DICTADO_DATA>/qwen3-asr-0.6b-int8-2026-03-25` (o junto a los modelos del
+usuario si no se define `DICTADO_DATA`). [Repositorio del modelo](https://huggingface.co/csukuangfj2/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25).
+En Linux/macOS se conserva el asistente terminal, que hace, en orden:
+
+1. **Modelos**: descarga Parakeet (~670 MB) y VAD (~1 MB) si faltan.
+2. **Micrófono**: muestra nombre, backend y canales; permite medir nivel. Guarda nombre e índice como fallback si cambia el orden de dispositivos.
+3. **Idioma**: español fijo.
+4. **Tecla**: captura una tecla individual (Enter conserva la actual).
+5. **Arranque con el sistema**: muestra el estado real y permite activarlo o desactivarlo.
+6. **Prueba final**: abre el micrófono y calienta los modelos.
+
+Modo no interactivo (conserva el micrófono y la tecla actuales):
 
 ```bash
-instant setup --yes --no-probe
-instant setup --yes --mic 3 --key f9 --threads 4 --no-sound
+instant setup --yes --key f9 --threads 4 --no-sound
 ```
+`--mic` recibe el índice PortAudio mostrado junto al dispositivo; el setup guarda también el nombre para recuperarse si Windows cambia los índices.
 
 Flags avanzados (solo flags, el interactivo no los pregunta):
 `--threads` (default 4), `--sound`/`--no-sound` (default off),
-`--llm-url` (default vacío = off), `--mic`, `--key`, `--no-meter`,
-`--no-probe`, `--yes`, `--check-deps`, `--fix-deps`. Arranque sin
-preguntar: `--autostart` lo prende, `--no-autostart` lo apaga; con
-`--yes` pelado no se toca nada (se conserva lo que ya tenés).
+`--llm-url` (default vacío = off), `--context-profile`,
+`--context-term "grafía=variante1|variante2"`,
+`--context-remove-term "grafía"`, `--context-delete-profile`,
+`--mic`, `--key`, `--no-meter`, `--no-probe`, `--yes`,
+`--check-deps`, `--fix-deps`.
+Arranque sin preguntar: `--autostart` lo prende, `--no-autostart` lo apaga;
+con `--yes` pelado no se toca nada (se conserva lo que ya tenés).
 
 ## Dependencias
 
@@ -98,17 +144,14 @@ instant setup --fix-deps
 | pip | `import pip` | sí (`ensurepip`) | `python -m ensurepip` |
 | numpy, sounddevice, sherpa-onnx, pyperclip, huggingface_hub | `importlib` | sí (`pip install`) | `pip install <paquete>` |
 | keyboard (win) / pynput (linux/mac) | `importlib` | sí (`pip install`) | `pip install <paquete>` |
+| pystray y Pillow (Windows) | icono de bandeja | sí (`pip install`) | `pip install pystray Pillow` |
 | portaudio linux (`libportaudio2`) | lib/ldconfig/dpkg | sí (`apt`) solo con sudo sin password o root | `sudo apt install libportaudio2` |
 | xclip/xsel linux | PATH | sí (`apt`) solo con sudo sin password o root | `sudo apt install xclip` |
 | xdotool linux (X11) | PATH | sí (`apt`) solo con sudo sin password o root | `sudo apt install xdotool` |
 | portaudio mac | `brew --prefix portaudio` | sí (`brew`) solo si tenés brew | `brew install portaudio` |
 | Windows: nada del sistema | — | — | no hace falta nada |
 
-Wayland: `xdotool` no anda (sale `[FALTA]`, no es auto, usa sesión X11
-o `wtype` manual). Sin red no se instala nada: queda `[FALTA]` con
-el hint, sin traceback. `install.bat`/`install.sh` las pueden llamar
-así (no se tocan en este cambio): `instant setup --check-deps` para
-mostrar, `instant setup --fix-deps` para autoinstalar lo permitido.
+Wayland: `xdotool` no anda (usa sesión X11 o `wtype` manual). Sin red no se instalan paquetes ni modelos; el setup informa qué falta. Para evitar preguntas en instalaciones automatizadas, define `INSTANT_UNATTENDED=1` antes de correr el instalador del repositorio.
 
 ## De dónde saca los modelos (DICTADO_DATA)
 
@@ -116,8 +159,11 @@ Precedencia efectiva:
 
 1. `DICTADO_DATA` gana siempre (aunque no exista, se respeta tal cual).
 2. `./models` con `parakeet-v3-int8/encoder.int8.onnx` gana al dir de usuario.
-3. `./models` sin ese marcador se ignora y cae al dir de usuario.
-4. Si no hay nada, va al dir de usuario (`%LOCALAPPDATA%/instant/models`
+3. Con el ejecutable congelado, `../models` respecto de su carpeta se usa si
+   contiene el marcador; así el panel y el daemon comparten los modelos del
+   checkout.
+4. `./models` sin ese marcador se ignora.
+5. Si no hay nada, va al dir de usuario (`%LOCALAPPDATA%/instant/models`
    en win, `~/.local/share/instant/models` en linux,
    `~/Library/Application Support/instant/models` en mac).
 
@@ -136,10 +182,10 @@ sin tocar procesos ajenos.
 
 ## Arranque con el sistema
 
-La casilla "Arranque de Instant" sale en el `setup` justo después de la
-tecla: te dice si está activado y qué va a crear en tu sistema, y te
-pregunta s/n (el default es lo que ya tenés). Si la prendés, el daemon
-arranca solo y oculto en el próximo login; si la apagás, no arranca más.
+En Windows, la casilla «Iniciar con Windows» está en el panel gráfico.
+En Linux/macOS, el asistente terminal pregunta s/n después de la tecla,
+muestra el estado real y qué va a crear; el default conserva el estado actual.
+Si lo prendés, el daemon arranca solo y oculto en el próximo login; si lo apagás, no arranca más.
 
 ```bash
 instant setup                       # interactivo: pregunta s/n
@@ -166,14 +212,61 @@ igual: el setup lo detecta apagado. Lo que vale de verdad es lo que hay
 en el sistema, no la casilla guardada (`autostart` en la config es solo
 un recordatorio; si no coinciden, el setup te avisa y deja lo del sistema).
 
+## Contexto y vocabulario
+
+En Windows, Preferencias permite crear perfiles y definir variantes exactas
+que el reconocedor suele transcribir con otra grafía. Cada línea tiene la
+grafía final, un tabulador y una o más variantes separadas por `|`:
+
+```text
+Instant	instante | in stand
+Parakeet	para kit
+```
+
+Solo se reemplazan esas variantes completas; no se hace coincidencia difusa
+ni se fuerza una palabra del glosario si el texto no contiene una variante.
+
+En el pipeline actual estas correcciones se aplican al texto **después** del
+reconocimiento; no son pistas acústicas para Parakeet. sherpa-onnx exige
+`modified_beam_search` y el vocabulario BPE del modelo para hotwords, mientras
+Instant descarga Parakeet con `greedy_search` y el paquete del modelo no trae
+`bpe.vocab`. Cambiar de decodificador sin ese vocabulario y sin probarlo con
+audio real podría empeorar los resultados; por eso las correcciones
+contextuales se limitan a variantes explícitas y exactas.
+
+Los perfiles y el vocabulario se guardan localmente en la configuración de
+Instant. En Linux/macOS también se pueden gestionar desde setup:
+
+```bash
+instant setup --yes --no-probe --context-profile Trabajo \
+  --context-term "Instant=instante|in stand"
+```
+
+Para quitar un término o un perfil en Linux/macOS:
+
+```bash
+instant setup --yes --no-probe --context-profile Trabajo \
+  --context-remove-term Instant
+instant setup --yes --no-probe --context-profile Trabajo \
+  --context-delete-profile
+```
+
+El perfil activo se puede elegir mediante `DICTADO_CONTEXT`. El vocabulario
+explícito funciona sin LLM ni internet. Para pulido adicional, el LLM local
+recibe el glosario activo; el audio nunca se envía a la nube.
+
 ## Pulido LLM (opcional, off por defecto)
 
-Si tienes `llama-server` local corriendo, pasa `--llm-url` al setup
-(o env `DICTADO_LLM_URL=http://127.0.0.1:8080`) para corregir tildes y
-puntuación. Sin servidor, el pipeline funciona idéntico sin él.
-Nunca requiere red ni nube: solo ese endpoint local opt-in.
+Si tienes `llama-server` local corriendo, en Windows configura su URL en
+Preferencias; en Linux/macOS usa `--llm-url` al setup (o
+`DICTADO_LLM_URL=http://127.0.0.1:8080`). El LLM recibe la transcripción y el
+glosario activo —no el audio— y corrige ortografía, tildes, puntuación y los
+signos de apertura `¿`/`¡`. No puede aprovechar la entonación del audio ni
+sustituir palabras: se rechaza toda salida que cambie la secuencia de palabras
+(comparando el texto normalizado, sin tildes ni mayúsculas). Si el servidor
+falla, se conserva la transcripción con las sustituciones exactas del
+glosario; Instant nunca manda audio a la nube.
 
 ## Binarios por SO
 
-Pendiente: builds PyInstaller por release en GitHub (win/linux/mac).
-Hoy se distribuye como paquete Python.
+Los binarios PyInstaller todavía requieren verificación antes de publicarse como distribución oficial.
