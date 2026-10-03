@@ -60,8 +60,22 @@ else:
         @classmethod
         def setUpClass(cls):
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            import gc as _gc
+            _gc.disable()
             from PySide6.QtWidgets import QApplication
             cls.app = QApplication.instance() or QApplication([])
+
+        @classmethod
+        def tearDownClass(cls):
+            import gc as _gc
+            _gc.enable()
+            _gc.collect()
+
+        def setUp(self):
+            # Igual que en test_gui_lifecycle: destruir ventanas viejas fuera
+            # de todo event loop para un teardown determinista en offscreen.
+            import gc as _gc
+            _gc.collect()
 
         def _wait_idle(self, window):
             from PySide6.QtCore import QEventLoop
@@ -263,31 +277,60 @@ else:
                 return "settings.json"
             try:
                 window.navigate("settings")
+                self.assertEqual(window._current_section, "settings")
                 self.assertTrue(window.context_combo.isVisible())
-                self.assertTrue(window.context_editor.isVisible())
-                self.assertTrue(window.llm_url_edit.isVisible())
-                window.context_editor.setPlainText("Instant\tinstante | in stand")
+                self.assertTrue(window.vocab_table.isVisible())
+                self.assertFalse(hasattr(window, "llm_url_edit"))
+                window._vocab_set_rows([
+                    {"term": "Instant", "aliases": ["instante", "in stand"],
+                     "sonido": False}])
+                self.assertEqual(window._vocab_rows(), [
+                    {"term": "Instant", "aliases": ["instante", "in stand"],
+                     "sonido": False}])
                 window.context_combo.addItem("Trabajo")
                 window.context_combo.setCurrentText("Trabajo")
-                window.context_editor.setPlainText("Parakeet\tpara kit")
-                window.llm_url_edit.setText("http://127.0.0.1:8080")
+                window._vocab_set_rows([
+                    {"term": "Parakeet", "aliases": ["para kit"],
+                     "sonido": True}])
+                window.cfg["llm_url"] = "http://127.0.0.1:8080"
                 with patch("instant_app.gui.config.save", side_effect=save), \
                         patch("instant_app.gui.autostart.is_enabled", return_value=False):
                     window.save_config(show_message=False)
                 self.assertEqual(saved["active_context"], "Trabajo")
                 self.assertEqual(saved["llm_url"], "http://127.0.0.1:8080")
                 self.assertEqual(
-                    [(item["term"], item["aliases"])
-                     for item in saved["context_profiles"]["General"]],
-                    [("Instant", ["instante", "in stand"])])
+                    saved["context_profiles"]["General"],
+                    [{"term": "Instant", "aliases": ["instante", "in stand"],
+                      "sonido": False}])
                 self.assertEqual(
-                    [(item["term"], item["aliases"])
-                     for item in saved["context_profiles"]["Trabajo"]],
-                    [("Parakeet", ["para kit"])])
+                    saved["context_profiles"]["Trabajo"],
+                    [{"term": "Parakeet", "aliases": ["para kit"],
+                      "sonido": True}])
                 self.assertIn("vocabulario", window.settings_status.text())
                 self.assertIn("LLM", window.settings_status.text())
                 window._settings_daemon_changed(True)
                 self.assertIn("vocabulario", window.settings_status.text())
+            finally:
+                self._close_and_wait(window)
+
+        def test_vocab_delete_button_removes_only_its_row(self):
+            from PySide6.QtWidgets import QPushButton
+            window = self._window()
+            try:
+                window._vocab_set_rows([
+                    {"term": "Instant", "aliases": ["instante"],
+                     "sonido": False},
+                    {"term": "Parakeet", "aliases": ["para kit"],
+                     "sonido": True}])
+                table = window.vocab_table
+                self.assertEqual(table.rowCount(), 2)
+                wrap = table.cellWidget(0, 3)
+                button = wrap.findChild(QPushButton)
+                button.click()
+                self.assertEqual(table.rowCount(), 1)
+                self.assertEqual(window._vocab_rows(), [
+                    {"term": "Parakeet", "aliases": ["para kit"],
+                     "sonido": True}])
             finally:
                 self._close_and_wait(window)
 

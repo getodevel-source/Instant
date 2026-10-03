@@ -19,8 +19,23 @@ else:
         @classmethod
         def setUpClass(cls):
             os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            import gc as _gc
+            _gc.disable()
             from PySide6.QtWidgets import QApplication
             cls.app = QApplication.instance() or QApplication([])
+
+        @classmethod
+        def tearDownClass(cls):
+            import gc as _gc
+            _gc.enable()
+            _gc.collect()
+
+        def setUp(self):
+            # Las ventanas del test anterior se destruyen acá, fuera de todo
+            # event loop: su GC cíclico durante un pump posterior aborta Qt
+            # en offscreen. Producción no lo sufre (una ventana por proceso).
+            import gc as _gc
+            _gc.collect()
 
         def _wait_idle(self, window):
             from PySide6.QtCore import QEventLoop
@@ -121,8 +136,11 @@ else:
                     self.assertIn("Ctrl+V", hint)
                     self.assertNotIn("transcribir", hint.lower())
                     self._close_and_wait(window)
+                    del window
+                    import gc as _gc
+                    _gc.collect()
 
-        def test_setup_and_diagnostics_routes_are_supported(self):
+        def test_setup_route_scrolls_to_audio_section(self):
             Window = gui._main_window_class()
             with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
                     patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
@@ -131,8 +149,12 @@ else:
                     patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
                 window = Window(page="setup", autostart_override=False)
                 self._wait_idle(window)
-            self.assertEqual(window.stack.currentIndex(), window.pages["audio"])
             self.assertEqual(set(window.pages), {"home", "audio", "settings", "models"})
+            self.assertEqual(window._current_section, "audio")
+            window.navigate("models")
+            self.assertEqual(window._current_section, "models")
+            window.navigate("home")
+            self.assertEqual(window._current_section, "home")
             self._close_and_wait(window)
 
 

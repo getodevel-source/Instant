@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 
-from instant_app import audio, autostart, config, context, hotkey, models
+from instant_app import audio, autostart, config, context, hotkey, models, theme
 from instant_app.branding import create_icon_image
 from instant_app.paths import resolve_data_dir
 from instant_app.launch import app_command, app_environment
@@ -26,15 +26,6 @@ def _worker_manager(manager_type):
         _WORKER_MANAGERS.add(manager)
         return manager
 log = logging.getLogger("instant")
-
-COLORS = {
-    "background": "#10191f", "surface": "#18272e", "surface_alt": "#21363e",
-    "line": "#3a5159", "text": "#e7eff1", "muted": "#a7b8bd",
-    "accent": "#55d5c8", "accent_button": "#087c72", "accent_hover": "#0b9085",
-    "hero": "#153744", "hero_text": "#f4f8f8", "green": "#7cdda6",
-    "amber": "#f2c36a", "red": "#ff908b",
-}
-
 
 
 def _workdir():
@@ -116,13 +107,14 @@ def _qt_types():
     # daemon pueda abrir la ventana en otro proceso sin cargar Qt. Los nombres
     # vuelven por locals() y las clases los usan por `qt[...]`, asi que el
     # linter los ve como no usados: el noqa es a proposito, no un descuido.
-    from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot  # noqa: F401
-    from PySide6.QtGui import QFont, QIcon, QKeySequence  # noqa: F401
+    from PySide6.QtCore import QObject, QEvent, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot  # noqa: F401
+    from PySide6.QtGui import QFont, QIcon, QKeySequence, QPixmap  # noqa: F401
     from PySide6.QtWidgets import (  # noqa: F401
         QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
-        QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+        QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
         QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy,
-        QStackedWidget, QVBoxLayout, QWidget,
+        QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem,
+        QVBoxLayout, QWidget,
     )
     return locals()
 
@@ -266,8 +258,9 @@ def _main_window_class():
     QApplication, QCheckBox, QComboBox, QDialog, QFrame = (qt[k] for k in ("QApplication", "QCheckBox", "QComboBox", "QDialog", "QFrame"))
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox = (qt[k] for k in ("QHBoxLayout", "QLabel", "QLineEdit", "QMainWindow", "QMessageBox"))
     QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy = (qt[k] for k in ("QPlainTextEdit", "QProgressBar", "QPushButton", "QSizePolicy"))
-    QStackedWidget, QVBoxLayout, QWidget = (qt[k] for k in ("QStackedWidget", "QVBoxLayout", "QWidget"))
-    Qt, QTimer, QIcon, QFont, QKeySequence = (qt[k] for k in ("Qt", "QTimer", "QIcon", "QFont", "QKeySequence"))
+    QScrollArea, QStackedWidget, QVBoxLayout, QWidget = (qt[k] for k in ("QScrollArea", "QStackedWidget", "QVBoxLayout", "QWidget"))
+    QTableWidget, QTableWidgetItem, QHeaderView = (qt[k] for k in ("QTableWidget", "QTableWidgetItem", "QHeaderView"))
+    Qt, QTimer, QIcon, QFont, QKeySequence, QPixmap, QEvent = (qt[k] for k in ("Qt", "QTimer", "QIcon", "QFont", "QKeySequence", "QPixmap", "QEvent"))
     Worker, Manager = _worker_class()
 
     class KeyCaptureDialog(QDialog):
@@ -335,6 +328,19 @@ def _main_window_class():
             if not self.owner._closed and self.progress_callback:
                 self.progress_callback(value)
 
+    class WheelPassThrough(qt["QObject"]):
+        """La rueda scrollea la página: los combos no cambian solos."""
+
+        def __init__(self, scroll):
+            super().__init__(scroll)
+            self._scroll = scroll
+
+        def eventFilter(self, _watched, event):
+            if event.type() == qt["QEvent"].Wheel:
+                self._scroll.wheelEvent(event)
+                return True
+            return False
+
     class InstantWindow(QMainWindow):
         microphones_loaded = qt["Signal"]()
         workers_idle = qt["Signal"]()
@@ -347,8 +353,8 @@ def _main_window_class():
             self._daemon_start_pending = False
             self._daemon_start_token = 0
             self.setWindowTitle("Instant")
-            self.setMinimumSize(960, 680)
-            self.resize(1120, 760)
+            self.setMinimumSize(1000, 640)
+            self.resize(1360, 760)
             self.setStyleSheet(STYLE)
             self.pool = qt["QThreadPool"].globalInstance()
             self.worker_manager = _worker_manager(Manager)
@@ -372,6 +378,7 @@ def _main_window_class():
             self._pending_workers = set()
             self._worker_receivers = {}
             self._microphones_loaded = False
+            self._brand_image = None
             self._build(autostart_override)
             self.refresh_microphones(initial=True)
             self.refresh_daemon()
@@ -390,13 +397,41 @@ def _main_window_class():
                 self.workers_idle.emit()
                 if self._closed: QApplication.instance().quit()
 
-        def _label(self, text, name=None):
+        def _label(self, text, name=None, wrap=True):
             label = QLabel(text)
             if name:
                 label.setObjectName(name)
-            label.setWordWrap(True)
+            label.setWordWrap(wrap)
             label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
             return label
+
+        def _rule(self):
+            """Separador de un píxel: ordena la página sin agregar peso visual."""
+            line = QFrame()
+            line.setObjectName("rule")
+            line.setFixedHeight(1)
+            return line
+
+        def _brand_mark(self, size=30):
+            """Marca de la aplicación para la barra lateral."""
+            if self._brand_image is None:
+                try:
+                    from io import BytesIO
+                    stream = BytesIO()
+                    create_icon_image(size * 2).save(stream, format="PNG")
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(stream.getvalue(), "PNG")
+                    self._brand_image = pixmap.scaled(
+                        size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                except Exception:
+                    log.exception("no pude dibujar la marca de la barra lateral")
+                    self._brand_image = QPixmap()
+            if self._brand_image.isNull():
+                return None
+            mark = QLabel()
+            mark.setPixmap(self._brand_image)
+            mark.setFixedSize(size, size)
+            return mark
 
         def _device_catalog_copy(self):
             catalog = DeviceCatalog(dict(self.cfg))
@@ -419,7 +454,7 @@ def _main_window_class():
             frame.setObjectName("card")
             frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
             box = QVBoxLayout(frame)
-            box.setContentsMargins(22, 20, 22, 20)
+            box.setContentsMargins(26, 22, 26, 24)
             box.setSpacing(12)
             heading = QLabel(title)
             heading.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
@@ -432,137 +467,192 @@ def _main_window_class():
             return frame, box
 
         def _build(self, autostart_override):
-            shell = QWidget()
-            root = QHBoxLayout(shell)
-            root.setContentsMargins(0, 0, 0, 0)
-            root.setSpacing(0)
-            rail = QFrame()
-            rail.setObjectName("rail")
-            rail.setFixedWidth(228)
-            nav = QVBoxLayout(rail)
-            nav.setContentsMargins(18, 25, 18, 20)
-            brand = QLabel("Instant")
-            brand.setObjectName("brand")
-            nav.addWidget(brand)
-            nav.addWidget(self._label("DICTADO LOCAL · ESPAÑOL", "railCaption"))
-            nav.addSpacing(25)
-            self.stack = QStackedWidget()
-            self.nav_buttons = {}
-            for key, label in (("home", "Inicio"), ("audio", "Audio"), ("settings", "Preferencias"), ("models", "Modelos")):
-                button = QPushButton(label)
-                button.setObjectName("navButton")
-                button.setCheckable(True)
-                button.clicked.connect(lambda checked=False, name=key: self.navigate(name))
-                nav.addWidget(button)
-                self.nav_buttons[key] = button
-            nav.addStretch()
-            diag = QPushButton("Diagnóstico")
-            diag.setObjectName("navButton")
-            diag.clicked.connect(self.show_diagnostics)
-            nav.addWidget(diag)
-            nav.addWidget(self._label("Tu voz se procesa en este equipo.", "railFoot"))
-            root.addWidget(rail)
-            content = QWidget()
-            self.content_layout = QVBoxLayout(content)
-            self.content_layout.setContentsMargins(34, 28, 34, 24)
+            # Una sola pantalla apaisada: el scroll ES la ventana (sin
+            # envoltorios intermedios que rompan el pintado del viewport).
+            # Sin barra lateral ni páginas: todo Instant en un vistazo.
+            self._scroll = QScrollArea()
+            self._scroll.setObjectName("pageScroll")
+            self._scroll.setWidgetResizable(True)
+            self._scroll.setFrameShape(QFrame.NoFrame)
+            self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            holder = QWidget()
+            self.content_layout = QVBoxLayout(holder)
+            self.content_layout.setContentsMargins(28, 26, 28, 30)
             self.content_layout.setSpacing(18)
-            head = QHBoxLayout()
-            heading = QVBoxLayout()
-            heading.addWidget(self._label("Instant", "pageTitle"))
-            heading.addWidget(self._label("Dictado local, simple y privado.", "muted"))
-            head.addLayout(heading)
-            head.addStretch()
-            self.header_state = QLabel("Comprobando estado…")
-            self.header_state.setObjectName("pill")
-            head.addWidget(self.header_state)
-            self.content_layout.addLayout(head)
-            root.addWidget(content, 1)
-            self.setCentralWidget(shell)
-            self._make_pages()
-            self.content_layout.addWidget(self.stack, 1)
-            self.navigate("home" if self.page in ("home", "diagnostics") else self.page)
+            self._scroll.setWidget(holder)
+            self.setCentralWidget(self._scroll)
+            self._make_page()
+            self._page = holder
+            self._current_section = "home"
             if self.page == "setup":
                 self.navigate("audio")
             self._init_settings(autostart_override)
 
-        def _make_pages(self):
-            # Home dashboard
-            page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(16)
-            hero = QFrame(); hero.setObjectName("hero"); hero.setMinimumHeight(250); hero.setMaximumHeight(300)
-            hero_l = QHBoxLayout(hero); hero_l.setContentsMargins(28, 24, 28, 24)
-            left = QVBoxLayout(); self.status_var = QLabel("Listo para dictar"); self.status_var.setObjectName("heroStatus"); self.status_var.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            self.status_detail = self._label("Enfocá el prompt o campo editable de la CLI antes de mantener F9. Instant pega con Ctrl+V.", "heroDetail")
-            hero_title = self._label("Hablá. Soltá. Listo.", "heroTitle"); hero_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            left.addWidget(self.status_var); left.addWidget(hero_title); left.addWidget(self.status_detail)
-            hero_l.addLayout(left, 1); hero_l.setAlignment(left, Qt.AlignVCenter)
-            action = QVBoxLayout(); self.key_badge = QLabel(hotkey.key_label(self.cfg.get("key", "f9"))); self.key_badge.setObjectName("keyBadge"); self.key_badge.setMaximumHeight(64); action.addWidget(self._label("TECLA", "railCaption"), alignment=Qt.AlignRight); action.addWidget(self.key_badge, alignment=Qt.AlignRight)
-            self.run_button = QPushButton("Iniciar dictado"); self.run_button.setObjectName("primaryButton"); self.run_button.setEnabled(False); self.run_button.clicked.connect(self.toggle_daemon); action.addWidget(self.run_button)
-            self.stop_button = QPushButton("Detener"); self.stop_button.clicked.connect(self.stop_daemon); action.addWidget(self.stop_button); self.stop_button.hide()
-            hero_l.addLayout(action); layout.addWidget(hero)
-            card, box = self._card(layout, "Tu espacio de dictado", "Ajustes clave siempre a mano.")
-            quick = QHBoxLayout(); self.quick_mic = QLabel("Micrófono: —"); self.quick_mic.setMinimumWidth(350); self.quick_model = QLabel("Modelos: —"); quick.addWidget(self.quick_mic); quick.addStretch(); quick.addWidget(self.quick_model); box.addLayout(quick)
-            self.settings_status = QLabel(""); self.settings_status.setObjectName("statusLine"); self.settings_status.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum); box.addWidget(self.settings_status)
-            self.stack.addWidget(page); self.pages = {"home": 0}
+        def _scroll_to(self, widget):
+            area = getattr(self, "_scroll", None)
+            if area is not None:
+                area.ensureWidgetVisible(widget)
 
-            # Audio page
-            page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(16)
-            layout.addWidget(self._label("Audio", "pageTitle")); layout.addWidget(self._label("Elegí una entrada y comprobá que la señal llegue con claridad.", "muted"))
-            card, box = self._card(layout, "Micrófono de entrada", "La lista vuelve a respetar tu selección al actualizar dispositivos.")
-            row = QHBoxLayout(); self.mic_combo = QComboBox(); self.mic_combo.currentIndexChanged.connect(self._mic_selected); row.addWidget(self.mic_combo, 1)
-            self.refresh_button = QPushButton("Actualizar"); self.refresh_button.clicked.connect(self.refresh_microphones); row.addWidget(self.refresh_button)
-            self.test_button = QPushButton("Probar 3 s"); self.test_button.clicked.connect(self.test_microphone); row.addWidget(self.test_button); box.addLayout(row)
+        def _make_page(self):
+            layout = self.content_layout
+            # Encabezado: marca, estado y diagnóstico. Nada más.
+            head = QHBoxLayout()
+            head.setSpacing(12)
+            mark = self._brand_mark(26)
+            if mark is not None:
+                head.addWidget(mark)
+            brand = QLabel("Instant")
+            brand.setObjectName("brand")
+            head.addWidget(brand)
+            head.addStretch()
+            layout.addLayout(head)
+            layout.addWidget(self._rule())
+
+            # Estado: portada fina con lo esencial para dictar ya. Sin altura
+            # máxima: el contenido manda (a 150 % de escala o ventana angosta
+            # el título puede ocupar dos líneas y nada debe recortarse).
+            hero = QFrame(); hero.setObjectName("hero"); hero.setMinimumHeight(160)
+            hero_l = QHBoxLayout(hero); hero_l.setContentsMargins(28, 20, 28, 20); hero_l.setSpacing(20)
+            left = QVBoxLayout(); left.setSpacing(8)
+            self.status_var = QLabel("Listo para dictar"); self.status_var.setObjectName("heroStatus"); self.status_var.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self.status_detail = self._label("Enfocá el prompt o campo editable de la CLI, mantené F9 y soltá: Instant pega con Ctrl+V.", "heroDetail")
+            hero_title = self._label("Hablá. Soltá. Listo.", "heroTitle"); hero_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed); hero_title.setWordWrap(False)
+            left.addStretch(); left.addWidget(self.status_var); left.addWidget(hero_title); left.addWidget(self.status_detail); left.addStretch()
+            hero_l.addLayout(left, 1)
+            action = QVBoxLayout(); action.setSpacing(8)
+            self.key_badge = QLabel(hotkey.key_label(self.cfg.get("key", "f9"))); self.key_badge.setObjectName("keyBadge"); self.key_badge.setAlignment(Qt.AlignCenter)
+            action.addStretch()
+            action.addWidget(self._label("Tecla", "railCaption", wrap=False), alignment=Qt.AlignRight)
+            action.addWidget(self.key_badge, alignment=Qt.AlignRight)
+            action.addSpacing(4)
+            self.run_button = QPushButton("Iniciar dictado"); self.run_button.setObjectName("primaryButton"); self.run_button.setMinimumWidth(150); self.run_button.setEnabled(False); self.run_button.setCursor(Qt.PointingHandCursor); self.run_button.clicked.connect(self.toggle_daemon); action.addWidget(self.run_button)
+            self.stop_button = QPushButton("Detener"); self.stop_button.setMinimumWidth(150); self.stop_button.setCursor(Qt.PointingHandCursor); self.stop_button.clicked.connect(self.stop_daemon); action.addWidget(self.stop_button); self.stop_button.hide()
+            action.addStretch()
+            hero_l.addLayout(action); layout.addWidget(hero)
+            # Estado sin tarjeta: una línea tenue en vez de una caja entera.
+            quick = QHBoxLayout(); quick.setSpacing(12)
+            self.quick_mic = QLabel("Micrófono: —"); self.quick_mic.setObjectName("softStatus")
+            self.quick_model = QLabel("Voz: —"); self.quick_model.setObjectName("softStatus")
+            quick.addWidget(self.quick_mic); quick.addStretch(); quick.addWidget(self.quick_model)
+            layout.addLayout(quick)
+
+            # Dos columnas: izquierda ajustes, derecha vocabulario ancho.
+            cols = QHBoxLayout(); cols.setSpacing(18)
+            leftV = QVBoxLayout(); leftV.setSpacing(18)
+            rightV = QVBoxLayout(); rightV.setSpacing(18)
+            cols.addLayout(leftV, 4)
+            cols.addLayout(rightV, 6)
+            layout.addLayout(cols)
+
+            # Micrófono.
+            mic_card, box = self._card(leftV, "Micrófono")
+            self.mic_combo = QComboBox(); self.mic_combo.currentIndexChanged.connect(self._mic_selected); box.addWidget(self.mic_combo)
+            row = QHBoxLayout(); row.setSpacing(10)
+            self.refresh_button = QPushButton("Actualizar"); self.refresh_button.setCursor(Qt.PointingHandCursor); self.refresh_button.clicked.connect(self.refresh_microphones); row.addWidget(self.refresh_button)
+            self.test_button = QPushButton("Probar"); self.test_button.setCursor(Qt.PointingHandCursor); self.test_button.clicked.connect(self.test_microphone); row.addWidget(self.test_button); row.addStretch(1); box.addLayout(row)
             self.meter = QProgressBar(); self.meter.setRange(0, 100); self.meter.setValue(0); self.meter.setTextVisible(False); box.addWidget(self.meter)
             self.meter_text = self._label("La prueba no guarda audio.", "muted"); box.addWidget(self.meter_text)
-            self.stack.addWidget(page); self.pages["audio"] = self.stack.count()-1
 
-            # Preferences page
-            page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(16)
-            layout.addWidget(self._label("Preferencias", "pageTitle")); layout.addWidget(self._label("Guardá los cambios para aplicarlos a Instant.", "muted"))
-            card, box = self._card(layout, "Tecla de dictado", "Una tecla individual, sin combinación.")
-            row = QHBoxLayout(); self.key_value = QLabel(hotkey.key_label(self.cfg.get("key", "f9"))); self.key_value.setObjectName("keyBadge"); row.addWidget(self.key_value); row.addStretch(); self.key_capture_button = QPushButton("Elegir tecla"); self.key_capture_button.clicked.connect(self.begin_key_capture); row.addWidget(self.key_capture_button); box.addLayout(row)
-            card, box = self._card(layout, "Inicio y cambios", "El arranque con Windows es independiente de reiniciar el motor.")
+            # General: tecla y arranque en una sola tarjeta.
+            general_card, box = self._card(leftV, "General", "Tecla y arranque.")
+            row = QHBoxLayout(); self.key_value = QLabel(hotkey.key_label(self.cfg.get("key", "f9"))); self.key_value.setObjectName("keyBadge"); row.addWidget(self.key_value); row.addStretch(); self.key_capture_button = QPushButton("Elegir tecla"); self.key_capture_button.setCursor(Qt.PointingHandCursor); self.key_capture_button.clicked.connect(self.begin_key_capture); row.addWidget(self.key_capture_button); box.addLayout(row)
             try: enabled = autostart.is_enabled()
             except Exception: enabled = bool(self.cfg.get("autostart"))
             if self._autostart_override is not None: enabled = self._autostart_override
-            self.autostart_check = QCheckBox("Iniciar Instant con Windows"); self.autostart_check.setChecked(enabled); self.autostart_check.toggled.connect(self.settings_changed); box.addWidget(self.autostart_check)
-            card, box = self._card(
-                layout, "Contexto y vocabulario",
-                "Perfil local para corregir términos reconocidos con grafía errónea. Una línea por término: grafía final, tabulador y variantes completas separadas por |. No modifica el audio ni fuerza vocabulario en el reconocedor.")
+            self.autostart_check = QCheckBox("Iniciar Instant con Windows"); self.autostart_check.setChecked(enabled); self.autostart_check.setCursor(Qt.PointingHandCursor); self.autostart_check.toggled.connect(self.settings_changed); box.addWidget(self.autostart_check)
+
+            # Vocabulario: tabla estructurada en vez de texto crudo.
+            vocab_card, box = self._card(
+                rightV, "Vocabulario",
+                "Tus palabras como se escriben y como el motor suele escucharlas.")
             row = QHBoxLayout()
             self.context_combo = QComboBox()
             self.context_combo.currentIndexChanged.connect(self._context_profile_changed)
             row.addWidget(self.context_combo, 1)
             self.context_add_button = QPushButton("Añadir perfil")
+            self.context_add_button.setCursor(Qt.PointingHandCursor)
             self.context_add_button.clicked.connect(self._add_context_profile)
             row.addWidget(self.context_add_button)
             self.context_remove_button = QPushButton("Eliminar perfil")
+            self.context_remove_button.setCursor(Qt.PointingHandCursor)
             self.context_remove_button.clicked.connect(self._remove_context_profile)
             row.addWidget(self.context_remove_button)
             box.addLayout(row)
-            self.context_editor = QPlainTextEdit()
-            self.context_editor.setPlaceholderText(
-                "Ejemplo: Instant\tinstante | in stand\nParakeet\tpara kit")
-            self.context_editor.textChanged.connect(self.settings_changed)
-            box.addWidget(self.context_editor)
+            self.vocab_table = QTableWidget(0, 4)
+            self.vocab_table.setHorizontalHeaderLabels(
+                ["Término", "Así se escucha", "Sonido", ""])
+            header = self.vocab_table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.Fixed)
+            header.resizeSection(2, 78)
+            header.setSectionResizeMode(3, QHeaderView.Fixed)
+            header.resizeSection(3, 62)
+            self.vocab_table.verticalHeader().setVisible(False)
+            self.vocab_table.verticalHeader().setDefaultSectionSize(42)
+            self.vocab_table.setMinimumHeight(160)
+            self.vocab_table.setShowGrid(False)
+            self.vocab_table.setSelectionBehavior(QTableWidget.SelectRows)
+            self.vocab_table.viewport().setContentsMargins(0, 0, 0, 0)
+            self.vocab_table.cellChanged.connect(self._vocab_changed)
+            box.addWidget(self.vocab_table)
+            self.vocab_add_button = QPushButton("Añadir término")
+            self.vocab_add_button.setCursor(Qt.PointingHandCursor)
+            self.vocab_add_button.clicked.connect(self._vocab_add_blank_row)
+            box.addWidget(self.vocab_add_button, alignment=Qt.AlignLeft)
             box.addWidget(self._label(
-                "Variantes exactas se corrigen siempre en local. Un LLM local puede añadir puntuación de preguntas y tildes; solo recibe el texto, nunca el audio.",
+                "Una fila por término: variantes separadas con |. ≈ corrige también "
+                "lo que suena parecido. Solo recibe texto, nunca audio.",
                 "muted"))
-            self.llm_url_edit = QLineEdit(self.cfg.get("llm_url", ""))
-            self.llm_url_edit.setPlaceholderText(
-                "URL local de llama-server (opcional), p. ej. http://127.0.0.1:8080")
-            self.llm_url_edit.textChanged.connect(self.settings_changed)
-            box.addWidget(self.llm_url_edit)
-            self.save_button = QPushButton("Guardar ajustes"); self.save_button.setObjectName("primaryButton"); self.save_button.setEnabled(False); self.save_button.clicked.connect(self.save_config); box.addWidget(self.save_button, alignment=Qt.AlignRight)
-            self.stack.addWidget(page); self.pages["settings"] = self.stack.count()-1
 
-            # Models page
-            page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(16)
-            layout.addWidget(self._label("Modelos de voz", "pageTitle")); layout.addWidget(self._label("Se descargan una vez y se ejecutan localmente.", "muted"))
-            card, box = self._card(layout, "Parakeet v3 + Silero VAD", "La descarga inicial ocupa aproximadamente 670 MB.")
-            self.model_status = self._label("Comprobando modelos…", "muted"); box.addWidget(self.model_status)
-            self.model_progress = QProgressBar(); self.model_progress.setRange(0, 0); self.model_progress.hide(); box.addWidget(self.model_progress)
-            self.model_button = QPushButton("Descargar modelos"); self.model_button.setObjectName("primaryButton"); self.model_button.clicked.connect(self.download_models); box.addWidget(self.model_button, alignment=Qt.AlignLeft)
-            self.stack.addWidget(page); self.pages["models"] = self.stack.count()-1
+            # Voz: una línea solo si falta algo; lista no muestra nada.
+            models_row = QWidget()
+            self.models_row = models_row
+            models_l = QHBoxLayout(models_row)
+            models_l.setContentsMargins(2, 0, 2, 0)
+            models_l.setSpacing(12)
+            self.model_status = self._label("Comprobando voz…", "muted")
+            self.model_status.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            models_l.addWidget(self.model_status, 1)
+            self.model_progress = QProgressBar(); self.model_progress.setRange(0, 0); self.model_progress.setFixedWidth(140); self.model_progress.hide(); models_l.addWidget(self.model_progress)
+            self.model_button = QPushButton("Descargar voz"); self.model_button.setCursor(Qt.PointingHandCursor); self.model_button.clicked.connect(self.download_models); models_l.addWidget(self.model_button)
+            leftV.addWidget(models_row)
+            leftV.addStretch(1)
+
+            # Guardar: solo el botón visible; el estado vive oculto para los
+            # avisos internos (el texto sobraba en la UI).
+            save_row = QHBoxLayout(); save_row.setSpacing(12)
+            self.settings_status = QLabel(""); self.settings_status.setObjectName("softStatus"); self.settings_status.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum); self.settings_status.setVisible(False); save_row.addWidget(self.settings_status, 1)
+            self.save_button = QPushButton("Guardar ajustes"); self.save_button.setObjectName("primaryButton"); self.save_button.setCursor(Qt.PointingHandCursor); self.save_button.setEnabled(False); self.save_button.clicked.connect(self.save_config); save_row.addWidget(self.save_button)
+            rightV.addLayout(save_row)
+
+            foot = QHBoxLayout(); foot.setSpacing(12)
+            self.diag_button = QPushButton("Diagnóstico")
+            self.diag_button.setObjectName("ghostButton")
+            self.diag_button.setCursor(Qt.PointingHandCursor)
+            self.diag_button.clicked.connect(self.show_diagnostics)
+            foot.addStretch(1)
+            foot.addWidget(self.diag_button)
+            foot.addStretch(1)
+            layout.addLayout(foot)
+            layout.addStretch(1)
+            layout.addStretch(1)
+
+            # Una sola página con scroll: las "secciones" son anclas, no páginas.
+            self.pages = {"home": hero, "audio": mic_card,
+                          "settings": general_card, "models": models_row}
+            self._wheel_filter = WheelPassThrough(self._scroll)
+            self.mic_combo.installEventFilter(self._wheel_filter)
+            self.context_combo.installEventFilter(self._wheel_filter)
+
+        def navigate(self, name):
+            """Ir a una sección de la página única (compat: páginas→anclas)."""
+            target = self.pages.get(name)
+            if target is None:
+                return
+            self._current_section = name
+            self._scroll_to(target)
+
 
         def _init_settings(self, autostart_override):
             configured = context.profiles(self.cfg)
@@ -572,7 +662,7 @@ def _main_window_class():
             self.context_combo.setCurrentText(active)
             self.context_combo.blockSignals(False)
             self._loaded_context_name = active
-            self.context_editor.setPlainText(context.editor_text(configured[active]))
+            self._vocab_load_rows(configured[active])
             self.context_remove_button.setEnabled(active != context.DEFAULT_PROFILE)
             self.key_value.setText(hotkey.key_label(self.cfg.get("key", "f9")))
             self._saved_settings = self._snapshot()
@@ -580,27 +670,136 @@ def _main_window_class():
             self._settings_daemon_state = None
             self._update_settings_status()
 
-        def _store_context_editor(self):
+        def _store_vocab_table(self):
             name = getattr(self, "_loaded_context_name",
                            self.context_combo.currentText()) or context.DEFAULT_PROFILE
             configured = context.profiles(self.cfg)
-            configured[name] = context.parse_editor(self.context_editor.toPlainText())
+            configured[name] = self._vocab_rows()
             self.cfg["context_profiles"] = configured
             self.cfg["active_context"] = self.context_combo.currentText() or name
             self._loaded_context_name = name
+
         def _context_profile_changed(self, _index):
-            if not hasattr(self, "context_editor") or not self.context_combo.currentText():
+            if not hasattr(self, "vocab_table") or not self.context_combo.currentText():
                 return
-            self._store_context_editor()
+            self._store_vocab_table()
             configured = context.profiles(self.cfg)
             name = self.context_combo.currentText()
             self.cfg["active_context"] = name
-            self.context_editor.blockSignals(True)
-            self.context_editor.setPlainText(context.editor_text(configured.get(name, [])))
-            self.context_editor.blockSignals(False)
+            self._vocab_load_rows(configured.get(name, []))
             self._loaded_context_name = name
             self.context_remove_button.setEnabled(name != context.DEFAULT_PROFILE)
             self.settings_changed()
+
+        def _vocab_load_rows(self, rows):
+            """Vuelca filas normalizadas a la tabla sin marcar cambios."""
+            table = self.vocab_table
+            table.blockSignals(True)
+            self._vocab_loading = True
+            try:
+                table.setRowCount(0)
+                for row in rows:
+                    self._vocab_append_row(
+                        row.get("term", ""), row.get("aliases", ()),
+                        bool(row.get("sonido")))
+                if not rows:
+                    # Perfil vacío: una fila en blanco invita a escribir en vez
+                    # de mostrar una caja muerta. No marca cambios ni se guarda.
+                    self._vocab_append_row()
+            finally:
+                self._vocab_loading = False
+                table.blockSignals(False)
+            table.resizeRowsToContents()
+            self._vocab_fit_height()
+
+        def _vocab_append_row(self, term="", aliases=(), sonido=False):
+            table = self.vocab_table
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(str(term)))
+            table.setItem(row, 1, QTableWidgetItem(" | ".join(aliases)))
+            wrap = QWidget()
+            centered = QHBoxLayout(wrap)
+            centered.setContentsMargins(0, 0, 0, 0)
+            centered.setAlignment(Qt.AlignCenter)
+            sound = QPushButton("≈")
+            sound.setObjectName("soundToggle")
+            sound.setCheckable(True)
+            sound.setChecked(bool(sonido))
+            sound.setCursor(Qt.PointingHandCursor)
+            sound.setToolTip("Corrige también lo que suena parecido (≈)")
+            sound.toggled.connect(lambda _value: self._vocab_changed(-1, -1))
+            centered.addWidget(sound)
+            table.setCellWidget(row, 2, wrap)
+            delete = QPushButton("✕")
+            delete.setObjectName("rowDelete")
+            delete.setCursor(Qt.PointingHandCursor)
+            delete.setToolTip("Quitar término")
+            delete.clicked.connect(
+                lambda _checked=False, button=delete: self._vocab_delete_row(button))
+            del_wrap = QWidget()
+            del_wrap.setFixedWidth(56)
+            del_centered = QHBoxLayout(del_wrap)
+            del_centered.setContentsMargins(6, 0, 6, 0)
+            del_centered.setAlignment(Qt.AlignCenter)
+            del_centered.addWidget(delete)
+            table.setCellWidget(row, 3, del_wrap)
+
+        def _vocab_rows(self):
+            """Lee la tabla y normaliza con el mismo formato del editor."""
+            table = self.vocab_table
+            draft = []
+            for row in range(table.rowCount()):
+                term_item = table.item(row, 0)
+                term = term_item.text().strip() if term_item is not None else ""
+                if not term:
+                    continue
+                variants_item = table.item(row, 1)
+                variants = variants_item.text() if variants_item is not None else ""
+                wrap = table.cellWidget(row, 2)
+                toggle = wrap.findChild(QPushButton) if wrap is not None else None
+                draft.append({
+                    "term": term,
+                    "aliases": [v.strip() for v in variants.split("|") if v.strip()],
+                    "sonido": bool(toggle is not None and toggle.isChecked()),
+                })
+            return context.parse_editor(context.editor_text(draft))
+
+        def _vocab_fit_height(self):
+            """La tabla crece con las filas hasta ~7 visibles y luego scrollea."""
+            table = self.vocab_table
+            table.setMinimumHeight(min(160 + table.rowCount() * 42, 480))
+
+        def _vocab_set_rows(self, rows):
+            """Carga filas como si las hubiera escrito el usuario (tests y UI)."""
+            self._vocab_load_rows(rows)
+            self.settings_changed()
+
+        def _vocab_add_blank_row(self):
+            self._vocab_append_row()
+            table = self.vocab_table
+            last = table.rowCount() - 1
+            item = table.item(last, 0)
+            if item is not None:
+                table.setCurrentCell(last, 0)
+                table.scrollToItem(item)
+                table.editItem(item)
+            self._vocab_fit_height()
+            self.settings_changed()
+
+        def _vocab_changed(self, _row, _column):
+            if getattr(self, "_vocab_loading", False):
+                return
+            self.settings_changed()
+
+        def _vocab_delete_row(self, button):
+            table = self.vocab_table
+            pos = button.mapTo(table.viewport(), button.rect().center())
+            row = table.indexAt(pos).row()
+            if row >= 0:
+                table.removeRow(row)
+                self._vocab_fit_height()
+                self.settings_changed()
 
         def _add_context_profile(self):
             qt = _qt_types()
@@ -613,7 +812,7 @@ def _main_window_class():
             if name in configured:
                 qt["QMessageBox"].warning(self, "Instant", "Ya existe ese perfil.")
                 return
-            self._store_context_editor()
+            self._store_vocab_table()
             configured[name] = []
             self.cfg["context_profiles"] = configured
             self.context_combo.addItem(name)
@@ -629,7 +828,7 @@ def _main_window_class():
                 f"¿Eliminar el perfil «{name}» y sus términos?")
             if answer != qt["QMessageBox"].Yes:
                 return
-            self._store_context_editor()
+            self._store_vocab_table()
             configured = context.profiles(self.cfg)
             configured.pop(name, None)
             configured.setdefault(context.DEFAULT_PROFILE, [])
@@ -640,15 +839,9 @@ def _main_window_class():
             self.context_combo.blockSignals(False)
             self.cfg["active_context"] = context.DEFAULT_PROFILE
             self._loaded_context_name = context.DEFAULT_PROFILE
-            self.context_editor.setPlainText(
-                context.editor_text(configured[context.DEFAULT_PROFILE]))
+            self._vocab_load_rows(configured[context.DEFAULT_PROFILE])
             self.context_remove_button.setEnabled(False)
             self.settings_changed()
-
-        def navigate(self, name):
-            if name not in self.pages: return
-            self.stack.setCurrentIndex(self.pages[name])
-            for key, button in self.nav_buttons.items(): button.setChecked(key == name)
 
         def _selected_device(self):
             value = self.mic_combo.currentData()
@@ -658,14 +851,15 @@ def _main_window_class():
             device = self._selected_device()
             if device: self.catalog.remember(device)
             mic = self.catalog.pending_identity or DeviceCatalog.identity((self.cfg.get("mic_index"), self.cfg.get("mic_hint", "")))
-            self._store_context_editor()
+            self._store_vocab_table()
             context_state = tuple(
-                (name, tuple((row["term"], tuple(row["aliases"])) for row in items))
+                (name, tuple((row["term"], tuple(row["aliases"]), bool(row.get("sonido")))
+                             for row in items))
                 for name, items in context.profiles(self.cfg).items())
             return (mic, self.key_value.text().strip().lower(),
                     self.autostart_check.isChecked(),
                     self.cfg["active_context"], context_state,
-                    self.llm_url_edit.text().strip())
+                    self.cfg.get("llm_url", ""))
 
         def _restart_signature(self, snapshot):
             return snapshot[0], snapshot[1], snapshot[3], snapshot[4], snapshot[5]
@@ -893,12 +1087,10 @@ def _main_window_class():
                 if running != self._last_daemon_running:
                     self._last_daemon_running = running; self._settings_daemon_changed(running)
                 self._update_save_enabled()
-                self.header_state.setText("●  Instant activo" if running else "●  Listo para dictar")
-                self.header_state.setProperty("active", running); self.header_state.style().unpolish(self.header_state); self.header_state.style().polish(self.header_state)
                 if running:
-                    self.status_var.setText("Instant está activo"); self.status_detail.setText("Enfocá el prompt o campo editable de la CLI antes de mantener F9. Instant pega con Ctrl+V."); self.run_button.setText("Reiniciar con cambios"); self.stop_button.show()
+                    self.status_var.setText("Instant está activo"); self.status_detail.setText("Enfocá el prompt o campo editable de la CLI, mantené F9 y soltá: Instant pega con Ctrl+V."); self.run_button.setText("Reiniciar"); self.stop_button.show()
                 else:
-                    self.status_var.setText("Listo para dictar"); self.status_detail.setText("Enfocá el prompt o campo editable de la CLI antes de mantener F9. Instant pega con Ctrl+V."); self.run_button.setText("Iniciar dictado"); self.stop_button.hide()
+                    self.status_var.setText("Listo para dictar"); self.status_detail.setText("Enfocá el prompt o campo editable de la CLI, mantené F9 y soltá: Instant pega con Ctrl+V."); self.run_button.setText("Iniciar dictado"); self.stop_button.hide()
                 self._maybe_start_daemon_on_open()
             def failed(error):
                 self._daemon_check_pending = False
@@ -907,25 +1099,26 @@ def _main_window_class():
 
         def _update_model_status(self):
             self.model_ready = all(models.check(self.data_dir).values())
-            self.quick_model.setText("Modelos: listos" if self.model_ready else "Modelos: pendientes")
+            self.quick_model.setText("Voz: lista" if self.model_ready else "Voz: pendiente")
+            self.models_row.setVisible(not self.model_ready)
             if self.model_ready:
-                self.model_status.setText("Parakeet y VAD listos en este equipo."); self.model_button.setText("Modelos listos"); self.model_button.setEnabled(False)
+                self.model_status.setText("Voz lista en este equipo."); self.model_button.setText("Voz lista"); self.model_button.setEnabled(False)
             else:
-                self.model_status.setText("Faltan modelos; se descargan una sola vez (~670 MB)."); self.model_button.setText("Descargar modelos"); self.model_button.setEnabled(True)
+                self.model_status.setText("Falta descargar la voz (~670 MB)."); self.model_button.setText("Descargar voz"); self.model_button.setEnabled(True)
 
         def download_models(self):
             if self.model_ready: return
-            self.model_button.setEnabled(False); self.model_button.setText("Descargando…"); self.model_status.setText("Descargando modelos de voz…"); self.model_progress.show()
+            self.model_button.setEnabled(False); self.model_button.setText("Descargando…"); self.model_status.setText("Descargando la voz…"); self.model_progress.show()
             def download(emit):
                 return models.download_models(self.data_dir, progress=lambda *args: emit(args))
             def progress(event):
                 step, done, total = event
-                if step == "parakeet": self.model_status.setText("Parakeet descargado; preparando VAD…")
-                elif total: self.model_status.setText(f"Descargando VAD: {done / total:.0%}")
+                if step == "parakeet": self.model_status.setText("Voz descargada; verificando…")
+                elif total: self.model_status.setText(f"Descargando la voz: {done / total:.0%}")
             def done(_):
                 self.model_progress.hide(); self._update_model_status()
             def failed(error):
-                self.model_progress.hide(); self.model_button.setEnabled(True); self.model_button.setText("Reintentar"); self.model_status.setText("No se pudieron descargar los modelos."); QMessageBox.critical(self, "Descarga fallida", str(error))
+                self.model_progress.hide(); self.model_button.setEnabled(True); self.model_button.setText("Reintentar"); self.model_status.setText("No se pudo descargar la voz."); QMessageBox.critical(self, "Descarga fallida", str(error))
             self._run_worker(download, done, failed, progress)
 
         def show_diagnostics(self):
@@ -991,6 +1184,15 @@ def _main_window_class():
         def closeEvent(self, event):
             self._closed = True
             self.timer.stop()
+            # El modelo interno de la tabla emite cellChanged al destruirse:
+            # se desconecta acá, con el árbol vivo, para que esa señal no
+            # llegue a un grafo a medio destruir (abortaba en offscreen).
+            try:
+                table = getattr(self, "vocab_table", None)
+                if table is not None:
+                    table.cellChanged.disconnect()
+            except Exception:
+                pass
             app = QApplication.instance()
             app.setQuitOnLastWindowClosed(False)
             if not self._pending_workers:
@@ -1000,49 +1202,20 @@ def _main_window_class():
     return InstantWindow
 
 
-STYLE = f"""
-QMainWindow, QWidget {{ background:{COLORS['background']}; color:{COLORS['text']}; font-family:'Segoe UI'; font-size:10pt; }}
-QLabel {{ background:transparent; }}
-QFrame#rail {{ background:#0d2028; }}
-QLabel#brand {{ color:#f5fbfb; font-size:22pt; font-weight:700; }}
-QLabel#railCaption {{ color:#9bb2b9; font-size:8pt; letter-spacing:1px; }}
-QLabel#railFoot {{ color:#a8bbc0; font-size:9pt; }}
-QPushButton#navButton {{ text-align:left; color:#d3e1e3; background:transparent; border:0; border-radius:8px; padding:12px 13px; font-weight:600; }}
-QPushButton#navButton:hover {{ background:#203b46; }}
-QPushButton#navButton:checked {{ background:{COLORS['accent_button']}; color:white; }}
-QLabel#pageTitle {{ font-size:23pt; font-weight:700; }}
-QLabel#muted {{ color:{COLORS['muted']}; }}
-QLabel#pill {{ background:#263941; color:#d7e4e7; border-radius:12px; padding:8px 13px; font-weight:700; }}
-QLabel#pill[active="true"] {{ background:#173e35; color:{COLORS['green']}; }}
-QFrame#hero {{ background:{COLORS['hero']}; border-radius:16px; }}
-QLabel#heroStatus {{ color:#8fe0c3; font-size:12pt; font-weight:700; }}
-QLabel#heroTitle {{ color:{COLORS['hero_text']}; font-size:23pt; font-weight:700; }}
-QLabel#heroDetail {{ color:#c7d9dc; }}
-QLabel#keyBadge {{ background:#28505a; color:white; border-radius:9px; padding:8px 14px; font-size:15pt; font-weight:700; }}
-QFrame#card {{ background:{COLORS['surface']}; border:1px solid {COLORS['line']}; border-radius:13px; }}
-QLabel#cardTitle {{ font-size:13pt; font-weight:700; }}
-QLabel#statusLine {{ color:{COLORS['muted']}; }}
-QPushButton {{ background:{COLORS['surface_alt']}; color:{COLORS['text']}; border:1px solid {COLORS['line']}; border-radius:8px; padding:10px 15px; font-weight:600; }}
-QPushButton:hover {{ background:#2b454e; }}
-QPushButton:disabled {{ color:#819399; background:#1b2a30; }}
-QPushButton#primaryButton {{ background:{COLORS['accent_button']}; color:white; border:0; }}
-QPushButton#primaryButton:hover {{ background:{COLORS['accent_hover']}; }}
-QComboBox, QPlainTextEdit {{ background:{COLORS['surface_alt']}; color:{COLORS['text']}; border:1px solid {COLORS['line']}; border-radius:8px; padding:9px; selection-color:white; selection-background-color:{COLORS['accent_button']}; }}
-QComboBox QAbstractItemView {{ background:{COLORS['surface_alt']}; color:{COLORS['text']}; border:1px solid {COLORS['line']}; selection-color:white; selection-background-color:{COLORS['accent_button']}; }}
-QProgressBar {{ min-height:10px; max-height:10px; border:0; background:#293e46; border-radius:5px; }}
-QProgressBar::chunk {{ background:{COLORS['accent']}; border-radius:5px; }}
-QCheckBox {{ spacing:10px; padding:7px; }}
-QCheckBox::indicator {{ width:18px; height:18px; border:1px solid {COLORS['line']}; border-radius:4px; background:{COLORS['surface_alt']}; }}
-QCheckBox::indicator:checked {{ background:{COLORS['accent_button']}; border-color:{COLORS['accent_button']}; }}
-QPlainTextEdit {{ selection-color:white; }}
-QToolTip {{ background:{COLORS['surface_alt']}; color:{COLORS['text']}; border:1px solid {COLORS['line']}; }}
-"""
+STYLE = theme.stylesheet()
 
 
 def run_gui(page="home", autostart_override=None, start_daemon_on_open=False):
     mutex = None
     try:
         if sys.platform == "win32":
+            # Icono propio en la barra de tareas: sin AppUserModelID explícito,
+            # Windows agrupa la ventana bajo el icono de Python (pythonw.exe).
+            try:
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                    "getodevel-source.Instant.0.1")
+            except Exception:
+                log.warning("no pude fijar el AppUserModelID", exc_info=True)
             from instant_app.gui_lifecycle import acquire_gui_mutex
             mutex = acquire_gui_mutex(
                 request_daemon_start=start_daemon_on_open, page=page)
@@ -1062,6 +1235,7 @@ def run_gui(page="home", autostart_override=None, start_daemon_on_open=False):
         window = _main_window_class()(
             page=page, autostart_override=autostart_override,
             start_daemon_on_open=start_daemon_on_open)
+        window.setWindowIcon(QIcon(pixmap))
         window.show()
         log.info("interfaz gráfica abierta (%s).", page)
         return app.exec()

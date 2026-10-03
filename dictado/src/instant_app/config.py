@@ -19,6 +19,7 @@ DEFAULTS = {
     "active_context": "General",
     "context_profiles": {"General": []},
     "autostart": False,
+    "overlay_style": "classic",
 }
 
 INT_KEYS = ("threads",)
@@ -46,7 +47,8 @@ def load():
                "DICTADO_THREADS": "threads", "DICTADO_SOUND": "sound",
                "DICTADO_MAX_SEG": "max_seg", "DICTADO_LLM_URL": "llm_url",
                "DICTADO_CONTEXT": "active_context",
-               "DICTADO_AUTOSTART": "autostart"}
+               "DICTADO_AUTOSTART": "autostart",
+               "DICTADO_OVERLAY": "overlay_style"}
     for env, k in env_map.items():
         v = os.environ.get(env)
         if v is None or v == "":
@@ -76,6 +78,12 @@ def load():
 def save(cfg):
     path = config_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.isfile(path):
+        try:
+            import shutil
+            shutil.copyfile(path, path + ".bak")
+        except Exception:
+            log.warning("no pude respaldar la config anterior", exc_info=True)
     slim = {k: cfg.get(k, DEFAULTS[k]) for k in DEFAULTS}
     with open(path, "w", encoding="utf-8") as f:
         json.dump(slim, f, indent=2, ensure_ascii=False)

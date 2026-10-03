@@ -92,6 +92,14 @@ requieren reiniciar Instant. El diagnóstico muestra el informe en una ventana
 independiente. La ventana de control puede cerrarse sin detener el daemon, que
 conserva su icono de bandeja y la notificación de grabación independiente.
 
+Para retocar la interfaz, los colores están en
+[`branding.py`](dictado/src/instant_app/branding.py) (`PALETTE`, única fuente de
+verdad) y las medidas, la tipografía y los tiempos de animación en
+[`theme.py`](dictado/src/instant_app/theme.py), que arma la hoja de estilo. La
+pastilla flotante repite la paleta en
+[`qml/overlay.qml`](dictado/src/instant_app/qml/overlay.qml) porque se carga sin
+motor de plantillas; `tests/test_overlay_palette.py` falla si se despegan.
+
 En Linux/macOS se conserva el asistente terminal, que hace, en orden:
 
 1. **Modelos**: descarga Parakeet (~670 MB) y VAD (~1 MB) si faltan.
