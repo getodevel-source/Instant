@@ -3,6 +3,19 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [0.1.2] - 2026-10-04
+
+Avisos sin ventanas y daemon sin congelamientos.
+
+### Cambiado
+
+- **Avisos toast en vez de ventanas modales.** Pila abajo a la derecha con
+  fundido y auto-cierre (y botones Descargar/Instalar en el propio aviso).
+  Se migran 16 `QMessageBox` de guardar, modelos, daemon, pruebas y updates.
+- **Sin congelamientos tras transcribir.** Cola acotada, VAD cacheado, decode
+  seriado, `on_release` en worker, sesión máxima y `stop_daemon` sin
+  powershell en el hilo UI.
+
 ## [0.1.1] - 2026-10-03
 
 Primer release con actualización automática: se publica tageando `v0.1.1`
