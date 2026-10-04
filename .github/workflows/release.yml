@@ -96,9 +96,10 @@ jobs:
             dictado/src/instant_app/__main__.py
 
       - name: Sign binary (SHA256 sidecar for the updater)
-        shell: bash
+        # Python en vez de sha256sum: macOS no lo trae y el sidecar tiene
+        # que salir igual en los tres sistemas o el updater lo rechaza.
         run: |
-          cd dist && sha256sum "${{ matrix.output }}" > "${{ matrix.output }}.sha256"
+          python -c "import hashlib; data = open('dist/${{ matrix.output }}','rb').read(); open('dist/${{ matrix.output }}.sha256','w').write(f'{hashlib.sha256(data).hexdigest()}  ${{ matrix.output }}\n')"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -3,12 +3,12 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
-## [Sin publicar]
+## [0.1.1] - 2026-10-03
 
-Todavía no hay una versión publicada. El primer release será `0.1.0` y se
-publica tageando `v0.1.0`: el workflow construye los binarios de los tres
-sistemas y los adjunta al release, pero solo después de que la suite pase en
-Windows, Linux y macOS.
+Primer release con actualización automática: se publica tageando `v0.1.1`
+y el workflow construye los binarios de los tres sistemas con su `.sha256`,
+pero solo después de que la suite pase en Windows, Linux y macOS y de que
+`__version__` coincida con el tag.
 
 ### Cambiado
 
