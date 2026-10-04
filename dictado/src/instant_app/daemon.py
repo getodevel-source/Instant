@@ -233,17 +233,23 @@ class StreamKeeper:
             return False
 
     def snapshot(self, seconds):
-        """Prefijo pre-roll + drena la cola (audio previo entre sesiones)."""
-        now = time.monotonic()
-        with self._lock:
-            items = list(self.pre)
-        out = [blk for t, blk in items if now - t <= seconds]
+        """Prefijo pre-roll + drena la cola (audio previo entre sesiones).
+
+        Ventana <= 0 devuelve vacío siempre: con relojes gruesos (Windows
+        ~15 ms) `now - t` puede dar exactamente 0.0 y un `<=` ingenuo
+        resucitaría bloques que ya se drenaron.
+        """
         try:
             while True:
                 self.q.get_nowait()
         except queue.Empty:
             pass
-        return out
+        if seconds <= 0:
+            return []
+        now = time.monotonic()
+        with self._lock:
+            items = list(self.pre)
+        return [blk for t, blk in items if now - t <= seconds]
 
     def take(self, timeout=0.1):
         return self.q.get(timeout=timeout)
