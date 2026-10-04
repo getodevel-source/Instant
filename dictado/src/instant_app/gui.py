@@ -127,10 +127,11 @@ def _qt_types():
     # daemon pueda abrir la ventana en otro proceso sin cargar Qt. Los nombres
     # vuelven por locals() y las clases los usan por `qt[...]`, asi que el
     # linter los ve como no usados: el noqa es a proposito, no un descuido.
-    from PySide6.QtCore import QObject, QEvent, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot  # noqa: F401
+    from PySide6.QtCore import QObject, QEvent, QPropertyAnimation, QRunnable, Qt, QThreadPool, QTimer, Signal, Slot  # noqa: F401
     from PySide6.QtGui import QFont, QIcon, QKeySequence, QPixmap  # noqa: F401
     from PySide6.QtWidgets import (  # noqa: F401
-        QApplication, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout,
+        QApplication, QCheckBox, QComboBox, QDialog, QFrame,
+        QGraphicsOpacityEffect, QHBoxLayout,
         QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
         QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy,
         QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -276,12 +277,104 @@ def _worker_class():
 def _main_window_class():
     qt = _qt_types()
     QApplication, QCheckBox, QComboBox, QDialog, QFrame = (qt[k] for k in ("QApplication", "QCheckBox", "QComboBox", "QDialog", "QFrame"))
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox = (qt[k] for k in ("QHBoxLayout", "QLabel", "QLineEdit", "QMainWindow", "QMessageBox"))
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow = (qt[k] for k in ("QHBoxLayout", "QLabel", "QLineEdit", "QMainWindow"))
     QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy = (qt[k] for k in ("QPlainTextEdit", "QProgressBar", "QPushButton", "QSizePolicy"))
     QScrollArea, QStackedWidget, QVBoxLayout, QWidget = (qt[k] for k in ("QScrollArea", "QStackedWidget", "QVBoxLayout", "QWidget"))
     QTableWidget, QTableWidgetItem, QHeaderView = (qt[k] for k in ("QTableWidget", "QTableWidgetItem", "QHeaderView"))
     Qt, QTimer, QIcon, QFont, QKeySequence, QPixmap, QEvent = (qt[k] for k in ("Qt", "QTimer", "QIcon", "QFont", "QKeySequence", "QPixmap", "QEvent"))
+    QGraphicsOpacityEffect, QPropertyAnimation = (qt[k] for k in ("QGraphicsOpacityEffect", "QPropertyAnimation"))
     Worker, Manager = _worker_class()
+
+    class ToastHost(QWidget):
+        """Pila de avisos no modales, abajo a la derecha de la ventana.
+
+        Nada interrumpe: el aviso entra con fundido, vive unos segundos y
+        se va solo. Con acciones (p. ej. Descargar/Instalar) se queda hasta
+        que elegís o pasan 10 segundos.
+        """
+        WIDTH = 360
+        MARGIN = 16
+
+        def __init__(self, window):
+            super().__init__(window)
+            self.setObjectName("toastHost")
+            self.setAttribute(Qt.WA_TransparentForMouseEvents)
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(10)
+            self._layout = layout
+            self._place()
+
+        def _place(self):
+            # El sizeHint del layout anidado no es confiable acá (reporta
+            # 0x0 aunque las tarjetas midan bien): se suma a mano.
+            parent = self.parentWidget()
+            cards = [self._layout.itemAt(i).widget()
+                     for i in range(self._layout.count())]
+            cards = [card for card in cards if card is not None]
+            height = sum(card.sizeHint().height() for card in cards)
+            height += self._layout.spacing() * max(0, len(cards) - 1)
+            height = max(height, 1)
+            self.setGeometry(parent.width() - self.WIDTH - self.MARGIN,
+                             parent.height() - height - self.MARGIN,
+                             self.WIDTH, height)
+
+        def show_toast(self, title, message, level="info", actions=(), ms=4500):
+            card = QFrame()
+            card.setObjectName("toast")
+            card.setProperty("level", level)
+            box = QVBoxLayout(card)
+            box.setContentsMargins(16, 12, 16, 12)
+            box.setSpacing(6)
+            heading = QLabel(title)
+            heading.setObjectName("toastTitle")
+            heading.setWordWrap(True)
+            box.addWidget(heading)
+            if message:
+                body = QLabel(message)
+                body.setObjectName("toastBody")
+                body.setWordWrap(True)
+                box.addWidget(body)
+            if actions:
+                row = QHBoxLayout()
+                row.setSpacing(8)
+                row.addStretch()
+                for label, callback in actions:
+                    button = QPushButton(label)
+                    button.setObjectName("toastAction")
+                    button.setCursor(Qt.PointingHandCursor)
+                    button.clicked.connect(
+                        lambda _checked=False, cb=callback, c=card:
+                            (self._dismiss(c), cb()))
+                    row.addWidget(button)
+                box.addLayout(row)
+                ms = max(ms, 10000)
+            effect = QGraphicsOpacityEffect(card)
+            card.setGraphicsEffect(effect)
+            fade_in = QPropertyAnimation(effect, b"opacity", card)
+            fade_in.setDuration(220)
+            fade_in.setStartValue(0.0)
+            fade_in.setEndValue(1.0)
+            fade_in.start()
+            self._layout.addWidget(card)
+            self._place()
+            QTimer.singleShot(ms, card, lambda c=card: self._dismiss(c))
+
+        def _dismiss(self, card):
+            try:
+                effect = card.graphicsEffect()
+                if effect is None:
+                    card.deleteLater()
+                else:
+                    fade = QPropertyAnimation(effect, b"opacity", card)
+                    fade.setDuration(260)
+                    fade.setEndValue(0.0)
+                    fade.finished.connect(card.deleteLater)
+                    fade.start()
+                    QTimer.singleShot(400, card, card.deleteLater)
+            except RuntimeError:
+                pass
+            QTimer.singleShot(450, self._place)
 
     class KeyCaptureDialog(QDialog):
         captured = qt["Signal"](str)
@@ -507,9 +600,25 @@ def _main_window_class():
             self._make_page()
             self._page = holder
             self._current_section = "home"
+            self._toast_host = ToastHost(self)
+            self._toast_host.raise_()
             if self.page == "setup":
                 self.navigate("audio")
             self._init_settings(autostart_override)
+
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            host = getattr(self, "_toast_host", None)
+            if host is not None:
+                host._place()
+
+        def toast(self, title, message="", level="info", actions=(), ms=4500):
+            """Aviso no modal. Si la ventana se está cerrando, va al log."""
+            host = getattr(self, "_toast_host", None)
+            if host is None or self._closed:
+                log.warning("toast descartado (%s): %s", title, message)
+                return
+            host.show_toast(title, message, level=level, actions=actions, ms=ms)
 
         def _scroll_to(self, widget):
             area = getattr(self, "_scroll", None)
@@ -1003,12 +1112,14 @@ def _main_window_class():
             return worker
 
         def _show_worker_error(self, error):
-            QMessageBox.critical(self, "Instant", str(error))
+            self.toast("Algo falló", str(error), level="error")
 
         def test_microphone(self):
             selected = self._selected_device()
             if not selected:
-                QMessageBox.warning(self, "Instant", "Elegí un micrófono de entrada."); return
+                self.toast("Sin micrófono", "Elegí un micrófono de entrada.",
+                           level="warn")
+                return
             self.test_button.setEnabled(False); self.meter.setValue(0); self.meter_text.setText("Hablá ahora…")
             def capture(emit):
                 def level(value): emit(("level", value))
@@ -1019,7 +1130,11 @@ def _main_window_class():
             def done(peak):
                 self.test_button.setEnabled(True)
                 self.meter_text.setText(f"Señal detectada ({peak:.3f})." if peak > .005 else "No detecté señal; revisá micrófono/volumen.")
-            self._run_worker(capture, done, lambda error: (self.test_button.setEnabled(True), QMessageBox.warning(self, "Prueba de micrófono", str(error))), progress)
+            self._run_worker(capture, done, self._probe_failed, progress)
+
+        def _probe_failed(self, error):
+            self.test_button.setEnabled(True)
+            self.toast("Prueba de micrófono", str(error), level="warn")
 
         def save_config(self, show_message=True):
             selected = self._selected_device()
@@ -1046,10 +1161,11 @@ def _main_window_class():
                 self._restart_settings = signature
                 self._restart_needed = False
             self._saved_settings = saved; self._update_settings_status()
-            if warning: QMessageBox.warning(self, "Arranque con Windows", warning)
+            if warning:
+                self.toast("Arranque con Windows", warning, level="warn")
             if show_message:
-                note = "\nMicrófono, tecla, vocabulario y LLM guardados; reiniciá Instant para aplicarlos." if self._restart_needed else ""
-                QMessageBox.information(self, "Instant", f"Ajustes guardados.{note}\n{path}")
+                note = " Micrófono, tecla, vocabulario y LLM guardados; reiniciá Instant para aplicarlos." if self._restart_needed else ""
+                self.toast("Ajustes guardados", f"{note}\n{path}".strip())
             return True
 
         def toggle_daemon(self):
@@ -1075,7 +1191,10 @@ def _main_window_class():
                     or self._last_daemon_running):
                 return False
             if not self.model_ready:
-                QMessageBox.warning(self, "Modelos pendientes", "Descargá los modelos de voz antes de iniciar Instant."); return False
+                self.toast("Modelos pendientes",
+                           "Descargá los modelos de voz antes de iniciar Instant.",
+                           level="warn")
+                return False
             if save_settings:
                 self.save_config(False)
             try:
@@ -1095,7 +1214,7 @@ def _main_window_class():
             except Exception as exc:
                 self._daemon_start_pending = False
                 self._update_save_enabled()
-                QMessageBox.critical(self, "No se pudo iniciar Instant", str(exc))
+                self.toast("No se pudo iniciar Instant", str(exc), level="error")
                 return False
 
         def _daemon_start_timeout(self, token):
@@ -1189,7 +1308,7 @@ def _main_window_class():
             def done(_):
                 self.model_progress.hide(); self._update_model_status()
             def failed(error):
-                self.model_progress.hide(); self.model_button.setEnabled(True); self.model_button.setText("Reintentar"); self.model_status.setText("No se pudo descargar la voz."); QMessageBox.critical(self, "Descarga fallida", str(error))
+                self.model_progress.hide(); self.model_button.setEnabled(True); self.model_button.setText("Reintentar"); self.model_status.setText("No se pudo descargar la voz."); self.toast("Descarga fallida", str(error), level="error")
             self._run_worker(download, done, failed, progress)
 
         def show_diagnostics(self):
@@ -1270,9 +1389,9 @@ def _main_window_class():
 
         def _updates_failed(self, error):
             self.update_button.setEnabled(True)
-            QMessageBox.warning(
-                self, "Actualizaciones",
-                f"No se pudo consultar versiones:\n{error}")
+            self.toast("Actualizaciones",
+                       f"No se pudo consultar versiones:\n{error}",
+                       level="warn")
 
         def _updates_result(self, info):
             self.update_button.setEnabled(True)
@@ -1284,21 +1403,20 @@ def _main_window_class():
                 polish = self.update_button.style()
                 polish.unpolish(self.update_button)
                 polish.polish(self.update_button)
-                QMessageBox.information(
-                    self, "Actualizaciones",
-                    f"Estás al día (versión {info.get('current') or '?'}).")
+                self.toast("Actualizaciones",
+                           f"Estás al día (versión {info.get('current') or '?'}).")
                 return
             from instant_app import update as update_module
             notes = update_module.clean_notes(info.get("notes"))
-            answer = QMessageBox.question(
-                self, "Actualizaciones",
-                f"Hay versión nueva: {info['latest']} "
-                f"(tenés {info.get('current') or '?'}).\n\n"
-                f"{notes}\n\n¿Descargar {info['asset']} verificado?")
-            if answer != QMessageBox.Yes:
-                return
+            self._available_update = info
+            self.toast(f"Hay versión nueva: {info['latest']}",
+                       f"Tenés {info.get('current') or '?'}.\n{notes}",
+                       actions=(("Descargar", self._download_pending),
+                                ("Ahora no", lambda: None)))
+
+        def _download_pending(self):
             self.update_button.setEnabled(False)
-            self._pending_update = info
+            self._pending_update = self._available_update
             self._run_worker(self._download_update, self._update_ready,
                              self._updates_failed)
 
@@ -1317,31 +1435,33 @@ def _main_window_class():
         def _update_ready(self, payload):
             self.update_button.setEnabled(True)
             target, expected = payload
-            answer = QMessageBox.question(
-                self, "Actualizaciones",
-                f"Descargado y verificado:\n{target}\n\n"
-                "¿Instalar ahora? Se frena el dictado un momento (si estás "
-                "por dictar, mejor después), se respalda el exe anterior "
-                "y se vuelve a arrancar ya actualizado.")
-            if answer != QMessageBox.Yes:
-                return
+            self.toast("Descarga verificada",
+                       f"{target}\n\nSe frena el dictado un momento (si estás "
+                       "por dictar, mejor después), se respalda el exe y se "
+                       "vuelve a arrancar actualizado.",
+                       actions=(("Instalar ahora",
+                                 lambda: self._install_ready(target, expected)),
+                                ("Después", lambda: None)))
+
+        def _install_ready(self, target, expected):
             root = _workdir()
             script = os.path.join(root, "instant-update.bat")
             if not os.path.isfile(script):
-                QMessageBox.warning(
-                    self, "Actualizaciones",
+                self.toast(
+                    "Actualizaciones",
                     "No encuentro instant-update.bat junto a la app "
                     "(instalación portable sin scripts).\n\n"
                     f"Instalá a mano: cerrá Instant por completo y copiá\n{target}\n"
-                    f"sobre tu Instant.exe (SHA256 {expected[:16]}…).")
+                    f"sobre tu Instant.exe (SHA256 {expected[:16]}…).",
+                    level="warn")
                 return
             try:
                 subprocess.Popen(["cmd", "/c", script, target, expected],
                                  cwd=root)
             except Exception as exc:
-                QMessageBox.critical(
-                    self, "Actualizaciones",
-                    f"No pude lanzar el instalador:\n{exc}")
+                self.toast("Actualizaciones",
+                           f"No pude lanzar el instalador:\n{exc}",
+                           level="error")
                 return
             self.close()
 

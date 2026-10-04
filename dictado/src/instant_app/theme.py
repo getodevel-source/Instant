@@ -189,4 +189,22 @@ QToolTip {{
     border:1px solid {c['line']}; border-radius:{r['small']}px; padding:6px 9px;
 }}
 QPlainTextEdit {{ selection-color:white; }}
+
+/* ---------- toasts: avisos sin ventanas ---------- */
+QWidget#toastHost {{ background:transparent; border:0; }}
+QFrame#toast {{
+    background:{c['surface']}; border:1px solid {rgba(c['line'], 0.9)};
+    border-radius:{r['control']}px;
+}}
+QFrame#toast[level="info"] {{ border-color:{rgba(c['accent'], 0.55)}; }}
+QFrame#toast[level="warn"] {{ border-color:{rgba(c['amber'], 0.55)}; }}
+QFrame#toast[level="error"] {{ border-color:{rgba(c['red'], 0.55)}; }}
+QLabel#toastTitle {{ font-weight:600; }}
+QLabel#toastBody {{ color:{c['muted']}; }}
+QPushButton#toastAction {{
+    background:transparent; color:{c['text']};
+    border:1px solid {rgba(c['line'], 0.9)}; border-radius:{r['small']}px;
+    padding:6px 12px; font-weight:600;
+}}
+QPushButton#toastAction:hover {{ border-color:{rgba(c['accent'], 0.5)}; }}
 """

@@ -187,51 +187,101 @@ else:
                         idle.exec()
             return window
 
-        def test_check_reports_up_to_date_and_reenables(self):
+        def _toasts(self, window):
+            from PySide6.QtWidgets import QFrame
+            return window._toast_host.findChildren(QFrame, "toast")
+
+        def _toast_texts(self, window):
+            from PySide6.QtWidgets import QLabel
+            texts = []
+            for card in self._toasts(window):
+                texts.append(" ".join(
+                    label.text() for label in card.findChildren(QLabel)))
+            return texts
+
+        def _click_toast_button(self, window, label):
+            from PySide6.QtWidgets import QPushButton
+            for card in self._toasts(window):
+                for button in card.findChildren(QPushButton):
+                    if button.text() == label:
+                        button.click()
+                        return True
+            return False
+
+        def _wait_idle(self, window):
             from PySide6.QtCore import QEventLoop
-            from PySide6.QtWidgets import QMessageBox
+            if window._pending_workers:
+                loop = QEventLoop()
+                window.workers_idle.connect(loop.quit)
+                if window._pending_workers:
+                    loop.exec()
+
+        def _close(self, window):
+            from PySide6.QtCore import QEventLoop
+            if not window._closed:
+                window.close()
+            if window._pending_workers:
+                loop = QEventLoop()
+                window.workers_idle.connect(loop.quit)
+                if window._pending_workers:
+                    loop.exec()
+
+        def test_check_reports_up_to_date_as_toast(self):
             window = self._window()
             try:
-                shown = []
                 info = {"update": False, "current": "0.1.0", "latest": "0.1.0",
                         "notes": "", "asset": "Instant.exe", "asset_url": ""}
-                with _patch("instant_app.update.check", return_value=info), \
-                        _patch.object(QMessageBox, "information",
-                                      side_effect=lambda *a: shown.append(a)):
+                with _patch("instant_app.update.check", return_value=info):
                     window.update_button.click()
-                    if window._pending_workers:
-                        loop = QEventLoop()
-                        window.workers_idle.connect(loop.quit)
-                        if window._pending_workers:
-                            loop.exec()
+                    self._wait_idle(window)
                 self.assertTrue(window.update_button.isEnabled())
-                self.assertEqual(len(shown), 1)
-                self.assertIn("al día", shown[0][2])
+                self.assertTrue(
+                    any("al día" in text for text in self._toast_texts(window)),
+                    self._toast_texts(window))
             finally:
-                if not window._closed:
-                    window.close()
-                if window._pending_workers:
-                    loop = QEventLoop()
-                    window.workers_idle.connect(loop.quit)
-                    if window._pending_workers:
-                        loop.exec()
+                self._close(window)
 
         def test_silent_check_dresses_button_without_modals(self):
-            from PySide6.QtWidgets import QMessageBox
             window = self._window()
             try:
                 info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
                         "notes": "", "asset": "Instant.exe", "asset_url": ""}
-                with _patch.object(QMessageBox, "information",
-                                    side_effect=AssertionError("debe ser silencioso")), \
-                        _patch.object(QMessageBox, "question",
-                                      side_effect=AssertionError("debe ser silencioso")):
-                    window._apply_update_available(info)
+                window._apply_update_available(info)
                 self.assertIn("0.2.0", window.update_button.text())
                 self.assertEqual(window.update_button.objectName(), "primaryButton")
             finally:
-                if not window._closed:
-                    window.close()
+                self._close(window)
+
+        def test_update_decisions_happen_in_toasts(self):
+            window = self._window()
+            try:
+                info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
+                        "notes": "Novedades", "asset": "Instant.exe",
+                        "asset_url": "https://x/Instant.exe"}
+                with _patch("instant_app.update.check", return_value=info):
+                    window.update_button.click()
+                    self._wait_idle(window)
+                with _patch("instant_app.update.fetch_expected_sha256",
+                             return_value="a" * 64), \
+                        _patch("instant_app.update.download",
+                               return_value=("C:\\tmp\\Instant.exe", "a" * 64)), \
+                        _patch("instant_app.gui.os.path.isfile",
+                               return_value=True), \
+                        _patch("instant_app.gui.subprocess.Popen") as popen:
+                    self.assertTrue(
+                        self._click_toast_button(window, "Descargar"),
+                        self._toast_texts(window))
+                    self._wait_idle(window)
+                    self.assertTrue(
+                        self._click_toast_button(window, "Instalar ahora"),
+                        self._toast_texts(window))
+                    popen.assert_called_once()
+                    args, kwargs = popen.call_args
+                    self.assertEqual(args[0][:3], ["cmd", "/c", args[0][2]])
+                    self.assertTrue(args[0][2].endswith("instant-update.bat"))
+                self.assertTrue(window._closed)
+            finally:
+                self._close(window)
 
 if __name__ == "__main__":
     unittest.main()
