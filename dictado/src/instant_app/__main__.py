@@ -6,12 +6,15 @@ import sys
 
 
 def _log_setup():
+    from logging.handlers import RotatingFileHandler
+
     from instant_app.paths import config_dir
 
     directory = config_dir()
     os.makedirs(directory, exist_ok=True)
-    handlers = [logging.FileHandler(
-        os.path.join(directory, "instant.log"), encoding="utf-8")]
+    handlers = [RotatingFileHandler(
+        os.path.join(directory, "instant.log"), maxBytes=2 << 20,
+        backupCount=3, encoding="utf-8")]
     has_console = sys.stdout is not None and sys.stderr is not None
     if has_console:
         handlers.append(logging.StreamHandler())

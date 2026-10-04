@@ -333,6 +333,14 @@ class _QtQuickOverlay:
         self.root.setProperty("keyLabel", key_label)
         self._dispatch_lock = threading.Lock()
         self._latest_token = -1
+        # Coalescing de nivel: a 20Hz el productor puede superar al loop Qt
+        # (mover ventana, QML pesado) y la cola QueuedConnection crece sin
+        # limite -> overlay "tardio" + CPU para ponerse al dia. Se emite como
+        # maximo cada 40ms por canal; el ultimo valor siempre llega.
+        self._level_gate = 0.0
+        self._bands_gate = 0.0
+        self._pitch_gate = 0.0
+        self._gate_lock = threading.Lock()
         self.bridge = EventBridge(self.application)
         self.presenter = Presenter(self.root, self)
         self.bridge.event.connect(
@@ -344,8 +352,20 @@ class _QtQuickOverlay:
         self.bridge.pitch.connect(
             self.presenter.setPitch, Qt.ConnectionType.QueuedConnection)
 
+    def _gate_open(self, channel):
+        import time as _time
+        now = _time.monotonic()
+        with self._gate_lock:
+            last = getattr(self, channel)
+            if now - last < 0.04:
+                return False
+            setattr(self, channel, now)
+            return True
+
     def set_level(self, session, value):
         del session
+        if not self._gate_open("_level_gate"):
+            return
         try:
             self.bridge.level.emit(max(0.0, min(1.0, float(value))))
         except Exception:
@@ -353,6 +373,8 @@ class _QtQuickOverlay:
 
     def set_bands(self, session, values):
         del session
+        if not self._gate_open("_bands_gate"):
+            return
         try:
             self.bridge.bands.emit([max(0.0, min(1.0, float(v))) for v in values])
         except Exception:
@@ -360,6 +382,8 @@ class _QtQuickOverlay:
 
     def set_pitch(self, session, value):
         del session
+        if not self._gate_open("_pitch_gate"):
+            return
         try:
             self.bridge.pitch.emit(max(0.0, min(1.0, float(value))))
         except Exception:

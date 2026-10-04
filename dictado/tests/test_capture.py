@@ -20,14 +20,24 @@ def _check(name, cond):
 
 
 # --- StreamKeeper sin mic real: se alimenta el callback a mano. ---
+# Fuera de sesion solo se conserva pre-roll (cola vacia): evita que q crezca
+# sin limite entre dictados (freeze). En sesion si encola hasta end_session.
 keeper = daemon_module.StreamKeeper({})
 blk = np.full((160, 1), 0.05, dtype=np.float32)
 for _ in range(3):
     keeper._cb(blk, 160, None, None)
-_check("keeper encola bloques", keeper.q.qsize() == 3)
+_check("fuera de sesion no encola", keeper.q.qsize() == 0)
+_check("pre-roll conserva 3", len(keeper.snapshot(10.0)) == 3)
+keeper.end_session()
+keeper.begin_session()
+for _ in range(3):
+    keeper._cb(blk, 160, None, None)
+_check("en sesion encola bloques", keeper.q.qsize() == 3)
 got = keeper.snapshot(10.0)
-_check("pre-roll trae 3 y drena cola", len(got) == 3 and keeper.q.qsize() == 0)
+_check("pre-roll trae 3 y drena cola", len(got) >= 3 and keeper.q.qsize() == 0)
 _check("ventana 0 no trae nada", keeper.snapshot(0.0) == [])
+keeper.end_session()
+_check("fin de sesion drena cola", keeper.q.qsize() == 0)
 _check("sin stream no esta vivo", keeper.live() is False)
 
 
@@ -41,8 +51,10 @@ _check("stream activo vive", keeper.live() is True)
 keeper.stream = _FakeStream(False)
 _check("stream caido no vive", keeper.live() is False)
 keeper.stream = None
+keeper.begin_session()
 _check("take entrega lo encolado",
        (keeper._cb(blk, 160, None, None), keeper.take(timeout=1.0))[1] is not None)
+keeper.end_session()
 
 
 # --- _LevelTracker: matematica viva sin Qt. ---

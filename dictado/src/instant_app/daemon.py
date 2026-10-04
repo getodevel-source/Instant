@@ -26,11 +26,21 @@ def pid_path():
 def write_pid():
     """Registra el PID al arrancar para stop/status. Nunca tumba el daemon."""
     import os
+    import tempfile
     try:
         p = pid_path()
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(str(os.getpid()))
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix="instant.pid.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+            os.replace(tmp, p)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
     except Exception:
         log.warning("no pude escribir instant.pid", exc_info=True)
 
@@ -185,6 +195,17 @@ class StreamKeeper:
     """
 
     PRE_ROLL = 0.45
+    # Tope de seguridad para la cola de sesion: a ~100 bloques/s cubre
+    # ~120s de dictado maximo. Fuera de sesion la cola queda vacia
+    # (ver _cb): el tope solo protege una sesion patologica.
+    MAX_QUEUE_BLOCKS = 15000
+    # Tope del pre-roll por conteo ademas de por tiempo: en un loop sintetico
+    # (o reloj grueso) miles de callbacks pueden caer dentro de la misma
+    # ventana temporal; 256 bloques cubren de sobra 0.55s a cualquier blocksize.
+    MAX_PRE_BLOCKS = 256
+    # Duracion maxima de una sesion: corta grabaciones infinitas por
+    # tecla atascada o flanco de release perdido.
+    MAX_SESSION_SECONDS = 120.0
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -193,6 +214,7 @@ class StreamKeeper:
         self.stream = None
         self.mic = None
         self._lock = threading.Lock()
+        self._recording = threading.Event()
 
     def _cb(self, indata, frames_, t, status):
         if status:
@@ -201,12 +223,47 @@ class StreamKeeper:
             blk = indata.copy()
         except Exception:
             return
-        self.q.put(blk)
         now = time.monotonic()
         with self._lock:
             self.pre.append((now, blk))
             while self.pre and now - self.pre[0][0] > self.PRE_ROLL + 0.1:
                 self.pre.popleft()
+            while len(self.pre) > self.MAX_PRE_BLOCKS:
+                self.pre.popleft()
+        # Fuera de sesion solo se conserva el pre-roll acotado: encolar
+        # siempre hacia que q creciera sin limite si el usuario no dictaba
+        # en horas (RAM/swap) y obligaba a purgar millones de bloques al
+        # pulsar (freeze al inicio).
+        if not self._recording.is_set():
+            return
+        try:
+            self.q.put_nowait(blk)
+        except queue.Full:
+            pass
+        if self.q.qsize() > self.MAX_QUEUE_BLOCKS:
+            try:
+                while self.q.qsize() > self.MAX_QUEUE_BLOCKS:
+                    self.q.get_nowait()
+            except queue.Empty:
+                pass
+
+    def begin_session(self):
+        """Abre la ventana de grabacion: drena restos y habilita la cola."""
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
+        self._recording.set()
+
+    def end_session(self):
+        """Cierra la ventana de grabacion y descarta audio tardio."""
+        self._recording.clear()
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
 
     def start(self):
         t0 = time.monotonic()
@@ -238,12 +295,10 @@ class StreamKeeper:
         Ventana <= 0 devuelve vacío siempre: con relojes gruesos (Windows
         ~15 ms) `now - t` puede dar exactamente 0.0 y un `<=` ingenuo
         resucitaría bloques que ya se drenaron.
+        Abre ademas la ventana de grabacion: desde aqui el callback vuelve
+        a encolar hasta end_session().
         """
-        try:
-            while True:
-                self.q.get_nowait()
-        except queue.Empty:
-            pass
+        self.begin_session()
         if seconds <= 0:
             return []
         now = time.monotonic()
@@ -313,9 +368,19 @@ class Daemon:
         soltar, con flush de 0.3s para lo que quedo en buffers.
 
         next_block(timeout) entrega un bloque o levanta queue.Empty.
+        Corta ademas por duracion maxima para que una tecla atascada no
+        acumule bloques sin fin.
         """
+        t_start = time.monotonic()
         try:
             while True:
+                if time.monotonic() - t_start > StreamKeeper.MAX_SESSION_SECONDS:
+                    log.warning("sesion %d supera %.0fs, corto por seguridad.",
+                                sid, StreamKeeper.MAX_SESSION_SECONDS)
+                    with self.lock:
+                        if self.rec["sid"] == sid:
+                            self.rec["grabando"] = False
+                    break
                 try:
                     blk = next_block(0.1)
                 except queue.Empty:
@@ -353,36 +418,42 @@ class Daemon:
 
     def _record_continuous(self, sid, done, keeper):
         frames = keeper.snapshot(StreamKeeper.PRE_ROLL)
-        tracker = _LevelTracker(sid, self.overlay)
-        for blk in frames:
-            tracker.add(blk)
-        tracker.tick()
-        if not keeper.live():
-            log.error("captura continua muerta al grabar sesion %d.", sid)
-            with self.lock:
-                if self.rec["sid"] == sid:
-                    self.rec["grabando"] = False
-            if not frames:
-                self.overlay.show_error_for(
-                    sid,
-                    "Se perdió el micrófono. Revisá conexión y que otra app no lo esté usando.",
-                    "#f87171", 6000)
-                done.set()
-                return
-        else:
-            log.info("sesion %d con pre-roll %d bloques (captura continua).",
-                     sid, len(frames))
-        self.overlay.listening(sid)
-
-        def next_block(timeout):
-            if not keeper.live():
-                raise _StreamDied()
-            return keeper.take(timeout)
-
         try:
-            self._pump(sid, next_block, frames, tracker)
-        except _StreamDied:
-            log.warning("sesion %d: stream muerto, transcribo lo juntado.", sid)
+            tracker = _LevelTracker(sid, self.overlay)
+            for blk in frames:
+                tracker.add(blk)
+            tracker.tick()
+            if not keeper.live():
+                log.error("captura continua muerta al grabar sesion %d.", sid)
+                with self.lock:
+                    if self.rec["sid"] == sid:
+                        self.rec["grabando"] = False
+                if not frames:
+                    self.overlay.show_error_for(
+                        sid,
+                        "Se perdió el micrófono. Revisá conexión y que otra app no lo esté usando.",
+                        "#f87171", 6000)
+                    done.set()
+                    return
+            else:
+                log.info("sesion %d con pre-roll %d bloques (captura continua).",
+                         sid, len(frames))
+            self.overlay.listening(sid)
+
+            def next_block(timeout):
+                if not keeper.live():
+                    raise _StreamDied()
+                return keeper.take(timeout)
+
+            try:
+                self._pump(sid, next_block, frames, tracker)
+            except _StreamDied:
+                log.warning("sesion %d: stream muerto, transcribo lo juntado.", sid)
+        finally:
+            try:
+                keeper.end_session()
+            except Exception:
+                pass
         with self.lock:
             if self.rec["sid"] == sid:
                 self.rec["frames"] = frames
@@ -528,11 +599,15 @@ class Daemon:
                     break
         except Exception:
             log.exception("sesion %d fail en loop", sid)
-        try:
-            stream.stop()
-            stream.close()
-        except Exception:
-            log.exception("cerrando stream audio")
+        finally:
+            try:
+                stream.stop()
+            except Exception:
+                log.exception("deteniendo stream audio")
+            try:
+                stream.close()
+            except Exception:
+                log.exception("cerrando stream audio")
         with self.lock:
             if self.rec["sid"] == sid:
                 self.rec["frames"] = frames
@@ -603,15 +678,40 @@ class Daemon:
             done = self.rec["done"]
             sid = self.rec["sid"]
         self.overlay.processing(sid)
+        # El wait + concatenate + to_mono NO pueden correr en el hilo del
+        # hotkey (polling GetAsyncKeyState): lo dejaban ciego hasta 10s y
+        # se perdia el siguiente flanco. Se deriva a un worker.
+        threading.Thread(target=self._finish_release, args=(sid, done, dur),
+                         daemon=True).start()
+
+    def _finish_release(self, sid, done, dur):
         if done is not None and not done.wait(timeout=10.0):
             log.warning("sesion %d no cerro mic en 10s, transcribo lo que hay.", sid)
         with self.lock:
             frames = self.rec["frames"]
             self.rec["frames"] = []
             self.rec["busy"] = True
-        wav = audio.to_mono(np.concatenate(frames, axis=0)) if frames \
-            else np.zeros(0, dtype=np.float32)
-        log.info("soltado tras %.1fs, %d bloques -> VAD+Parakeet.", dur, len(frames))
+        try:
+            if frames:
+                try:
+                    wav = audio.to_mono(np.concatenate(frames, axis=0))
+                except (ValueError, MemoryError):
+                    log.exception("sesion %d: audio corrupto o gigante, descarto.", sid)
+                    with self.lock:
+                        self.rec["busy"] = False
+                    return
+            else:
+                wav = np.zeros(0, dtype=np.float32)
+        except Exception:
+            log.exception("sesion %d: no pude armar el wav.", sid)
+            with self.lock:
+                self.rec["busy"] = False
+            return
+        finally:
+            # Libera la referencia pesada cuanto antes; _job recibe su copia.
+            del frames
+        log.info("soltado tras %.1fs, %d bloques -> VAD+Parakeet.", dur,
+                 len(wav) // 160 if wav.size else 0)
         threading.Thread(target=self._job, args=(wav, dur, sid), daemon=True).start()
 
     def run(self):

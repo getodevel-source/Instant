@@ -56,9 +56,15 @@ def load():
             continue
         if k in INT_KEYS:
             try:
-                cfg[k] = int(v)
+                value = int(v)
             except ValueError:
                 log.warning("ignoro %s=%r (no es int)", env, v)
+                continue
+            if k == "threads":
+                import os as _os
+                cpu = _os.cpu_count() or 4
+                value = max(1, min(8, min(value, cpu)))
+            cfg[k] = value
         elif k in FLOAT_KEYS:
             try:
                 cfg[k] = float(v)

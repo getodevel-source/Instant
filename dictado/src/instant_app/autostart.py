@@ -177,8 +177,14 @@ def _is_ours_win(link):
     if not os.path.isfile(link):
         return False
     cur = _read_win_target(link)
-    if cur and "instant" in ("%s %s" % cur).lower():
-        return True
+    if cur:
+        hay = ("%s %s" % cur).lower()
+        # Estricto: solo nuestros targets, no cualquier .lnk ajeno que
+        # mencione "instant" (antes se pisaba/borraba arranques ajenos).
+        return ("instant-run.bat" in hay or "instant.exe" in hay
+                or "instant-update" in hay
+                or (("python.exe" in hay or "pythonw.exe" in hay)
+                    and "instant" in hay))
     if cur:
         return False
     # Binario real pero sin powershell para leerlo: busca la marca en crudo.

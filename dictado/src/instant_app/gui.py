@@ -245,8 +245,8 @@ def _worker_class():
             except Exception as exc:
                 self.signals.error.emit(exc)
             finally:
-                self.signals.finished.emit(self)
                 self.done = True
+                self.signals.finished.emit(self)
 
     class Manager(QObject):
         completed = Signal(object)
@@ -405,7 +405,7 @@ def _main_window_class():
             self._update_model_status()
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.refresh_daemon)
-            self.timer.start(1000)
+            self.timer.start(3000)
             if page == "diagnostics":
                 QTimer.singleShot(150, self.show_diagnostics)
             self._update_silent_done = False
@@ -1099,6 +1099,8 @@ def _main_window_class():
                 return False
 
         def _daemon_start_timeout(self, token):
+            if self._closed:
+                return
             if token != self._daemon_start_token or not self._daemon_start_pending:
                 return
             self._daemon_start_pending = False
@@ -1112,21 +1114,34 @@ def _main_window_class():
                 if restart: self._start_daemon()
                 else: self.refresh_daemon()
                 return
-            if not _pid_is_instant(pid):
-                log.warning("PID %d reciclado por el SO (no es Instant); no se mata.", pid)
-                self.status_detail.setText("El daemon ya no estaba; actualizando estado…")
-                self.refresh_daemon()
-                return
-            if os.name == "nt":
-                subprocess.Popen(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            else:
-                try: os.kill(pid, signal.SIGTERM)
-                except OSError: pass
-            self.status_detail.setText("Cerrando Instant…")
-            if restart: QTimer.singleShot(350, self._wait_before_restart)
-            else: QTimer.singleShot(700, self.refresh_daemon)
+            # _pid_is_instant hace powershell/Get-CimInstance (hasta 10s):
+            # NUNCA en hilo UI. Se verifica en worker y recien ahi se mata.
+            self.status_detail.setText("Verificando Instant…")
+            def _check(_emit):
+                return _pid_is_instant(pid)
+            def _checked(is_ours):
+                if self._closed:
+                    return
+                if not is_ours:
+                    log.warning("PID %d reciclado por el SO (no es Instant); no se mata.", pid)
+                    self.status_detail.setText("El daemon ya no estaba; actualizando estado…")
+                    self.refresh_daemon()
+                    return
+                if os.name == "nt":
+                    subprocess.Popen(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                else:
+                    try: os.kill(pid, signal.SIGTERM)
+                    except OSError: pass
+                self.status_detail.setText("Cerrando Instant…")
+                if self._closed:
+                    return
+                if restart: QTimer.singleShot(350, self._wait_before_restart)
+                else: QTimer.singleShot(700, self.refresh_daemon)
+            self._run_worker(_check, _checked)
 
         def _wait_before_restart(self):
+            if self._closed:
+                return
             if self._last_daemon_running:
                 self.refresh_daemon(); QTimer.singleShot(250, self._wait_before_restart)
             else: self._start_daemon()

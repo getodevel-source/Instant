@@ -19,7 +19,7 @@ DEFAULT_SYSTEM = ("Corrige solo ortografía, tildes y puntuación de este dictad
                   "Devuelve SOLO el texto corregido, sin comillas ni explicaciones.")
 
 
-def polish(text, url, timeout=15.0, system=None, context_terms=""):
+def polish(text, url, timeout=8.0, system=None, context_terms=""):
     """Corrige `text` via endpoint OpenAI-compatible de llama-server."""
     import json
     import urllib.request

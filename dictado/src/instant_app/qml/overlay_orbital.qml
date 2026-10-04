@@ -262,7 +262,7 @@ Window {
                     antialiasing: true
                     layer.enabled: true
                     layer.smooth: true
-                    layer.samples: 4
+                    layer.samples: 2
                     ShapePath {
                         strokeColor: orbital.accent
                         strokeWidth: 3.5
@@ -292,7 +292,7 @@ Window {
             transformOrigin: Item.Center
             layer.enabled: true
             layer.smooth: true
-            layer.samples: 4
+            layer.samples: 2
             visible: orbital.mode === "success"
             ShapePath {
                 strokeColor: orbital.brandGreen

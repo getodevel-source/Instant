@@ -221,7 +221,7 @@ Window {
             // de verse aserrados sin cambiar ningún color ni forma.
             layer.enabled: true
             layer.smooth: true
-            layer.samples: 4
+            layer.samples: 2
             border.color: overlay.tint(overlay.accent, 0.30)
             gradient: Gradient {
                 GradientStop { position: 0.0; color: overlay.glassTop }
@@ -345,7 +345,7 @@ Window {
                         antialiasing: true
                         layer.enabled: true
                         layer.smooth: true
-                        layer.samples: 4
+                        layer.samples: 2
                         ShapePath {
                             strokeColor: overlay.ink
                             strokeWidth: 1.8
@@ -379,7 +379,7 @@ Window {
                     transformOrigin: Item.Center
                     layer.enabled: true
                     layer.smooth: true
-                    layer.samples: 4
+                    layer.samples: 2
                     ShapePath {
                         strokeColor: overlay.brandGreen
                         strokeWidth: 2.6
@@ -512,7 +512,7 @@ Window {
                             antialiasing: true
                             layer.enabled: true
                             layer.smooth: true
-                            layer.samples: 4
+                            layer.samples: 2
                             // Arco único: un solo trazo barriendo. Las estelas se
                             // retiraron por criterio high-end: un giro limpio
                             // se lee premium; tres se leen ruido.
@@ -541,7 +541,7 @@ Window {
                             antialiasing: true
                             layer.enabled: true
                             layer.smooth: true
-                            layer.samples: 4
+                            layer.samples: 2
                             ShapePath {
                                 strokeColor: overlay.accent
                                 strokeWidth: 1.6

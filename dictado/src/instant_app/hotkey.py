@@ -231,6 +231,10 @@ class WindowsPolling:
         return bool(self._user32.GetAsyncKeyState(self.vk) & 0x8000)
 
     def start(self, on_press, on_release, interval=0.01):
+        if self._t is not None and self._t.is_alive():
+            log.warning("hotkey polling ya activo; ignoro segundo start.")
+            return
+
         def _loop():
             was = False
             while not self._stop.is_set():
@@ -247,6 +251,9 @@ class WindowsPolling:
 
     def stop(self):
         self._stop.set()
+        t, self._t = self._t, None
+        if t is not None:
+            t.join(timeout=1.0)
 
 
 class PynputHotkey:
@@ -278,6 +285,19 @@ class PynputHotkey:
             return False
 
     def start(self, on_press, on_release, interval=0.01):
+        del interval
+        if self._listener is not None:
+            try:
+                if getattr(self._listener, "is_alive", lambda: False)():
+                    log.warning("hotkey pynput ya activo; ignoro segundo start.")
+                    return
+            except Exception:
+                pass
+            try:
+                self._listener.stop()
+            except Exception:
+                pass
+            self._listener = None
         def _p(key):
             if not self._down and self._norm(key):
                 self._down = True
@@ -292,9 +312,10 @@ class PynputHotkey:
         self._listener.start()
 
     def stop(self):
-        if self._listener is not None:
+        listener, self._listener = self._listener, None
+        if listener is not None:
             try:
-                self._listener.stop()
+                listener.stop()
             except Exception:
                 pass
 

@@ -1,5 +1,4 @@
 """STT: Silero VAD (frases) + Parakeet v3 int8 offline por segmento. CPU-only."""
-import concurrent.futures
 import logging
 import os
 import re
@@ -69,8 +68,22 @@ def _fit_level(wav):
 
 
 class Engine:
+    # Tope del reintento total: decodificar hasta 120s de audio duplicaba
+    # el pico de CPU/RAM justo en el peor caso (audio largo/ruidoso).
+    FULL_RETRY_MAX_SECONDS = 30.0
+    # Limites defensivos de hilos ONNX intra-op.
+    MIN_THREADS = 1
+    MAX_THREADS = 8
+
     def __init__(self, data_dir=None, threads=4, max_seg=20.0,
                  vad_sil=0.5, vad_pad=0.3, min_dur=0.4, save_wavs_dir=None):
+        import os as _os
+        cpu = _os.cpu_count() or 4
+        try:
+            threads = int(threads)
+        except (TypeError, ValueError):
+            threads = 4
+        threads = max(self.MIN_THREADS, min(self.MAX_THREADS, min(threads, cpu)))
         self.paths = model_paths(data_dir)
         self.threads = threads
         self.max_seg = max_seg
@@ -81,11 +94,18 @@ class Engine:
         # vacios, para medir con voz real en vez de suponer.
         self.save_wavs_dir = save_wavs_dir
         self._rec = None
+        self._vad = None
         self._lock = threading.Lock()
         # La inferencia sobre el recognizer compartido se serializa (_one):
         # con decodificaciones concurrentes el transducer colapsaba a blank de
         # forma intermitente (~6% de sesiones). RTF ~0.05x deja margen.
         self._decode_lock = threading.Lock()
+
+    def unload(self):
+        """Libera el recognizer (~670MB) y el VAD cacheado si existen."""
+        with self._lock:
+            self._rec = None
+            self._vad = None
 
     def recognizer(self):
         with self._lock:
@@ -115,6 +135,11 @@ class Engine:
             return self._rec
 
     def vad(self):
+        # Reutiliza una instancia: antes se creaba un VadModel nativo en
+        # CADA transcribe() sin liberarlo (leak nativo acumulativo).
+        with self._lock:
+            if self._vad is not None:
+                return self._vad
         import sherpa_onnx
 
         if not os.path.isfile(self.paths["vad"]):
@@ -128,7 +153,12 @@ class Engine:
         cfg.silero_vad.min_speech_duration = 0.2
         cfg.silero_vad.window_size = 512
         cfg.sample_rate = SAMPLE_RATE
-        return sherpa_onnx.VadModel.create(cfg)
+        inst = sherpa_onnx.VadModel.create(cfg)
+        with self._lock:
+            if self._vad is None:
+                self._vad = inst
+                return inst
+            return self._vad
 
     def segment(self, audio):
         """Corta audio en frases por VAD. Devuelve [(t0, t1)] en segundos."""
@@ -231,9 +261,11 @@ class Engine:
                 fixed[idx] = retry
         if any(fixed):
             return fixed
-        # Perdida total con audio fuerte: ultimo intento con el wav completo.
+        # Perdida total con audio fuerte: ultimo intento acotado (antes 120s:
+        # duplicaba el pico de CPU/RAM justo en el peor caso).
         if peak >= SILENCE_PEAK and len(wav) / SAMPLE_RATE >= 0.3:
-            full = wav[:int(min(len(wav) / SAMPLE_RATE, 120.0)) * SAMPLE_RATE]
+            capped = min(len(wav) / SAMPLE_RATE, self.FULL_RETRY_MAX_SECONDS)
+            full = wav[:int(capped) * SAMPLE_RATE]
             try:
                 _, retry = self._one((-1, full))
                 retry = (retry or "").strip()
@@ -247,7 +279,7 @@ class Engine:
         return fixed
 
     def transcribe(self, audio):
-        """VAD + Parakeet por segmento en paralelo. Devuelve texto unido."""
+        """VAD + Parakeet por segmento en serie. Devuelve texto unido."""
         wav = np.ascontiguousarray(np.asarray(audio).flatten(), dtype=np.float32)
         dur = len(wav) / SAMPLE_RATE
         peak = float(np.max(np.abs(wav))) if wav.size else 0.0
@@ -263,16 +295,21 @@ class Engine:
             raw = wav[int(s * SAMPLE_RATE):int(e * SAMPLE_RATE)]
             normed, gain = _fit_level(raw)
             chunks.append((i, normed, gain))
+            del raw
         t0 = time.time()
+        # Decode SERIADO: el recognizer ya se serializaba con _decode_lock
+        # (el decode concurrente colapsaba a blank) pero el ThreadPool
+        # mantenia N hilos bloqueados reteniendo chunks mientras cada decode
+        # usaba `threads` hilos ONNX -> pico NxM CPU-bound que congelaba el
+        # SO. En serie el RTF es el mismo y el pico es 1xM.
         texts = [""] * len(chunks)
-        with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(self.threads, len(chunks))) as ex:
-            for idx, text in ex.map(self._one, [(i, w) for i, w, _g in chunks]):
-                texts[idx] = (text or "").strip()
-                cpeak = float(np.max(np.abs(chunks[idx][1]))) if chunks[idx][1].size else 0.0
-                log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f): %s", idx + 1, len(chunks),
-                         len(chunks[idx][1]) / SAMPLE_RATE, cpeak, chunks[idx][2],
-                         texts[idx][:80])
+        for i, w, _g in chunks:
+            idx, text = self._one((i, w))
+            texts[idx] = (text or "").strip()
+            cpeak = float(np.max(np.abs(chunks[idx][1]))) if chunks[idx][1].size else 0.0
+            log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f): %s", idx + 1, len(chunks),
+                     len(chunks[idx][1]) / SAMPLE_RATE, cpeak, chunks[idx][2],
+                     texts[idx][:80])
         log.info("decode %d segs en %.2fs.", len(chunks), time.time() - t0)
         texts = self._recover_empties(wav, peak, bounds, chunks, texts)
         if self.save_wavs_dir and not any(t.strip() for t in texts):

@@ -19,16 +19,14 @@ exit /b 0
 :stale
 del "%PIDFILE%" 2>nul
 :scan
-tasklist /FI "IMAGENAME eq instant.exe" 2>nul | findstr /I "instant.exe" >nul
-if not errorlevel 1 goto :dup_exe
-powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'pythonw.exe' -and $_.CommandLine -like '*instant_app run*' }) { exit 1 } else { exit 0 }" >nul 2>nul
-if errorlevel 1 goto :dup_pyw
+REM Solo el DAEMON cuenta (...\instant... run...), no la GUI (setup/home):
+REM antes cualquier Instant.exe (incluida la ventana de ajustes) bloqueaba
+REM el arranque del daemon (falso positivo).
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'Instant.exe' -or $_.Name -eq 'python.exe' -or $_.Name -eq 'pythonw.exe') -and $_.CommandLine -like '*instant*run*' }) { exit 1 } else { exit 0 }" >nul 2>nul
+if errorlevel 1 goto :dup_exe
 goto :launch
 :dup_exe
-echo Ya hay instancia viva instant.exe sin PID file. No se lanza otra.
-exit /b 0
-:dup_pyw
-echo Ya hay daemon vivo pythonw con instant_app run. No se lanza otro.
+echo Ya hay daemon vivo sin PID file. No se lanza otro.
 exit /b 0
 :launch
 set "INSTANT_PYTHON=%~dp0.venv\Scripts\pythonw.exe"
