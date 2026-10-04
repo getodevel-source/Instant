@@ -57,7 +57,9 @@ cpu = _os.cpu_count() or 4
 _check("threads clamp a [1,8,cpu]", 1 <= eng.threads <= min(8, cpu),
        f"threads={eng.threads}")
 eng2 = Engine(data_dir=tempfile.mkdtemp(), threads="no-int")
-_check("threads invalido cae a default", eng2.threads == 4, f"{eng2.threads}")
+eng_default = Engine(data_dir=tempfile.mkdtemp())
+_check("threads invalido cae al default de la maquina",
+       eng2.threads == eng_default.threads, f"{eng2.threads}")
 _check("retry cap 30s", eng.FULL_RETRY_MAX_SECONDS == 30.0)
 _check("max session 120s", daemon_module.StreamKeeper.MAX_SESSION_SECONDS == 120.0)
 
