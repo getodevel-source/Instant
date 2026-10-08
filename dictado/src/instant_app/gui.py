@@ -1459,7 +1459,10 @@ class _WebPanel:
         QQmlApplicationEngine = qtqml.QQmlApplicationEngine
 
         # Inicialización del motor ANTES de crear la QGuiApplication (requisito
-        # de QtWebEngine; idempotente si ya se llamó).
+        # de QtWebEngine; idempotente si ya se llamó). En binarios congelados
+        # primero se le dice dónde está su proceso helper.
+        from instant_app.launch import prepare_webengine_env
+        prepare_webengine_env()
         webengine.QtWebEngineQuick.initialize()
         self.application = QGuiApplication.instance() or QGuiApplication(["Instant"])
         if QThread.currentThread() != self.application.thread():
@@ -1638,6 +1641,9 @@ def run_gui(page="home", autostart_override=None, start_daemon_on_open=False):
                 "para configurar sin ventana: instant setup --tui")
             return 2
         from PySide6.QtWebEngineQuick import QtWebEngineQuick
+
+        from instant_app.launch import prepare_webengine_env
+        prepare_webengine_env()
         QtWebEngineQuick.initialize()
         from PySide6.QtGui import QGuiApplication
         app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])

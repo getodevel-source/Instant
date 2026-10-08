@@ -216,5 +216,42 @@ class AppLifecycleTests(unittest.TestCase):
 
 
 
+class WebEngineHelperPathTests(unittest.TestCase):
+    """En congelados, QtWebEngine necesita que le digan dónde está su helper."""
+
+    def test_sets_process_path_from_the_extracted_tree(self):
+        import tempfile
+        from instant_app import launch
+
+        with tempfile.TemporaryDirectory() as root:
+            helper = os.path.join(root, "PySide6", "QtWebEngineProcess.app",
+                                  "Contents", "MacOS", "QtWebEngineProcess")
+            os.makedirs(os.path.dirname(helper))
+            with open(helper, "w", encoding="utf-8") as handle:
+                handle.write("")
+            env = dict(os.environ)
+            env.pop("QTWEBENGINEPROCESS_PATH", None)
+            with patch.object(launch.sys, "frozen", True, create=True), \
+                    patch.object(launch.sys, "_MEIPASS", root, create=True), \
+                    patch.dict(os.environ, env, clear=True):
+                found = launch.prepare_webengine_env()
+                self.assertEqual(found, helper)
+                self.assertEqual(os.environ["QTWEBENGINEPROCESS_PATH"], helper)
+
+    def test_untouched_when_not_frozen_or_already_set(self):
+        import tempfile
+        from instant_app import launch
+
+        with tempfile.TemporaryDirectory() as root:
+            os.environ.pop("QTWEBENGINEPROCESS_PATH", None)
+            with patch.object(launch.sys, "_MEIPASS", root, create=True):
+                self.assertIsNone(launch.prepare_webengine_env())
+            with patch.object(launch.sys, "frozen", True, create=True), \
+                    patch.object(launch.sys, "_MEIPASS", root, create=True), \
+                    patch.dict(os.environ, {"QTWEBENGINEPROCESS_PATH": "ya-esta"}):
+                self.assertIsNone(launch.prepare_webengine_env())
+                self.assertEqual(os.environ["QTWEBENGINEPROCESS_PATH"], "ya-esta")
+
+
 if __name__ == "__main__":
     unittest.main()

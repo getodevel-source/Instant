@@ -158,6 +158,34 @@ jobs:
             --collect-all sounddevice \
             dictado/src/instant_app/__main__.py
 
+      - name: Smoke del binario congelado (panel con WebEngine)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          ./dist/${{ matrix.binary_name }} --version
+          export HOME="$(mktemp -d)"
+          export DICTADO_DATA="$HOME/models"
+          export QT_QPA_PLATFORM=offscreen
+          export QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu"
+          ./dist/${{ matrix.binary_name }} setup &
+          PID=$!
+          LOGS=("$HOME/.config/instant/instant.log" "$HOME/Library/Application Support/instant/instant.log")
+          OK=""
+          for _ in $(seq 1 90); do
+            for log in "${LOGS[@]}"; do
+              if grep -q "panel abierto (setup)" "$log" 2>/dev/null; then OK=1; fi
+            done
+            [ -n "$OK" ] && break
+            sleep 1
+          done
+          kill $PID 2>/dev/null || true
+          [ -n "$OK" ] || {
+            echo "el panel congelado no abrió (WebEngine no arrancó):"
+            cat "${LOGS[@]}" 2>/dev/null | tail -40
+            exit 1
+          }
+          echo "panel congelado OK"
+
       - name: Sign binary (SHA256 sidecar for the updater)
         # Python en vez de sha256sum: macOS no lo trae y el sidecar tiene
         # que salir igual en los tres sistemas o el updater lo rechaza.

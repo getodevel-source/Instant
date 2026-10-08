@@ -96,7 +96,10 @@ class _WebOverlay:
         QQmlApplicationEngine = qtqml.QQmlApplicationEngine
 
         # Inicializacion del motor ANTES de crear la QGuiApplication (requisito
-        # de QtWebEngine; idempotente si ya se llamo).
+        # de QtWebEngine; idempotente si ya se llamo). En binarios congelados
+        # primero se le dice donde esta su proceso helper.
+        from instant_app.launch import prepare_webengine_env
+        prepare_webengine_env()
         webengine.QtWebEngineQuick.initialize()
         self.application = QGuiApplication.instance() or QGuiApplication(["Instant"])
         if QThread.currentThread() != self.application.thread():
