@@ -134,6 +134,11 @@ else:
             answered = False
             while time.monotonic() < deadline:
                 if process.poll() is not None:
+                    if process.returncode == 2:
+                        # run_gui devuelve 2 cuando el entorno no puede abrir la
+                        # UI (sin display, WebEngine sin GL): acá no hay canal
+                        # que probar, no es un fallo del producto.
+                        self.skipTest("el panel no pudo abrir en este entorno")
                     self.fail("el panel murió antes de atender el canal "
                               f"(rc={process.returncode})")
                 if gui._forward_to_existing_gui(None, False):

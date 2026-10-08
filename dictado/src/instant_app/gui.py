@@ -28,7 +28,6 @@ import threading
 import time
 
 from instant_app import audio, autostart, config, context, hotkey, models
-from instant_app.branding import PALETTE  # noqa: F401  (paleta viva del proyecto)
 from instant_app.launch import app_command, app_environment
 from instant_app.paths import resolve_data_dir
 

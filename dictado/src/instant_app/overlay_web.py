@@ -23,7 +23,6 @@ import os
 import threading
 import time
 
-from instant_app.branding import PALETTE
 from instant_app.paths import config_dir
 
 log = logging.getLogger("instant")
