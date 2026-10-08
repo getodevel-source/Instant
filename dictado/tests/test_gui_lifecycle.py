@@ -38,11 +38,21 @@ else:
             _gc.collect()
 
         def _wait_idle(self, window):
-            from PySide6.QtCore import QEventLoop
-            if not window._pending_workers: return
+            """Espera a que no haya workers y a que se apliquen sus resultados.
+
+            `workers_idle` sale del pool apenas termina el worker, pero el
+            resultado viaja como señal encolada y puede aplicarse un instante
+            después; sin drenar el loop, el estado del panel queda a medias.
+            """
+            from PySide6.QtCore import QEventLoop, QTimer
+
             loop = QEventLoop()
             window.workers_idle.connect(loop.quit)
-            if window._pending_workers: loop.exec()
+            if window._pending_workers:
+                loop.exec()
+            settle = QEventLoop()
+            QTimer.singleShot(30, settle.quit)
+            settle.exec()
             self.assertFalse(window._pending_workers)
 
         def _close_and_wait(self, window):

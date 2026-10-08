@@ -70,3 +70,16 @@ jobs:
           gh issue create \
             --title "ci-debug ${{ matrix.os }} (temporal)" \
             --body-file "$RUNNER_TEMP/body.md"
+
+      - name: Close previous ci-debug issues (only when green)
+        if: steps.suite.outputs.code == '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          numbers=$(gh issue list --state open --search 'ci-debug in:title' \
+                      --json number --jq '.[].number')
+          for number in $numbers; do
+            gh issue close "$number" \
+              --comment "Suite verde con este push; cierro el reporte temporal."
+          done

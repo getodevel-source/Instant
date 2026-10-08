@@ -113,7 +113,20 @@ else:
                  "import sys; from instant_app.gui import run_gui; "
                  "sys.exit(run_gui('setup'))"],
                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.addCleanup(process.kill)
+
+            def stop_child():
+                try:
+                    process.kill()
+                    process.wait(timeout=10)
+                except Exception:
+                    pass
+                for stream in (process.stdout, process.stderr):
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+
+            self.addCleanup(stop_child)
             deadline = time.monotonic() + 45
             answered = False
             while time.monotonic() < deadline:
