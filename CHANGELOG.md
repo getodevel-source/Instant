@@ -3,6 +3,22 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [0.2.1] - 2026-10-08
+
+Instalador que compila en CI y desinstalación a prueba de carreras.
+
+### Corregido
+
+- **El instalador de Windows compila en CI.** Git-bash del runner reescribe
+  los argumentos que empiezan con `/` (MSYS): ISCC recibía `DAppVersion=...`
+  como nombre de script y abortaba. Ahora se invoca con `MSYS_NO_PATHCONV=1`
+  y `MSYS2_ARG_CONV_EXCL=*`, así el `Instant-Setup.exe` sale con cada tag.
+- **Desinstalación sin restos aunque el panel esté arrancando.** Si el `stop`
+  propio corre antes de que el panel abra su ventana, el proceso aparece
+  después y lockea los archivos. El desinstalador suma un cierre forzado de
+  cualquier proceso que quede corriendo desde la carpeta instalada
+  (verificado: 3 escenarios de carrera, carpeta borrada y sin restos).
+
 ## [0.2.0] - 2026-10-08
 
 Misma UI en los tres sistemas, instalador de Windows y descarga de modelos de primera.

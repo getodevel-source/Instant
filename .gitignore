@@ -23,3 +23,8 @@ venv/
 Downloads
 dsh-session-*.html
 *_sesion_export_*.html
+
+# Descargas y verificaciones locales (nunca se commitean)
+.release-check/
+.uninstall-check/
+*.spec

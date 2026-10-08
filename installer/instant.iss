@@ -78,6 +78,10 @@ Filename: "{app}\{#AppExe}"; Flags: nowait
 ; El daemon no tiene ventana: el Restart Manager no puede cerrarlo, así que
 ; se frena con el propio binario antes de borrar los archivos (evita restos).
 Filename: "{app}\{#AppExe}"; Parameters: "stop"; RunOnceId: "StopInstantDaemon"
+; Carrera: si el panel/daemon estaba *arrancando* cuando corrió el stop, el
+; proceso aparece después y lockea los archivos. Se fuerza el cierre de
+; cualquier cosa que quede corriendo desde {app}.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -Command ""Get-Process -Name Instant -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{app}\*' }} | Stop-Process -Force"""; RunOnceId: "KillInstantProcesses"; Flags: runhidden
 
 [UninstallDelete]
 ; La configuración y los modelos NO se tocan al desinstalar: viven en
