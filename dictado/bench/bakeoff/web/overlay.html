@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; width: 224px; height: 224px; }
+</style>
+</head>
+<body>
+<canvas id="c" width="224" height="224"></canvas>
+<script src="qwebchannel.js"></script>
+<script>
+/* Overlay v2 del bake-off (lado web): misma spec y mismas constantes que
+   overlay_v2.frag (QML). Todo se dibuja en canvas2d; el sombreado de glow usa
+   gradiente radial con la misma curva (1 - r/R)^2.2. Sin dependencias. */
+(() => {
+  const C = document.getElementById('c').getContext('2d');
+  const PI = Math.PI;
+  const SIZE = 224, CX = 112, CY = 112;
+  const ACCENT = [0.333, 0.835, 0.784];
+  const WORKING = [0.561, 0.843, 0.910];
+  const AMBER = [0.949, 0.765, 0.416];
+
+  const state = { level: 0, pitch: 0.5, bands: new Array(9).fill(0), mode: 'idle', message: '' };
+  const smooth = { level: 0, pitch: 0.5 };
+  let timeS = 0, lastMs = 0;
+
+  window._ft = [];       // timestamps (performance.now) de los frames recientes
+  window._first = 0;     // primer frame presentado
+  window._frames = 0;    // total de frames presentados
+
+  window.pushFrame = function (f) {
+    state.level = f.level;
+    state.pitch = f.pitch;
+    if (f.bands) state.bands = f.bands;
+    state.mode = f.mode;
+    if (f.message !== undefined) state.message = f.message;
+  };
+  window.shot = function () { return document.getElementById('c').toDataURL('image/png'); };
+
+  /* Puente QWebChannel: el precio del IPC de la ruta web (el lado QML no lo
+     necesita). Frames y comandos llegan como señales; los resultados vuelven
+     por event(). */
+  window._bridge = null;
+  if (typeof qt === 'undefined' || !qt.webChannelTransport) {
+    C.fillStyle = '#ff908b';
+    C.font = '12px sans-serif';
+    C.fillText('sin webChannelTransport', 20, 112);
+  } else {
+    new QWebChannel(qt.webChannelTransport, function (channel) {
+      window._bridge = channel.objects.bridge;
+      window._bridge.frame.connect(function (payload) {
+        window.pushFrame(JSON.parse(payload));
+      });
+      window._bridge.command.connect(function (cmd) {
+        if (cmd === 'fps')
+          window.reportFps();
+        else if (cmd === 'summary')
+          window.reportSummary();
+        else if (cmd.indexOf('shot:') === 0) {
+          window._shotT = parseInt(cmd.slice(5), 10);
+          window.shotToBridge();
+        }
+      });
+      window._bridge.event(JSON.stringify({
+        kind: 'ready', now: performance.now(), first: window._first || -1 }));
+    });
+  }
+  window.reportFps = function () {
+    var a = window._ft;
+    window._ft = [];
+    if (window._bridge)
+      window._bridge.event(JSON.stringify({ kind: 'fps', frames: a.length, times: a }));
+  };
+  window.reportSummary = function () {
+    if (window._bridge)
+      window._bridge.event(JSON.stringify({ kind: 'summary', frames: window._frames }));
+  };
+  window.shotToBridge = function () {
+    if (window._bridge)
+      window._bridge.event(JSON.stringify({
+        kind: 'shot', t: window._shotT || 0, data: window.shot() }));
+  };
+
+  function mix(a, b, t) {
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  }
+  function rgba(c, a) {
+    return 'rgba(' + ((c[0] * 255) | 0) + ',' + ((c[1] * 255) | 0) + ',' + ((c[2] * 255) | 0) + ',' + a + ')';
+  }
+
+  function frame(now) {
+    if (!window._first) window._first = now;
+    window._ft.push(now);
+    window._frames += 1;
+    if (window._frames === 1 && window._bridge)
+      window._bridge.event(JSON.stringify({ kind: 'first', t: now }));
+    const dt = lastMs ? (now - lastMs) / 1000 : 0.016;
+    lastMs = now;
+    timeS += dt;
+    // Suavizado exponencial: misma constante de tiempo que los Behavior 90/140 ms.
+    smooth.level += (state.level - smooth.level) * (1 - Math.exp(-dt / 0.090));
+    smooth.pitch += (state.pitch - smooth.pitch) * (1 - Math.exp(-dt / 0.140));
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  function draw() {
+    const level = smooth.level, pitch = smooth.pitch;
+    const b = state.bands, mode = state.mode;
+    const idle = mode === 'idle' ? 1 : 0;
+    const starting = mode === 'starting' ? 1 : 0;
+    const listening = mode === 'listening' ? 1 : 0;
+    const processing = mode === 'processing' ? 1 : 0;
+    const notice = (mode === 'notice' || mode === 'error') ? 1 : 0;
+
+    const breath = 0.5 + 0.5 * Math.sin(timeS * 2 * PI / 2.8);
+    const pulse = 0.5 + 0.5 * Math.sin(timeS * 2 * PI / 0.45);
+    const voice = mix(ACCENT, WORKING, pitch);
+    const nucCol = notice ? AMBER : voice;
+
+    C.clearRect(0, 0, SIZE, SIZE);
+
+    // Nucleo + halo
+    const nucR = idle * (16 + 1.5 * breath) + starting * (18 + 4 * level)
+               + listening * (24 + 8 * level) + processing * (22 + 3 * Math.sin(timeS * 2 * PI / 0.9))
+               + notice * (22 + 2 * pulse);
+    const nucA = idle * 0.35 + starting * 0.75 + listening * 0.95 + processing * 0.9
+               + notice * (0.55 + 0.45 * pulse);
+    const haloR = nucR + 22 + 22 * Math.max(listening, starting * 0.3) * level;
+    const glowA = idle * 0.35 + starting * 0.55 + listening * 0.75 + processing * 0.6 + notice * 0.9;
+
+    const grad = C.createRadialGradient(CX, CY, 0, CX, CY, haloR);
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6;
+      const a = Math.pow(1 - t, 2.2) * glowA * 0.85;
+      grad.addColorStop(t, rgba(nucCol, a));
+    }
+    C.fillStyle = grad;
+    C.beginPath(); C.arc(CX, CY, haloR, 0, 2 * PI); C.fill();
+
+    C.fillStyle = rgba(nucCol, nucA);
+    C.beginPath(); C.arc(CX, CY, nucR, 0, 2 * PI); C.fill();
+
+    // Anillo principal (r=56)
+    const ringA = idle * 0.12 + starting * 0.30 + listening * (0.40 + 0.45 * level)
+                + processing * 0.25 + notice * (0.45 + 0.45 * pulse);
+    const ringW = 1.5 + 2.5 * level * listening;
+    const ringCol = notice ? AMBER : voice;
+    C.strokeStyle = rgba(ringCol, ringA);
+    C.lineWidth = 2 * ringW;
+    C.beginPath(); C.arc(CX, CY, 56, 0, 2 * PI); C.stroke();
+
+    // Espectro de 9 arcos (r=78, trazo 7px, puntas redondas)
+    const specA = listening * 0.85 + starting * 0.25;
+    if (specA > 0) {
+      const rot = timeS * (0.15 + 0.35 * level);
+      const slot = 2 * PI / 9;
+      C.lineWidth = 7;
+      C.lineCap = 'round';
+      C.strokeStyle = rgba(voice, specA);
+      for (let i = 0; i < 9; i++) {
+        const c = (i + 0.5) * slot + rot;
+        const halfspan = 0.5 * slot * (0.12 + 0.88 * b[i]) * 0.85;
+        C.beginPath(); C.arc(CX, CY, 78, c - halfspan, c + halfspan); C.stroke();
+      }
+    }
+
+    // Barrido de processing (arco de 70 grados rotando, r=78)
+    if (processing) {
+      const sweepCenter = (timeS * (2 * PI / 1.1)) % (2 * PI);
+      const halfSpan = 0.5 * (70 * PI / 180);
+      C.lineWidth = 12;
+      C.lineCap = 'round';
+      C.strokeStyle = rgba(WORKING, 0.9);
+      C.beginPath(); C.arc(CX, CY, 78, sweepCenter - halfSpan, sweepCenter + halfSpan); C.stroke();
+    }
+
+    // Pastilla de aviso
+    if (notice && state.message) {
+      C.font = '13px "Segoe UI", sans-serif';
+      const w = Math.max(120, C.measureText(state.message).width + 36);
+      const h = 26, x = CX - w / 2, y = 200 - h + 6;
+      C.fillStyle = 'rgba(15, 33, 36, 0.85)';
+      C.strokeStyle = 'rgba(242, 195, 106, 0.35)';
+      C.lineWidth = 1;
+      C.beginPath(); C.roundRect(x, y, w, h, 13); C.fill(); C.stroke();
+      C.fillStyle = '#f2c36a';
+      C.textAlign = 'center';
+      C.textBaseline = 'middle';
+      C.fillText(state.message, CX, y + h / 2 + 1);
+    }
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

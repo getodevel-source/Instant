@@ -1,0 +1,100 @@
+{
+  "qml": {
+    "runs": [
+      {
+        "runner": "qml",
+        "startup_ms": 271.1,
+        "fps_avg": 200.3,
+        "fps_p95_worst_ms": 6,
+        "frames": 2300,
+        "duration_s": 11.75,
+        "cpu_pct_one_core": 1.7,
+        "ws_avg_mb": 110.0,
+        "ws_peak_mb": 116.9,
+        "samples": 24
+      },
+      {
+        "runner": "qml",
+        "startup_ms": 265.5,
+        "fps_avg": 200.3,
+        "fps_p95_worst_ms": 6,
+        "frames": 2305,
+        "duration_s": 11.75,
+        "cpu_pct_one_core": 2.6,
+        "ws_avg_mb": 110.3,
+        "ws_peak_mb": 117.3,
+        "samples": 24
+      },
+      {
+        "runner": "qml",
+        "startup_ms": 267.1,
+        "fps_avg": 200.3,
+        "fps_p95_worst_ms": 6,
+        "frames": 2305,
+        "duration_s": 11.75,
+        "cpu_pct_one_core": 0.6,
+        "ws_avg_mb": 110.1,
+        "ws_peak_mb": 117.1,
+        "samples": 24
+      }
+    ],
+    "median": {
+      "startup_ms": 267.1,
+      "fps_avg": 200.3,
+      "fps_p95_worst_ms": 6,
+      "cpu_pct_one_core": 1.7,
+      "ws_avg_mb": 110.1,
+      "ws_peak_mb": 117.1,
+      "frames": 2305
+    }
+  },
+  "web": {
+    "runs": [
+      {
+        "runner": "web",
+        "startup_ms": 220.0,
+        "fps_avg": 60.2,
+        "fps_p95_worst_ms": 16.8,
+        "frames": 707,
+        "duration_s": 11.75,
+        "cpu_pct_one_core": 0.9,
+        "ws_avg_mb": 233.1,
+        "ws_peak_mb": 237.3,
+        "samples": 24
+      },
+      {
+        "runner": "web",
+        "startup_ms": 194.4,
+        "fps_avg": 60.1,
+        "fps_p95_worst_ms": 16.8,
+        "frames": 707,
+        "duration_s": 11.75,
+        "cpu_pct_one_core": 0.8,
+        "ws_avg_mb": 229.4,
+        "ws_peak_mb": 233.7,
+        "samples": 24
+      },
+      {
+        "runner": "web",
+        "startup_ms": 246.2,
+        "fps_avg": 60.2,
+        "fps_p95_worst_ms": 16.8,
+        "frames": 707,
+        "duration_s": 11.75,
+        "cpu_pct_one_core": 1.2,
+        "ws_avg_mb": 219.7,
+        "ws_peak_mb": 234.5,
+        "samples": 25
+      }
+    ],
+    "median": {
+      "startup_ms": 220.0,
+      "fps_avg": 60.2,
+      "fps_p95_worst_ms": 16.8,
+      "cpu_pct_one_core": 0.9,
+      "ws_avg_mb": 229.4,
+      "ws_peak_mb": 234.5,
+      "frames": 707
+    }
+  }
+}

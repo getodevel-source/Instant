@@ -1,0 +1,483 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  canvas { position: absolute; left: 0; top: 0; width: 224px; height: 224px; display: block; }
+</style>
+</head>
+<body>
+<canvas id="gl" width="224" height="224"></canvas>
+<canvas id="ui" width="224" height="224"></canvas>
+<script src="qwebchannel.js"></script>
+<script>
+/* Overlay v4 del bake-off (ronda 3, lado web): el mismo look 3D-ish del orbe
+   v3 + cadena de bloom multi-pass propia sobre FBOs (umbral+blur H -> blur V
+   -> composicion con tonemap y dithering), con alfa correcto de punta a punta.
+   Espeja la tecnica del lado QML (bloom_h/bloom_v sobre la escena).
+   Mismo protocolo de puente y mismas metricas que v2/v3. */
+(() => {
+  const PI = Math.PI;
+  const SIZE = 224;
+  const HALF = 112;
+  const GL = document.getElementById('gl');
+  const UI = document.getElementById('ui');
+  const gl = GL.getContext('webgl2', { alpha: true, premultipliedAlpha: true,
+                                       preserveDrawingBuffer: true });
+
+  const state = { level: 0, pitch: 0.5, bands: new Array(9).fill(0), mode: 'idle', message: '' };
+  const smooth = { level: 0, pitch: 0.5 };
+  let timeS = 0, lastMs = 0;
+
+  window._ft = [];
+  window._first = 0;
+  window._frames = 0;
+
+  window.pushFrame = function (f) {
+    state.level = f.level;
+    state.pitch = f.pitch;
+    if (f.bands) state.bands = f.bands;
+    state.mode = f.mode;
+    if (f.message !== undefined) state.message = f.message;
+  };
+
+  window._bridge = null;
+  if (typeof qt === 'undefined' || !qt.webChannelTransport) {
+    const c = UI.getContext('2d');
+    c.fillStyle = '#ff908b';
+    c.font = '12px sans-serif';
+    c.fillText('sin webChannelTransport', 20, 112);
+  } else {
+    new QWebChannel(qt.webChannelTransport, function (channel) {
+      window._bridge = channel.objects.bridge;
+      window._bridge.frame.connect(function (payload) {
+        window.pushFrame(JSON.parse(payload));
+      });
+      window._bridge.command.connect(function (cmd) {
+        if (cmd === 'fps')
+          window.reportFps();
+        else if (cmd === 'summary')
+          window.reportSummary();
+        else if (cmd.indexOf('shot:') === 0) {
+          window._shotT = parseInt(cmd.slice(5), 10);
+          window.shotToBridge();
+        }
+      });
+      window._bridge.event(JSON.stringify({
+        kind: 'ready', now: performance.now(), first: window._first || -1 }));
+    });
+  }
+  window.reportFps = function () {
+    var a = window._ft;
+    window._ft = [];
+    if (window._bridge)
+      window._bridge.event(JSON.stringify({ kind: 'fps', frames: a.length, times: a }));
+  };
+  window.reportSummary = function () {
+    if (window._bridge)
+      window._bridge.event(JSON.stringify({ kind: 'summary', frames: window._frames }));
+  };
+  window.shot = function () {
+    var out = document.createElement('canvas');
+    out.width = SIZE;
+    out.height = SIZE;
+    var c = out.getContext('2d');
+    c.drawImage(GL, 0, 0);
+    c.drawImage(UI, 0, 0);
+    return out.toDataURL('image/png');
+  };
+  window.shotToBridge = function () {
+    if (window._bridge)
+      window._bridge.event(JSON.stringify({
+        kind: 'shot', t: window._shotT || 0, data: window.shot() }));
+  };
+
+  const MODE_INDEX = { idle: 0, starting: 1, listening: 2, processing: 3, notice: 4, error: 4 };
+
+  const VERT = `#version 300 es
+void main() {
+    vec2 pos = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+  // Escena: mismo cuerpo que la ronda 2 (blob + anillo + embers).
+  const SCENE_FRAG = `#version 300 es
+precision highp float;
+uniform float uLevel;
+uniform float uPitch;
+uniform float uTime;
+uniform float uMode;
+uniform float uBand0;
+uniform float uBand1;
+uniform float uBand2;
+uniform float uBand3;
+uniform float uBand4;
+uniform float uBand5;
+uniform float uBand6;
+uniform float uBand7;
+uniform float uBand8;
+layout(location = 0) out vec4 fragColor;
+const float PI = 3.14159265359;
+const float RING_R = 78.0;
+const vec3 ACCENT = vec3(0.333, 0.835, 0.784);
+const vec3 WORKING = vec3(0.561, 0.843, 0.910);
+const vec3 ICE = vec3(0.749, 0.937, 1.0);
+const vec3 AMBER = vec3(0.949, 0.765, 0.416);
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
+               mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; ++i) {
+        v += a * noise(p);
+        p = p * 2.03 + 11.7;
+        a *= 0.5;
+    }
+    return v;
+}
+
+float bandAt(float ang) {
+    float bands[9] = float[9](uBand0, uBand1, uBand2, uBand3, uBand4,
+                              uBand5, uBand6, uBand7, uBand8);
+    float pos = ang / (2.0 * PI) * 9.0;
+    float i0 = floor(pos);
+    float f = pos - i0;
+    int a = int(mod(i0, 9.0));
+    int b = int(mod(i0 + 1.0, 9.0));
+    return mix(bands[a], bands[b], f * f * (3.0 - 2.0 * f));
+}
+
+vec4 embers(vec2 p, float nucR, float listening, float processing, float level,
+            vec3 col) {
+    vec4 acc = vec4(0.0);
+    float gate = max(listening, processing);
+    if (gate < 0.5)
+        return acc;
+    for (int i = 0; i < 18; ++i) {
+        float fi = float(i);
+        float h1 = hash21(vec2(fi, 1.7));
+        float h2 = hash21(vec2(fi, 9.3));
+        float speed = 0.22 + 0.5 * h2;
+        float phase = fract(uTime * speed + h1);
+        float rStart = nucR + 8.0;
+        float rEnd = 98.0;
+        float rr = mix(rStart, rEnd, phase);
+        if (processing > 0.5)
+            rr = mix(rEnd, rStart, phase);
+        float ang = h1 * 2.0 * PI + phase * (0.5 + h2);
+        vec2 pos = vec2(cos(ang), sin(ang)) * rr;
+        float d = length(p - pos);
+        float dotMask = smoothstep(2.8, 1.1, d);
+        float fade = sin(phase * PI);
+        fade *= (listening > 0.5) ? (0.35 + 0.65 * level) : 1.0;
+        float a = dotMask * fade * 0.55;
+        acc += vec4(col * a, a);
+    }
+    return acc;
+}
+
+void main() {
+    vec2 p = (gl_FragCoord.xy - vec2(112.0)) * vec2(1.0, -1.0);
+    float r = length(p);
+    float ang = atan(p.y, p.x);
+
+    float idle = 1.0 - step(0.5, uMode);
+    float starting = step(0.5, uMode) * (1.0 - step(1.5, uMode));
+    float listening = step(1.5, uMode) * (1.0 - step(2.5, uMode));
+    float processing = step(2.5, uMode) * (1.0 - step(3.5, uMode));
+    float notice = step(3.5, uMode);
+
+    float breath = 0.5 + 0.5 * sin(uTime * 2.0 * PI / 2.8);
+    float pulse = 0.5 + 0.5 * sin(uTime * 2.0 * PI / 0.45);
+    vec3 voice = mix(ACCENT, WORKING, uPitch);
+    vec3 base = mix(voice, AMBER, notice * (1.0 - 0.35 * pulse));
+
+    float nucBase = idle * (16.0 + 1.5 * breath)
+                  + starting * (18.0 + 4.0 * uLevel)
+                  + listening * (24.0 + 8.0 * uLevel)
+                  + processing * (22.0 + 3.0 * sin(uTime * 2.0 * PI / 0.9))
+                  + notice * (22.0 + 2.0 * pulse);
+    vec2 blobP = vec2(cos(ang), sin(ang)) * 1.6 + vec2(0.0, uTime * 0.28);
+    float warp = fbm(blobP * 1.7 + fbm(blobP * 2.3) * 1.4);
+    float nucR = nucBase * (1.0 + 0.17 * (warp - 0.5) * 2.0)
+               * (1.0 + 0.05 * uLevel * listening);
+    float nucA = idle * 0.35 + starting * 0.8 + listening * 0.97
+               + processing * 0.92 + notice * (0.6 + 0.4 * pulse);
+
+    float body = smoothstep(nucR + 1.0, nucR - 1.0, r);
+    float depth = 1.0 - 0.45 * smoothstep(0.0, nucR, r);
+    float rim = smoothstep(nucR + 1.6, nucR - 1.6, r) * smoothstep(nucR - 6.0, nucR - 1.0, r);
+    vec3 nucCol = mix(base, ICE, 0.55 * rim);
+
+    float haloR = nucR + 24.0 + 26.0 * max(listening, starting * 0.3) * uLevel;
+    float glowA = idle * 0.35 + starting * 0.55 + listening * 0.8
+                + processing * 0.65 + notice * 0.95;
+    float glow = pow(clamp(1.0 - r / haloR, 0.0, 1.0), 2.4) * glowA;
+    float bloomR = nucR + 10.0;
+    float bloom2 = pow(clamp(1.0 - r / bloomR, 0.0, 1.0), 6.0) * glowA;
+
+    vec3 col = nucCol * (glow * 0.85 + bloom2 * 0.8 + body * depth * nucA * 0.75
+                         + rim * nucA * 0.8);
+    float alpha = clamp(glow * 0.85 + bloom2 * 0.8 + body * nucA + rim * nucA, 0.0, 1.0);
+
+    float ringGate = max(starting, listening);
+    float disp = 0.0;
+    if (ringGate > 0.5) {
+        disp = bandAt(ang - uTime * (0.15 + 0.35 * uLevel)) * (3.0 + 20.0 * max(uLevel, 0.2));
+    }
+    float ringR = RING_R + disp * ringGate;
+    float ringA = idle * 0.12 + starting * 0.35 + listening * (0.5 + 0.4 * uLevel)
+                + processing * 0.22 + notice * (0.5 + 0.4 * pulse);
+    float ring = smoothstep(1.6, 0.6, abs(r - ringR));
+    float ringGlow = smoothstep(5.5, 2.5, abs(r - ringR)) * 0.35;
+    vec3 ringCol = mix(voice, AMBER, notice);
+    col += ringCol * (ring + ringGlow) * ringA;
+    alpha = clamp(alpha + (ring + ringGlow) * ringA, 0.0, 1.0);
+
+    float sweepCenter = mod(uTime * (2.0 * PI / 1.1), 2.0 * PI);
+    float halfSpan = 0.5 * (70.0 * PI / 180.0);
+    float echoCenter = sweepCenter - 0.55;
+    float dMain = ang - sweepCenter;
+    dMain = dMain - 2.0 * PI * floor(dMain / (2.0 * PI) + 0.5);
+    float dEcho = ang - echoCenter;
+    dEcho = dEcho - 2.0 * PI * floor(dEcho / (2.0 * PI) + 0.5);
+    float sweepMain = smoothstep(halfSpan + 0.05, halfSpan - 0.05, abs(dMain))
+                    * smoothstep(7.0, 6.0, abs(r - RING_R)) * processing;
+    float sweepEcho = smoothstep(halfSpan + 0.05, halfSpan - 0.05, abs(dEcho))
+                    * smoothstep(5.0, 4.0, abs(r - RING_R)) * processing * 0.45;
+    col += WORKING * (sweepMain * 0.95 + sweepEcho * 0.9);
+    alpha = clamp(alpha + sweepMain * 0.95 + sweepEcho * 0.9, 0.0, 1.0);
+
+    vec4 emb = embers(p, nucR, listening, processing, uLevel, voice);
+    col += emb.rgb;
+    alpha = clamp(alpha + emb.a, 0.0, 1.0);
+
+    fragColor = vec4(col, alpha);
+}`;
+
+  // Bloom pass 1: umbral + gaussiana horizontal (misma matematica que
+  // qml/bloom_h.frag).
+  const BRIGHT_H_FRAG = `#version 300 es
+precision highp float;
+uniform sampler2D uScene;
+uniform vec2 uTexel;
+uniform float uThreshold;
+layout(location = 0) out vec4 fragColor;
+void main() {
+    // El pass corre a 112x112: el uv se normaliza contra SU viewport, no
+    // contra el de la escena (mezclarlos muestreaba un cuadrante).
+    vec2 uv = gl_FragCoord.xy / vec2(112.0);
+    vec4 c = texture(uScene, uv);
+    float lum = dot(c.rgb, vec3(0.344, 0.5, 0.156));
+    float w = smoothstep(uThreshold, uThreshold + 0.35, lum);
+    float weights[5] = float[5](0.2734375, 0.21875, 0.109375, 0.03125, 0.00390625);
+    vec4 acc = c * w * weights[0];
+    for (int i = 1; i < 5; ++i) {
+        vec2 off = vec2(uTexel.x * float(i) * 2.0, 0.0);
+        acc += texture(uScene, uv + off) * w * weights[i];
+        acc += texture(uScene, uv - off) * w * weights[i];
+    }
+    fragColor = acc;
+}`;
+
+  // Bloom pass 2 + composicion: gaussiana vertical, tonemap exponencial y
+  // dithering; el alfa se compone igual que el color (misma matematica que
+  // qml/bloom_v.frag).
+  const COMPOSE_FRAG = `#version 300 es
+precision highp float;
+uniform sampler2D uScene;
+uniform sampler2D uBloom;
+uniform vec2 uTexel;
+uniform float uStrength;
+uniform float uExposure;
+layout(location = 0) out vec4 fragColor;
+float hash12(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+void main() {
+    vec2 uv = gl_FragCoord.xy / vec2(224.0);
+    vec4 c = texture(uScene, uv);
+    float weights[5] = float[5](0.2734375, 0.21875, 0.109375, 0.03125, 0.00390625);
+    vec4 acc = texture(uBloom, uv) * weights[0];
+    for (int i = 1; i < 5; ++i) {
+        vec2 off = vec2(0.0, uTexel.y * float(i) * 2.0);
+        acc += texture(uBloom, uv + off) * weights[i];
+        acc += texture(uBloom, uv - off) * weights[i];
+    }
+    vec4 glow = acc * uStrength;
+    glow.rgb = vec3(1.0) - exp(-glow.rgb * uExposure);
+    vec3 col = c.rgb + glow.rgb;
+    float alpha = clamp(c.a + glow.a, 0.0, 1.0);
+    float dither = (hash12(gl_FragCoord.xy) - 0.5) / 255.0;
+    col = clamp(col + dither, 0.0, alpha);
+    fragColor = vec4(col, alpha);
+}`;
+
+  function compile(type, src) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+      throw new Error('shader: ' + gl.getShaderInfoLog(shader));
+    return shader;
+  }
+
+  function makeProgram(frag) {
+    const program = gl.createProgram();
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT));
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, frag));
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+      throw new Error('link: ' + gl.getProgramInfoLog(program));
+    return program;
+  }
+
+  function makeTarget(w, h) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { fbo: fbo, tex: tex };
+  }
+
+  let sceneProg = null, brightProg = null, composeProg = null;
+  let sceneRT = null, bloomA = null;
+  const US = {}, UB = {}, UC = {};
+  let ready = false;
+
+  if (gl) {
+    sceneProg = makeProgram(SCENE_FRAG);
+    brightProg = makeProgram(BRIGHT_H_FRAG);
+    composeProg = makeProgram(COMPOSE_FRAG);
+    sceneRT = makeTarget(SIZE, SIZE);
+    bloomA = makeTarget(HALF, HALF);
+    ['uLevel', 'uPitch', 'uTime', 'uMode', 'uBand0', 'uBand1', 'uBand2', 'uBand3',
+     'uBand4', 'uBand5', 'uBand6', 'uBand7', 'uBand8'].forEach(n => {
+      US[n] = gl.getUniformLocation(sceneProg, n);
+    });
+    UB.uScene = gl.getUniformLocation(brightProg, 'uScene');
+    UB.uTexel = gl.getUniformLocation(brightProg, 'uTexel');
+    UB.uThreshold = gl.getUniformLocation(brightProg, 'uThreshold');
+    UC.uScene = gl.getUniformLocation(composeProg, 'uScene');
+    UC.uBloom = gl.getUniformLocation(composeProg, 'uBloom');
+    UC.uTexel = gl.getUniformLocation(composeProg, 'uTexel');
+    UC.uStrength = gl.getUniformLocation(composeProg, 'uStrength');
+    UC.uExposure = gl.getUniformLocation(composeProg, 'uExposure');
+    ready = true;
+  }
+
+  const UI_C = UI.getContext('2d');
+
+  function drawCapsule(mode, message) {
+    UI_C.clearRect(0, 0, SIZE, SIZE);
+    if (!window._bridge) {
+      UI_C.fillStyle = '#ff908b';
+      UI_C.font = '12px sans-serif';
+      UI_C.fillText('sin webChannelTransport', 20, 112);
+    }
+    if (!(mode === 'notice' || mode === 'error') || !message)
+      return;
+    UI_C.font = '13px "Segoe UI", sans-serif';
+    const w = Math.max(120, UI_C.measureText(message).width + 36);
+    const h = 26, x = 112 - w / 2, y = 200 - h + 6;
+    UI_C.fillStyle = 'rgba(15, 33, 36, 0.85)';
+    UI_C.strokeStyle = 'rgba(242, 195, 106, 0.35)';
+    UI_C.lineWidth = 1;
+    UI_C.beginPath(); UI_C.roundRect(x, y, w, h, 13); UI_C.fill(); UI_C.stroke();
+    UI_C.fillStyle = '#f2c36a';
+    UI_C.textAlign = 'center';
+    UI_C.textBaseline = 'middle';
+    UI_C.fillText(message, 112, y + h / 2 + 1);
+  }
+
+  function frame(now) {
+    if (!window._first) window._first = now;
+    window._ft.push(now);
+    window._frames += 1;
+    if (window._frames === 1 && window._bridge)
+      window._bridge.event(JSON.stringify({ kind: 'first', t: now }));
+    const dt = lastMs ? (now - lastMs) / 1000 : 0.016;
+    lastMs = now;
+    timeS += dt;
+    smooth.level += (state.level - smooth.level) * (1 - Math.exp(-dt / 0.090));
+    smooth.pitch += (state.pitch - smooth.pitch) * (1 - Math.exp(-dt / 0.140));
+
+    if (ready) {
+      // 1) Escena a FBO (con blending premultiplicado).
+      gl.bindFramebuffer(gl.FRAMEBUFFER, sceneRT.fbo);
+      gl.viewport(0, 0, SIZE, SIZE);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(sceneProg);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.uniform1f(US.uLevel, smooth.level);
+      gl.uniform1f(US.uPitch, smooth.pitch);
+      gl.uniform1f(US.uTime, timeS);
+      gl.uniform1f(US.uMode, MODE_INDEX[state.mode] || 0);
+      for (let i = 0; i < 9; i++)
+        gl.uniform1f(US['uBand' + i], state.bands[i] || 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      // 2) Umbral + blur H a media resolucion.
+      gl.disable(gl.BLEND);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
+      gl.viewport(0, 0, HALF, HALF);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(brightProg);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sceneRT.tex);
+      gl.uniform1i(UB.uScene, 0);
+      gl.uniform2f(UB.uTexel, 1 / SIZE, 1 / SIZE);
+      gl.uniform1f(UB.uThreshold, 0.45);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      // 3) Blur V + composicion final al canvas (el shader de compose hace
+      //    ambas cosas, igual que bloom_v.frag del lado QML).
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, SIZE, SIZE);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(composeProg);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sceneRT.tex);
+      gl.uniform1i(UC.uScene, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, bloomA.tex);
+      gl.uniform1i(UC.uBloom, 1);
+      gl.uniform2f(UC.uTexel, 1 / HALF, 1 / HALF);
+      gl.uniform1f(UC.uStrength, 1.25);
+      gl.uniform1f(UC.uExposure, 1.1);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    drawCapsule(state.mode, state.message);
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
