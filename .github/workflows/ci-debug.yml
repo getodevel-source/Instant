@@ -1,0 +1,89 @@
+# TEMPORAL — borrar cuando el release salga verde.
+#
+# Los logs de Actions no se pueden leer sin token: este workflow corre el paso
+# de build del instalador de Windows con `set -x` y deja el output en un issue.
+name: ci-debug-win
+
+on:
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package + PyInstaller
+        run: |
+          pip install ./dictado
+          pip install pyinstaller==6.22.3
+
+      - name: Generate Windows icon
+        run: python dictado/build_icon.py
+
+      - name: Reproduce the installer build step
+        id: build
+        shell: bash
+        run: |
+          {
+            set -x
+            ICON_PATH="$(python -c 'import os; print(os.path.abspath("dictado/build/instant.ico"))')"
+            echo "ICON=$ICON_PATH"
+            pyinstaller --noconfirm --onedir --windowed --name Instant \
+              --icon "$ICON_PATH" \
+              --hidden-import instant_app.gui \
+              --hidden-import instant_app.branding \
+              --hidden-import pyexpat \
+              --hidden-import PySide6.QtQml \
+              --hidden-import PySide6.QtQuick \
+              --additional-hooks-dir dictado/hooks \
+              --add-data "dictado/src/instant_app/qml/overlay.qml;instant_app/qml" \
+              --add-data "dictado/src/instant_app/qml/overlay_orbital.qml;instant_app/qml" \
+              --collect-all sherpa_onnx \
+              --collect-all sounddevice \
+              --collect-all pystray \
+              --collect-all PIL \
+              dictado/src/instant_app/__main__.py
+            echo "pyinstaller rc=$?"
+            VERSION="$(python -c 'import sys; sys.path.insert(0, "dictado/src"); from instant_app import __version__; print(__version__)')"
+            SOURCE="$(python -c 'import os; print(os.path.abspath("dist/Instant"))')"
+            echo "VERSION=$VERSION SOURCE=$SOURCE"
+            for candidate in "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+                             "/c/Program Files/Inno Setup 6/ISCC.exe" \
+                             "$LOCALAPPDATA/Programs/Inno Setup 6/ISCC.exe"; do
+              echo "candidato: $candidate -> $([ -f "$candidate" ] && echo SI || echo no)"
+            done
+            ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+            if [ ! -f "$ISCC" ]; then ISCC="/c/Program Files/Inno Setup 6/ISCC.exe"; fi
+            if [ ! -f "$ISCC" ]; then ISCC="iscc"; fi
+            echo "usando ISCC=$ISCC"
+            "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$SOURCE" "/DIconFile=$ICON_PATH" installer/instant.iss
+            echo "iscc rc=$?"
+            ls -la dist/ | head -20
+          } > "$RUNNER_TEMP/build.log" 2>&1 || true
+          tail -c 55000 "$RUNNER_TEMP/build.log"
+
+      - name: File an issue with the output
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Paso del instalador de Windows (commit ${{ github.sha }})."
+            echo
+            echo '```'
+            tail -c 55000 "$RUNNER_TEMP/build.log"
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          gh issue create \
+            --title "ci-debug installer (temporal)" \
+            --body-file "$RUNNER_TEMP/body.md"
