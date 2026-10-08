@@ -1,7 +1,6 @@
 ﻿"""Regresion minima: solo comportamiento consumidor-visible."""
 import os
 import sys
-import tempfile
 from unittest.mock import patch
 
 import numpy as np
@@ -398,20 +397,9 @@ _check("setup removes a vocabulary term from only the selected profile",
             in _saved_setup["context_profiles"]["Trabajo"]]
        == [("Parakeet", ["para kit"])])
 
-# modelos: descarga conjunta Parakeet + VAD en un solo paso con progreso claro.
-from instant_app import models
-with tempfile.TemporaryDirectory() as d:
-    import os as _os
-    mdir = _os.path.join(d, "parakeet-v3-int8")
-    vdir = _os.path.join(d, "silero-vad")
-    _os.makedirs(mdir)
-    _os.makedirs(vdir)
-    for f in models.PARAKEET_FILES:
-        open(_os.path.join(mdir, f), "wb").close()
-    open(_os.path.join(vdir, "silero_vad.onnx"), "wb").close()
-    seen = []
-    models.download_models(d, progress=lambda step, done, total: seen.append(step))
-    _check("joint parakeet+vad", "parakeet" in seen and "vad" in seen)
+# La descarga de modelos (progreso con bytes, reanudación, espejo, disco y
+# verificación) se cubre en test_models_download.py contra un servidor local:
+# esta regresión ya no baja los 670 MB reales de Hugging Face.
 
 # El glosario activo: solo variantes exactas, sin sustituciones difusas.
 _work_context = {
@@ -430,103 +418,5 @@ with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
                "instante",
                {**_work_context, "llm_url": "http://local"})
            == "Instant")
-
-
-class _FakeResponse:
-    headers = {"Content-Length": "3"}
-
-    def __init__(self, body=b"vad"):
-        self.body = body
-        self.done = False
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-    def read(self, size):
-        if self.done:
-            return b""
-        self.done = True
-        return self.body
-
-
-# La descarga real baja 670 MB, asi que la prueba usa checksums falsos con
-# contenido chico: recorre el mismo camino (bajar, verificar sha256, publicar
-# con os.replace) sin la red ni el disco.
-import hashlib as _hashlib
-
-_FAKE_PARAKEET = {
-    name: (len(f"contenido de {name}".encode()),
-           _hashlib.sha256(f"contenido de {name}".encode()).hexdigest())
-    for name in models.PARAKEET_FILES}
-_FAKE_VAD_BODY = b"vad de prueba"
-_FAKE_VAD = (len(_FAKE_VAD_BODY), _hashlib.sha256(_FAKE_VAD_BODY).hexdigest())
-
-
-def _snapshot_download(repo_id, *, local_dir, allow_patterns):
-    os.makedirs(local_dir, exist_ok=True)
-    for filename in allow_patterns:
-        with open(os.path.join(local_dir, filename), "wb") as model_file:
-            model_file.write(f"contenido de {filename}".encode())
-
-
-fake_hub = type("FakeHub", (), {"snapshot_download": staticmethod(_snapshot_download)})
-with tempfile.TemporaryDirectory() as d:
-    with patch.dict(sys.modules, {"huggingface_hub": fake_hub}), \
-            patch.object(models, "PARAKEET_SHA256", _FAKE_PARAKEET), \
-            patch.object(models, "VAD_SHA256", _FAKE_VAD), \
-            patch("urllib.request.urlopen", return_value=_FakeResponse(_FAKE_VAD_BODY)):
-        models.download_models(d)
-    _check("descarga usa la API actual de Hugging Face", all(models.check(d).values()))
-    _check("los archivos descargados verifican su sha256",
-           all(value is True for value in models.check_integrity(d, _FAKE_PARAKEET, _FAKE_VAD).values()))
-
-# Un archivo presente pero corrupto se vuelve a descargar en lugar de darse por
-# bueno: es el caso que antes dejaba la aplicaciÃ³n rota sin explicaciÃ³n.
-with tempfile.TemporaryDirectory() as d:
-    mdir = os.path.join(d, "parakeet-v3-int8")
-    os.makedirs(mdir)
-    for name in models.PARAKEET_FILES:
-        with open(os.path.join(mdir, name), "wb") as handle:
-            handle.write(b"truncado")
-    calls = []
-
-    def _counting_download(repo_id, *, local_dir, allow_patterns):
-        calls.append(repo_id)
-        _snapshot_download(repo_id, local_dir=local_dir, allow_patterns=allow_patterns)
-
-    counting_hub = type("FakeHub", (), {
-        "snapshot_download": staticmethod(_counting_download)})
-    with patch.dict(sys.modules, {"huggingface_hub": counting_hub}), \
-            patch.object(models, "PARAKEET_SHA256", _FAKE_PARAKEET), \
-            patch.object(models, "VAD_SHA256", _FAKE_VAD), \
-            patch("urllib.request.urlopen", return_value=_FakeResponse(_FAKE_VAD_BODY)):
-        models.download_models(d)
-    _check("un modelo corrupto se vuelve a descargar", len(calls) == 1)
-    _check("tras re-descargar, todo verifica",
-           all(value is True for value in models.check_integrity(d, _FAKE_PARAKEET, _FAKE_VAD).values()))
-
-# Un VAD que llega mal no se publica y el error lo explica.
-with tempfile.TemporaryDirectory() as d:
-    vdir = os.path.join(d, "silero-vad")
-    os.makedirs(vdir)
-    _check("un VAD corrupto se detecta",
-           models.verify_file(
-               os.path.join(vdir, "silero_vad.onnx"), _FAKE_VAD)[0] is False)
-    try:
-        with patch.object(models, "VAD_SHA256", _FAKE_VAD), \
-                patch.object(models, "DOWNLOAD_ATTEMPTS", 1), \
-                patch("urllib.request.urlopen",
-                      return_value=_FakeResponse(b"contenido equivocado")):
-            models._download_vad(os.path.join(vdir, "silero_vad.onnx"),
-                                 lambda *args: None)
-        _check("un VAD que no verifica corta la descarga", False)
-    except models.ModelIntegrityError:
-        _check("un VAD que no verifica corta la descarga", True)
-    _check("y no deja el archivo a medias",
-           not os.path.isfile(os.path.join(vdir, "silero_vad.onnx"))
-           and not os.path.isfile(os.path.join(vdir, "silero_vad.onnx.part")))
 
 print("OK: regresion minima verde.")

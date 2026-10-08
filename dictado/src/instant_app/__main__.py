@@ -43,6 +43,8 @@ def main(argv=None):
     ap.add_argument("--version", action="version", version=f"instant {__version__}")
     sub = ap.add_subparsers(dest="cmd")
     p_setup = sub.add_parser("setup", help="configuración de Instant")
+    p_setup.add_argument("--tui", action="store_true",
+                         help="asistente de terminal, sin ventana")
     p_setup.add_argument("-y", "--yes", action="store_true",
                          help="no interactivo: usa defaults/config actual")
     p_setup.add_argument("--mic", type=int, default=None)
@@ -66,36 +68,55 @@ def main(argv=None):
     p_setup.add_argument("--fix-deps", action="store_true",
                          help="autoinstala lo permitido por el SO y re-chequea")
     sub.add_parser("run", help="daemon hold-to-talk")
+    sub.add_parser("stop", help="frena el daemon en ejecución (deja todo limpio)")
     sub.add_parser("check", help="diagnóstico de teclado, micrófono y modelos")
     sub.add_parser("diagnostics", help="abre el diagnóstico visual")
     p_update = sub.add_parser("update", help="busca una versión nueva en GitHub")
     p_update.add_argument("--download", metavar="DIR", default=None,
                           help="además descarga y verifica el asset en DIR")
+    p_update.add_argument("--apply", action="store_true",
+                          help="tras descargar, aplica el binario (Linux/macOS)")
 
     args, rest = ap.parse_known_args(argv)
     _log_setup()
     if args.cmd is None:
         if rest:
             ap.error("argumentos no reconocidos: " + " ".join(rest))
-        if sys.platform == "win32":
-            return _run_gui("home", start_daemon_on_open=True)
-        ap.print_help()
-        return 0
+        return _run_gui("home", start_daemon_on_open=True)
 
     if args.cmd == "diagnostics":
-        if sys.platform == "win32":
-            return _run_gui("diagnostics")
-        args.cmd = "check"
+        rc = _run_gui("diagnostics")
+        if rc != 2:
+            return rc
+        # Sin ventana (SSH, servidor) el diagnóstico sale en consola.
+        from instant_app import config as config_module
+        from instant_app.daemon import cmd_check
+        return cmd_check(config_module.load())
+
+    if args.cmd == "stop":
+        # Lo usa también el desinstalador de Windows ([UninstallRun]): deja la
+        # carpeta libre (daemon + panel) antes de borrar archivos.
+        from instant_app.gui import stop_daemon
+        from instant_app.gui_lifecycle import terminate_existing_gui
+        stopped = stop_daemon()
+        panel = terminate_existing_gui()
+        if stopped or panel:
+            print("Instant detenido.")
+        else:
+            print("No había nada corriendo.")
+        return 0
 
     if args.cmd == "setup":
+        # Sin flags abre la ventana (los tres sistemas); cualquier flag o
+        # `--tui` mantiene el asistente de terminal, para scripts y consolas.
         cli_options = (
-            args.yes, args.mic is not None, args.key is not None,
+            args.tui, args.yes, args.mic is not None, args.key is not None,
             args.threads is not None, args.sound is not None, args.no_sound,
             args.llm_url is not None, args.context_profile is not None,
             bool(args.context_term), bool(args.context_remove_term),
             args.context_delete_profile, args.no_meter, args.no_probe,
             args.check_deps, args.fix_deps, bool(rest))
-        if sys.platform == "win32" and not any(cli_options):
+        if not any(cli_options):
             override = False if args.no_autostart else True if args.autostart else None
             return _run_gui("setup", autostart_override=override)
 
@@ -130,7 +151,8 @@ def main(argv=None):
 
     if args.cmd == "update":
         from instant_app import update as update_module
-        return update_module.cmd_update(getattr(args, "download", None))
+        return update_module.cmd_update(getattr(args, "download", None),
+                                        apply=bool(getattr(args, "apply", False)))
 
     from instant_app.daemon_lifecycle import (
         acquire_daemon_mutex, release_daemon_mutex)

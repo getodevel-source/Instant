@@ -1,8 +1,11 @@
 """Actualizaciones desde GitHub Releases, solo stdlib (sin deps nuevas).
 
-Ciclo: check (API) -> download (asset + sidecar .sha256) -> verify. Este
-módulo nunca pisa un ejecutable en uso: el swap con todo frenado lo hace
-`instant-update.bat`, que respalda el exe anterior antes de cambiarlo.
+Ciclo: check (API) -> download (asset + sidecar .sha256) -> verify -> aplicar.
+El asset depende de cómo esté instalada la app: una instalación con
+desinstalador (Windows) se actualiza con `Instant-Setup.exe`; el exe portable
+se cambia con `instant-update.bat` (frena todo, respalda y reemplaza); en
+Linux/macOS el binario se reemplaza en caliente (POSIX permite unlink+rename
+con el proceso vivo, que sigue usando el inodo viejo).
 """
 import hashlib
 import json
@@ -16,8 +19,11 @@ API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 TIMEOUT = 20
 CHUNK = 65536
 
-# Plataforma local -> asset del release.
+# Plataforma local -> asset portable del release.
 ASSETS = {"win32": "Instant.exe", "linux": "instant-linux", "darwin": "instant-macos"}
+# Asset de la instalación con desinstalador (Windows, Inno Setup).
+INSTALLER_ASSET = "Instant-Setup.exe"
+UNINSTALLER = "unins000.exe"
 
 
 def current_version():
@@ -60,12 +66,56 @@ def latest_release():
             "assets": assets}
 
 
-def platform_asset():
-    """Nombre del asset que corresponde a este SO. KeyError si no hay."""
+def install_mode():
+    """Cómo está instalada la app: 'installed' | 'portable' | 'source'."""
+    if not getattr(sys, "frozen", False):
+        return "source"
+    if sys.platform != "win32":
+        return "portable"
+    directory = os.path.dirname(sys.executable)
+    if os.path.isfile(os.path.join(directory, UNINSTALLER)):
+        return "installed"
+    return "portable"
+
+
+def platform_asset(mode=None):
+    """Asset del release que corresponde a este SO y modo de instalación."""
+    mode = install_mode() if mode is None else mode
+    if sys.platform == "win32":
+        return INSTALLER_ASSET if mode == "installed" else ASSETS["win32"]
     try:
         return ASSETS[sys.platform]
     except KeyError:
         raise LookupError(f"sin asset para sys.platform={sys.platform!r}")
+
+
+def apply_hint():
+    """Cómo se aplica la descarga en este sistema (texto de CLI)."""
+    if install_mode() == "installed":
+        return ("Corré el instalador descargado (Instant-Setup.exe): actualiza "
+                "en el lugar, sin desinstalar ni pedir admin.")
+    if sys.platform == "win32":
+        return ("Aplicá con: instant-update.bat <archivo> <sha256> "
+                "(frena todo, respalda el exe anterior y lo cambia).")
+    return ("Aplicá con: instant update --download DIR --apply "
+            "(reemplaza el binario en caliente; el próximo arranque ya es el nuevo).")
+
+
+def apply_binary_update(downloaded, target=None):
+    """Reemplaza el binario en uso (Linux/macOS). Devuelve la ruta destino.
+
+    POSIX permite renombrar sobre un ejecutable en ejecución: el proceso vivo
+    sigue con el inodo viejo y el próximo arranque ya usa el nuevo. En Windows
+    eso no existe: ahí van instalador (modo instalado) o el .bat (portable).
+    """
+    if sys.platform == "win32":
+        raise RuntimeError(
+            "en Windows no se puede reemplazar el binario en uso; "
+            "se actualiza con el instalador o instant-update.bat")
+    target = target or sys.executable
+    os.chmod(downloaded, 0o755)
+    os.replace(downloaded, target)
+    return target
 
 
 def check():
@@ -163,8 +213,8 @@ def clean_notes(notes, max_lines=8, max_chars=600):
     return text[:max_chars]
 
 
-def cmd_update(download_dir=None):
-    """CLI `instant update [--download DIR]`: informa y opcionalmente baja."""
+def cmd_update(download_dir=None, apply=False):
+    """CLI `instant update [--download DIR] [--apply]`: informa, baja y aplica."""
     try:
         info = check()
     except Exception as exc:
@@ -181,7 +231,7 @@ def cmd_update(download_dir=None):
     if not download_dir:
         print("Para bajarla: instant update --download DIR  "
               "(verifica SHA256 solo).")
-        print("Para aplicarla con todo frenado: instant-update.bat <archivo>.")
+        print(apply_hint())
         return 0
     try:
         expected = fetch_expected_sha256(info["asset_url"])
@@ -202,7 +252,14 @@ def cmd_update(download_dir=None):
         return 2
     print(f"\nDescargado y verificado: {dest}")
     print(f"SHA256: {expected}")
-    print("Aplicá con: instant-update.bat "
-          f"\"{dest}\" {expected}  (frena todo, re-verifica, respalda "
-          "el exe anterior y lo cambia).")
+    if not apply:
+        print(apply_hint())
+        return 0
+    try:
+        target = apply_binary_update(dest)
+    except Exception as exc:
+        print(f"No se pudo aplicar: {exc}")
+        return 2
+    print(f"Aplicado en {target}.")
+    print("Reiniciá el dictado (instant-stop.sh y de nuevo) para usar la versión nueva.")
     return 0

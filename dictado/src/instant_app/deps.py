@@ -31,7 +31,6 @@ _PIP = {
     "keyboard": "keyboard",
     "pynput": "pynput",
     "pyperclip": "pyperclip",
-    "huggingface_hub": "huggingface_hub",
     "pystray": "pystray",
     "PIL": "Pillow",
     "PySide6": "PySide6",
@@ -127,10 +126,10 @@ def check():
         auto=True)  # via ensurepip (stdlib, sin red)
 
     pkgs = ["numpy", "sounddevice", "sherpa_onnx", "pyperclip",
-            "huggingface_hub"]
+            "PySide6", "PIL"]
     pkgs.append("keyboard" if plat == "win32" else "pynput")
     if plat == "win32":
-        pkgs.extend(("pystray", "PIL", "PySide6"))
+        pkgs.append("pystray")
     for mod in pkgs:
         ok = _importable(mod)
         if ok:
@@ -141,6 +140,8 @@ def check():
                 extra = " Si la tecla no anda en apps elevadas, corre como admin."
             if mod == "pynput":
                 extra = " En Linux necesita X11."
+            if mod == "PySide6" and plat.startswith("linux"):
+                extra = " Si el panel no abre, falta libxcb-cursor0 (apt)."
             out[mod] = _entry(False, f"pip install {_PIP[mod]}.{extra}",
                               auto=True)
 

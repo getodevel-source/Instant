@@ -19,6 +19,10 @@ case "$OS" in
     echo "[Instant] Instalando dependencias del sistema..."
     sudo apt-get update
     sudo apt-get install -y python3-venv libportaudio2 xclip xdotool
+    # Libs que el wheel de PySide6 no trae y el panel Qt necesita para abrir
+    # (xcb). Si alguna no existe en esta distro, no aborta la instalación: el
+    # setup lo reporta y sugiere el paquete exacto.
+    sudo apt-get install -y libxcb-cursor0 libegl1 libgl1 libxkbcommon0 || true
     ;;
   Darwin)
     echo "[Instant] Instalando PortAudio..."
@@ -49,6 +53,10 @@ if [ -n "${INSTANT_UNATTENDED:-}" ]; then
 fi
 if [ "${INSTANT_AUTOSTART:-0}" = "1" ]; then
   SETUP_ARGS+=(--autostart)
+fi
+# Sin entorno gráfico (SSH, servidor) el panel no puede abrir: asistente de terminal.
+if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+  SETUP_ARGS+=(--tui)
 fi
 
 echo "[Instant] Configurando modelos, micrófono y tecla..."

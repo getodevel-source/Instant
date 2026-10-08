@@ -67,6 +67,93 @@ class VersionTests(unittest.TestCase):
         self.assertLessEqual(len(cleaned.splitlines()), 8)
 
 
+class InstallModeTests(unittest.TestCase):
+    def test_source_mode_when_not_frozen(self):
+        self.assertEqual(update_module.install_mode(), "source")
+        self.assertEqual(update_module.platform_asset("source"), "Instant.exe")
+
+    def test_installed_mode_requires_uninstaller_next_to_exe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            exe = os.path.join(directory, "Instant.exe")
+            open(exe, "wb").close()
+            with patch.object(update_module.sys, "frozen", True, create=True), \
+                    patch.object(update_module.sys, "executable", exe), \
+                    patch.object(update_module.sys, "platform", "win32"):
+                self.assertEqual(update_module.install_mode(), "portable")
+                self.assertEqual(update_module.platform_asset(),
+                                 "Instant.exe")
+                open(os.path.join(directory, update_module.UNINSTALLER),
+                     "wb").close()
+                self.assertEqual(update_module.install_mode(), "installed")
+                self.assertEqual(update_module.platform_asset(),
+                                 "Instant-Setup.exe")
+
+    def test_check_uses_the_installer_asset_when_installed(self):
+        payload = {"tag_name": "v9.9.9", "body": "",
+                   "assets": [{"name": "Instant-Setup.exe",
+                               "browser_download_url": "https://x/Instant-Setup.exe"}]}
+        with tempfile.TemporaryDirectory() as directory:
+            exe = os.path.join(directory, "Instant.exe")
+            open(exe, "wb").close()
+            open(os.path.join(directory, update_module.UNINSTALLER),
+                 "wb").close()
+            with patch.object(update_module.sys, "frozen", True, create=True), \
+                    patch.object(update_module.sys, "executable", exe), \
+                    patch.object(update_module.sys, "platform", "win32"), \
+                    patch.object(update_module, "fetch_json", return_value=payload), \
+                    patch.object(update_module, "current_version",
+                                 return_value="0.1.0"):
+                info = update_module.check()
+        self.assertEqual(info["asset_url"], "https://x/Instant-Setup.exe")
+
+    def test_frozen_unix_is_portable_with_its_own_asset(self):
+        with patch.object(update_module.sys, "frozen", True, create=True), \
+                patch.object(update_module.sys, "executable",
+                             "/opt/instant/instant"), \
+                patch.object(update_module.sys, "platform", "linux"):
+            self.assertEqual(update_module.install_mode(), "portable")
+            self.assertEqual(update_module.platform_asset(), "instant-linux")
+
+
+class ApplyUpdateTests(unittest.TestCase):
+    def test_apply_binary_update_replaces_the_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded = os.path.join(directory, "instant-linux.download")
+            target = os.path.join(directory, "instant")
+            with open(downloaded, "wb") as handle:
+                handle.write(b"nuevo")
+            with open(target, "wb") as handle:
+                handle.write(b"viejo")
+            with patch.object(update_module.sys, "platform", "linux"):
+                applied = update_module.apply_binary_update(downloaded, target)
+            self.assertEqual(applied, target)
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"nuevo")
+            self.assertFalse(os.path.isfile(downloaded))
+
+    def test_apply_binary_update_refuses_on_windows(self):
+        with patch.object(update_module.sys, "platform", "win32"):
+            with self.assertRaises(RuntimeError):
+                update_module.apply_binary_update("descarga", "destino")
+
+    @unittest.skipIf(os.name == "nt",
+                     "la semántica de reemplazo en caliente es de POSIX")
+    def test_replace_while_running_keeps_the_old_binary_alive(self):
+        """El reemplazo en caliente es seguro: el proceso vivo sigue con el inodo viejo."""
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded = os.path.join(directory, "nuevo")
+            target = os.path.join(directory, "binario")
+            with open(downloaded, "wb") as handle:
+                handle.write(b"version nueva")
+            with open(target, "wb") as handle:
+                handle.write(b"version vieja")
+            with open(target, "rb") as running:
+                update_module.apply_binary_update(downloaded, target)
+                self.assertEqual(running.read(), b"version vieja")
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"version nueva")
+
+
 class DownloadVerifyTests(unittest.TestCase):
     def _fixture(self, body):
         directory = tempfile.mkdtemp(prefix="instant-update-test-")

@@ -140,6 +140,75 @@ else:
                     import gc as _gc
                     _gc.collect()
 
+        def test_installed_mode_runs_the_setup_silently_and_closes(self):
+            Window = gui._main_window_class()
+            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
+                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
+                    patch("instant_app.gui.daemon_is_running", return_value=False), \
+                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
+                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
+                window = Window(autostart_override=False)
+                self._wait_idle(window)
+            try:
+                with patch("instant_app.gui.stop_daemon") as stop, \
+                        patch("instant_app.gui.daemon_is_running", return_value=False), \
+                        patch("instant_app.gui.subprocess.Popen") as popen:
+                    window._install_via_setup("C:/tmp/Instant-Setup.exe")
+                stop.assert_called_once_with()
+                command = popen.call_args.args[0]
+                self.assertEqual(command[0], "C:/tmp/Instant-Setup.exe")
+                self.assertIn("/SILENT", command)
+                self.assertIn("/SUPPRESSMSGBOXES", command)
+                self.assertTrue(window._closed)
+            finally:
+                self._close_and_wait(window)
+
+        def test_install_ready_routes_by_install_mode(self):
+            Window = gui._main_window_class()
+            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
+                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
+                    patch("instant_app.gui.daemon_is_running", return_value=False), \
+                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
+                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
+                window = Window(autostart_override=False)
+                self._wait_idle(window)
+            try:
+                with patch("instant_app.update.install_mode", return_value="installed"), \
+                        patch.object(window, "_install_via_setup") as via_setup:
+                    window._install_ready("C:/tmp/Instant-Setup.exe", "hash")
+                via_setup.assert_called_once_with("C:/tmp/Instant-Setup.exe")
+                with patch("instant_app.update.install_mode", return_value="portable"), \
+                        patch("instant_app.gui.sys.platform", "win32"), \
+                        patch("instant_app.gui._workdir", return_value="C:/sinScripts"), \
+                        patch.object(window, "toast") as toast:
+                    window._install_ready("C:/tmp/Instant.exe", "hash")
+                toast.assert_called_once()
+                self.assertIn("instant-update.bat", toast.call_args.args[1])
+            finally:
+                self._close_and_wait(window)
+
+        def test_unix_frozen_update_applies_in_place_and_restarts_daemon(self):
+            Window = gui._main_window_class()
+            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
+                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
+                    patch("instant_app.gui.daemon_is_running", return_value=False), \
+                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
+                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
+                window = Window(autostart_override=False)
+                self._wait_idle(window)
+            try:
+                with patch("instant_app.update.install_mode", return_value="portable"), \
+                        patch("instant_app.gui.sys.platform", "linux"), \
+                        patch("instant_app.gui.sys.frozen", True, create=True), \
+                        patch("instant_app.update.apply_binary_update",
+                              return_value="/usr/local/bin/instant") as apply, \
+                        patch.object(window, "stop_daemon") as stop:
+                    window._install_ready("/tmp/instant-linux", "hash")
+                apply.assert_called_once_with("/tmp/instant-linux")
+                stop.assert_called_once_with(restart=True)
+            finally:
+                self._close_and_wait(window)
+
         def test_setup_route_scrolls_to_audio_section(self):
             Window = gui._main_window_class()
             with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \

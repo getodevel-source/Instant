@@ -62,7 +62,7 @@ jobs:
         run: |
           test "${{ github.ref_name }}" = "v$(python -c 'import sys; sys.path.insert(0, "dictado/src"); from instant_app import __version__; print(__version__)')"
 
-      - name: Build Windows GUI executable
+      - name: Build Windows portable (onefile)
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -84,13 +84,56 @@ jobs:
             --collect-all PIL \
             dictado/src/instant_app/__main__.py
 
-      - name: Build Unix CLI executable
+      - name: Build Windows installer (onedir + Inno Setup)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          ICON_PATH="$(python -c 'import os; print(os.path.abspath("dictado/build/instant.ico"))')"
+          pyinstaller --noconfirm --onedir --windowed --name Instant \
+            --icon "$ICON_PATH" \
+            --hidden-import instant_app.gui \
+            --hidden-import instant_app.branding \
+            --hidden-import pyexpat \
+            --hidden-import PySide6.QtQml \
+            --hidden-import PySide6.QtQuick \
+            --additional-hooks-dir dictado/hooks \
+            --add-data "dictado/src/instant_app/qml/overlay.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/overlay_orbital.qml;instant_app/qml" \
+            --collect-all sherpa_onnx \
+            --collect-all sounddevice \
+            --collect-all pystray \
+            --collect-all PIL \
+            dictado/src/instant_app/__main__.py
+          VERSION="$(python -c 'import sys; sys.path.insert(0, "dictado/src"); from instant_app import __version__; print(__version__)')"
+          SOURCE="$(python -c 'import os; print(os.path.abspath("dist/Instant"))')"
+          # Inno Setup viene preinstalado en las imágenes de los runners.
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          if [ ! -f "$ISCC" ]; then ISCC="/c/Program Files/Inno Setup 6/ISCC.exe"; fi
+          if [ ! -f "$ISCC" ]; then ISCC="iscc"; fi
+          "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$SOURCE" \
+            "/DIconFile=$ICON_PATH" installer/instant.iss
+          ls -la dist/Instant-Setup.exe
+
+      - name: Build Unix executable (daemon + panel)
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          # El panel y el overlay Qt Quick son la UI de los tres sistemas: el
+          # binario de Linux y macOS lleva PySide6 (widgets, red del canal de
+          # instancia única y módulos QML), los .qml y Pillow para los iconos,
+          # además del daemon/CLI de siempre.
           pyinstaller --onefile --name "${{ matrix.binary_name }}" \
             --hidden-import sherpa_onnx \
             --hidden-import sounddevice \
+            --hidden-import instant_app.gui \
+            --hidden-import PySide6.QtNetwork \
+            --hidden-import PySide6.QtQml \
+            --hidden-import PySide6.QtQuick \
+            --hidden-import PIL.Image \
+            --hidden-import PIL.ImageDraw \
+            --additional-hooks-dir dictado/hooks \
+            --add-data "dictado/src/instant_app/qml/overlay.qml:instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/overlay_orbital.qml:instant_app/qml" \
             --collect-all sherpa_onnx \
             --collect-all sounddevice \
             dictado/src/instant_app/__main__.py
@@ -101,6 +144,11 @@ jobs:
         run: |
           python -c "import hashlib; data = open('dist/${{ matrix.output }}','rb').read(); open('dist/${{ matrix.output }}.sha256','w').write(f'{hashlib.sha256(data).hexdigest()}  ${{ matrix.output }}\n')"
 
+      - name: SHA256 sidecar for the installer
+        if: runner.os == 'Windows'
+        run: |
+          python -c "import hashlib; name = 'Instant-Setup.exe'; data = open('dist/' + name, 'rb').read(); open('dist/' + name + '.sha256', 'w').write(f'{hashlib.sha256(data).hexdigest()}  {name}\n')"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -108,6 +156,15 @@ jobs:
           path: |
             dist/${{ matrix.output }}
             dist/${{ matrix.output }}.sha256
+
+      - name: Upload installer artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-windows-installer
+          path: |
+            dist/Instant-Setup.exe
+            dist/Instant-Setup.exe.sha256
 
   publish:
     needs: build

@@ -1,6 +1,8 @@
-"""Windows control center for Instant, implemented with Qt Widgets."""
+"""Panel de control de Instant: la misma ventana Qt en los tres sistemas."""
 import ctypes
+import json
 import threading
+import time
 
 import logging
 import os
@@ -118,6 +120,85 @@ def stop_daemon():
         return True
     except OSError:
         return False
+
+
+_GUI_SERVER_BASE = "instant-gui"
+
+
+def _gui_server_name():
+    """Canal de instancia única del panel; en Unix lleva el uid del usuario."""
+    if os.name == "nt":
+        return _GUI_SERVER_BASE
+    return f"{_GUI_SERVER_BASE}-{os.getuid()}"
+
+
+def _forward_to_existing_gui(page, start_daemon_on_open):
+    """Pasa el pedido a la ventana ya abierta. True si había otra instancia.
+
+    QLocalSocket/QLocalServer son el mecanismo portable de Qt: en Windows es
+    la ruta de la bandeja (mutex + FindWindow), en Linux/macOS este canal.
+    El panel contesta `ok`; sin esa confirmación este proceso, que sale
+    enseguida, podría morir con el pedido todavía en el buffer (en Windows
+    cerrar el socket con datos sin leer los descarta).
+    """
+    from PySide6.QtCore import QEventLoop, QTimer
+    from PySide6.QtNetwork import QLocalSocket
+
+    socket = QLocalSocket()
+    socket.connectToServer(_gui_server_name())
+    if not socket.waitForConnected(500):
+        return False
+    payload = json.dumps(
+        {"page": page, "daemon": bool(start_daemon_on_open)}).encode("utf-8")
+    socket.write(payload)
+    socket.flush()
+    loop = QEventLoop()
+    socket.readyRead.connect(loop.quit)
+    socket.disconnected.connect(loop.quit)
+    if not socket.bytesAvailable():
+        QTimer.singleShot(1000, loop.quit)
+        loop.exec()
+    socket.disconnectFromServer()
+    return True
+
+
+def _install_gui_server(window):
+    """La ventana atiende los pedidos de instancias nuevas (Linux/macOS)."""
+    from PySide6.QtNetwork import QLocalServer
+
+    name = _gui_server_name()
+    # Un cierre sucio deja el socket huérfano: se limpia antes de escuchar.
+    QLocalServer.removeServer(name)
+    server = QLocalServer(window)
+    if not server.listen(name):
+        log.warning("sin canal de instancia única: %s", server.errorString())
+        return None
+
+    def on_connection():
+        socket = server.nextPendingConnection()
+        if socket is None:
+            return
+
+        def on_ready():
+            raw = bytes(socket.readAll().data())
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                payload = {}
+            if payload:
+                window.apply_gui_action(
+                    payload.get("page"), bool(payload.get("daemon")))
+            # Acuse: el lanzador no sale hasta que el pedido llegó acá.
+            socket.write(b"ok")
+            socket.flush()
+            socket.disconnectFromServer()
+
+        socket.readyRead.connect(on_ready)
+        if socket.bytesAvailable():
+            on_ready()
+
+    server.newConnection.connect(on_connection)
+    return server
 
 
 # The Qt dependency is imported below the Windows GUI entrypoint, not at module
@@ -1298,13 +1379,21 @@ def _main_window_class():
 
         def download_models(self):
             if self.model_ready: return
-            self.model_button.setEnabled(False); self.model_button.setText("Descargando…"); self.model_status.setText("Descargando la voz…"); self.model_progress.show()
+            self.model_button.setEnabled(False); self.model_button.setText("Descargando…"); self.model_status.setText("Descargando la voz…")
+            self.model_progress.setRange(0, 0); self.model_progress.show()
             def download(emit):
                 return models.download_models(self.data_dir, progress=lambda *args: emit(args))
             def progress(event):
                 step, done, total = event
-                if step == "parakeet": self.model_status.setText("Voz descargada; verificando…")
-                elif total: self.model_status.setText(f"Descargando la voz: {done / total:.0%}")
+                if not total:
+                    return
+                label = "la voz" if step == "parakeet" else "el detector de voz"
+                self.model_status.setText(
+                    f"Descargando {label}: {done / total:.0%} "
+                    f"({done / 1e6:.0f}/{total / 1e6:.0f} MB)")
+                if self.model_progress.maximum() != 1000:
+                    self.model_progress.setRange(0, 1000)
+                self.model_progress.setValue(int(1000 * done / total))
             def done(_):
                 self.model_progress.hide(); self._update_model_status()
             def failed(error):
@@ -1437,13 +1526,21 @@ def _main_window_class():
             target, expected = payload
             self.toast("Descarga verificada",
                        f"{target}\n\nSe frena el dictado un momento (si estás "
-                       "por dictar, mejor después), se respalda el exe y se "
-                       "vuelve a arrancar actualizado.",
+                       "por dictar, mejor después) y se aplica la actualización.",
                        actions=(("Instalar ahora",
                                  lambda: self._install_ready(target, expected)),
                                 ("Después", lambda: None)))
 
         def _install_ready(self, target, expected):
+            from instant_app import update as update_module
+
+            mode = update_module.install_mode()
+            if mode == "installed":
+                self._install_via_setup(target)
+                return
+            if sys.platform != "win32" and getattr(sys, "frozen", False):
+                self._install_in_place(target)
+                return
             root = _workdir()
             script = os.path.join(root, "instant-update.bat")
             if not os.path.isfile(script):
@@ -1452,7 +1549,7 @@ def _main_window_class():
                     "No encuentro instant-update.bat junto a la app "
                     "(instalación portable sin scripts).\n\n"
                     f"Instalá a mano: cerrá Instant por completo y copiá\n{target}\n"
-                    f"sobre tu Instant.exe (SHA256 {expected[:16]}…).",
+                    f"sobre tu binario de Instant (SHA256 {expected[:16]}…).",
                     level="warn")
                 return
             try:
@@ -1464,6 +1561,44 @@ def _main_window_class():
                            level="error")
                 return
             self.close()
+
+        def _install_via_setup(self, installer_path):
+            """Modo instalado (Windows): el Setup nuevo actualiza y reabre solo."""
+            # El daemon no tiene ventana: el Restart Manager del instalador no
+            # puede cerrarlo, así que se frena acá y se espera a que suelte
+            # los archivos antes de copiar encima.
+            stop_daemon()
+            deadline = time.monotonic() + 3.0
+            while daemon_is_running() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            try:
+                subprocess.Popen(
+                    [installer_path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                    close_fds=True)
+            except Exception as exc:
+                self.toast("Actualizaciones",
+                           f"No pude lanzar el instalador:\n{exc}",
+                           level="error")
+                return
+            log.info("instalador %s lanzado en silencio", installer_path)
+            self.close()
+
+        def _install_in_place(self, downloaded):
+            """Linux/macOS: reemplazo en caliente del binario y reinicio del daemon."""
+            from instant_app import update as update_module
+
+            try:
+                applied = update_module.apply_binary_update(downloaded)
+            except Exception as exc:
+                self.toast("Actualizaciones", f"No pude aplicar:\n{exc}",
+                           level="error")
+                return
+            log.info("binario actualizado en %s", applied)
+            self.toast("Actualizaciones",
+                       "Versión nueva aplicada al binario. Se reinicia el "
+                       "dictado con ella; reabrí el panel para tenerla también acá.",
+                       level="info")
+            self.stop_daemon(restart=True)
 
         def begin_key_capture(self):
             if self._key_capture_dialog is not None:
@@ -1477,6 +1612,20 @@ def _main_window_class():
         def request_daemon_start(self):
             self._start_daemon_on_open = True
             self._maybe_start_daemon_on_open()
+
+        def apply_gui_action(self, page=None, start_daemon=False):
+            """Pedido de otra instancia: enfoca la ventana y aplica la acción."""
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+            if page == "diagnostics":
+                self.show_diagnostics()
+            elif page == "setup":
+                self.navigate("audio")
+            if start_daemon:
+                self.navigate("home")
+                self.request_daemon_start()
+
         def nativeEvent(self, event_type, message):
             if sys.platform == "win32":
                 from ctypes import wintypes
@@ -1535,9 +1684,20 @@ def run_gui(page="home", autostart_override=None, start_daemon_on_open=False):
             mutex = acquire_gui_mutex(
                 request_daemon_start=start_daemon_on_open, page=page)
             if mutex is None: return 0
+        elif sys.platform.startswith("linux") and not (
+                os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            # Sin servidor gráfico Qt aborta el proceso: se avisa y se sale.
+            logging.getLogger("instant").error(
+                "sin entorno gráfico (DISPLAY/WAYLAND_DISPLAY); "
+                "para configurar sin ventana: instant setup --tui")
+            return 2
         qt = _qt_types()
         QApplication = qt["QApplication"]
         app = QApplication.instance() or QApplication(sys.argv[:1])
+        if sys.platform != "win32" and _forward_to_existing_gui(
+                page, start_daemon_on_open):
+            log.info("el panel ya estaba abierto; se le pasó el pedido.")
+            return 0
         app.setApplicationName("Instant")
         app.setStyle("Fusion")
         from io import BytesIO
@@ -1550,6 +1710,9 @@ def run_gui(page="home", autostart_override=None, start_daemon_on_open=False):
         window = _main_window_class()(
             page=page, autostart_override=autostart_override,
             start_daemon_on_open=start_daemon_on_open)
+        if sys.platform != "win32":
+            # La referencia vive en la ventana: el canal muere con ella.
+            window._gui_server = _install_gui_server(window)
         window.setWindowIcon(QIcon(pixmap))
         window.show()
         log.info("interfaz gráfica abierta (%s).", page)

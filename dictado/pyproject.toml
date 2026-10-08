@@ -23,12 +23,13 @@ dependencies = [
     "sounddevice==0.5.6",
     "pyperclip==1.11.0",
     "sherpa-onnx==1.13.8",
-    "huggingface_hub==2.1.1",
     "keyboard==0.13.5; sys_platform == 'win32'",
     "pynput; sys_platform != 'win32'",
+    # La bandeja (pystray) es lo único exclusivo de Windows; el panel Qt y
+    # Pillow (icono de ventana) son iguales en los tres sistemas.
     "pystray==0.19.5; sys_platform == 'win32'",
-    "Pillow==12.3.0; sys_platform == 'win32'",
-    "PySide6==6.11.2; sys_platform == 'win32'",
+    "Pillow==12.3.0",
+    "PySide6==6.11.2",
 ]
 
 [project.scripts]
@@ -36,6 +37,11 @@ instant = "instant_app.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# El overlay Qt Quick se carga por ruta (overlay.py): sin esto, un
+# `pip install` de instant no lleva los .qml y el overlay no levanta.
+[tool.setuptools.package-data]
+instant_app = ["qml/*.qml"]
 
 [tool.setuptools.dynamic]
 version = { attr = "instant_app.__version__" }

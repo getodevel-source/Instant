@@ -5,15 +5,22 @@ descarga cortada o corrupta deja la aplicación fallando después, al cargar el
 modelo, con un error que no explica nada. Los hashes de Parakeet son los que
 publica Hugging Face en la metadata LFS del repositorio; el de Silero VAD se
 calculó sobre el archivo oficial de la release de sherpa-onnx.
+
+La descarga es propia (HTTP con Range) para poder ofrecer lo que la API de
+Hugging Face no da: bytes reales en la barra de progreso, reanudación de un
+`.part` cortado, chequeo de espacio en disco y espejo configurable
+(`DICTADO_HF_ENDPOINT` o `HF_ENDPOINT`).
 """
 import hashlib
 import logging
 import os
+import shutil
 import time
 
 PARAKEET_REPO = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 PARAKEET_FILES = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]
 VAD_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
+HF_ENDPOINT_DEFAULT = "https://huggingface.co"
 
 # Nombre de archivo -> (bytes, sha256). Los tres ONNX son LFS en Hugging Face y
 # su sha256 esta publicado; tokens.txt es pequeño y no esta en LFS, pero al ser
@@ -32,6 +39,11 @@ VAD_SHA256 = (643854,
               "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6")
 
 DOWNLOAD_ATTEMPTS = 3
+# Colchón que se exige libre además de lo que falta bajar: el disco escribe
+# mientras descarga y un disco lleno a mitad de camino es peor que no empezar.
+DISK_MARGIN = 256 * 1024 * 1024
+CHUNK = 1 << 20
+READ_TIMEOUT = 60
 
 log = logging.getLogger("instant")
 
@@ -73,135 +85,184 @@ def verify_file(path, expected):
     return True, ""
 
 
-def missing_or_corrupt(directory, expectations):
-    """Archivos que faltan o no verifican. Devuelve [(nombre, motivo)]."""
-    problems = []
-    for name, expected in expectations.items():
-        ok, reason = verify_file(os.path.join(directory, name), expected)
-        if not ok:
-            problems.append((name, reason))
-    return problems
+def _endpoint():
+    """Espejo de Hugging Face en uso (DICTADO_HF_ENDPOINT gana a HF_ENDPOINT)."""
+    value = (os.environ.get("DICTADO_HF_ENDPOINT")
+             or os.environ.get("HF_ENDPOINT")
+             or HF_ENDPOINT_DEFAULT)
+    return value.strip().rstrip("/") or HF_ENDPOINT_DEFAULT
 
 
-def _download_vad(destination, report):
-    """Baja Silero VAD a un temporal, verifica y recien ahi lo pone en su lugar.
+def _steps():
+    """Pasos de descarga: [(paso, subdir, [(url, nombre, esperado)])]."""
+    from instant_app.paths import PARAKEET_SUBDIR, VAD_SUBDIR
 
-    La escritura atomica evita dejar un .onnx a medias que despues parece
-    valido por existir. Se reintenta porque es una descarga de red y el fallo
-    tipico es transitorio.
-    """
+    endpoint = _endpoint()
+    parakeet = [
+        (f"{endpoint}/{PARAKEET_REPO}/resolve/main/{name}",
+         name, PARAKEET_SHA256[name])
+        for name in PARAKEET_FILES]
+    return (("parakeet", PARAKEET_SUBDIR, parakeet),
+            ("vad", VAD_SUBDIR, [(VAD_URL, "silero_vad.onnx", VAD_SHA256)]))
+
+
+def _space_check(pending_bytes, destination_dir):
+    """Frena antes de empezar si no hay disco: no se baja 670 MB al vacío."""
+    try:
+        free = shutil.disk_usage(destination_dir).free
+    except OSError:
+        return
+    if pending_bytes + DISK_MARGIN > free:
+        raise ModelIntegrityError(
+            "no hay espacio para los modelos: hacen falta ~"
+            f"{(pending_bytes + DISK_MARGIN) / 1e9:.1f} GB libres en "
+            f"{destination_dir} y hay {free / 1e9:.1f} GB.")
+
+
+def _fetch_once(url, part, size, report):
+    """Un intento HTTP: reanuda desde `.part` con Range y reporta bytes."""
     import urllib.request
 
-    temporary = destination + ".part"
+    offset = os.path.getsize(part) if os.path.isfile(part) else 0
+    if offset >= size:
+        return  # ya está completo en disco; lo decide la verificación
+    headers = {
+        "User-Agent": "Instant (+https://github.com/getodevel-source/Instant)"}
+    if offset:
+        headers["Range"] = f"bytes={offset}-"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=READ_TIMEOUT) as response:
+        if offset and getattr(response, "status", 200) != 206:
+            # El servidor (o el espejo) ignoró el rango: se empieza de cero.
+            offset = 0
+        with open(part, "ab" if offset else "wb") as handle:
+            done = offset
+            report(done, size)
+            while True:
+                chunk = response.read(CHUNK)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                done += len(chunk)
+                report(min(done, size), size)
+
+
+def _fetch(url, destination, expected, report, attempts=None):
+    """Baja `url` a `destination`: reanudable, con reintentos y SHA-256.
+
+    Escribe en `destination + '.part'` y publica con os.replace recién cuando
+    el hash coincide, así un corte nunca deja un archivo a medias en su lugar.
+    Un `.part` cortado se conserva para reanudar en el próximo intento; uno
+    completo pero inválido se descarta.
+    """
+    if attempts is None:
+        attempts = DOWNLOAD_ATTEMPTS
+    size, _digest = expected
+    part = destination + ".part"
     last_error = None
-    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+    for attempt in range(1, attempts + 1):
         try:
-            request = urllib.request.Request(
-                VAD_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(request, timeout=120) as response, \
-                    open(temporary, "wb") as handle:
-                try:
-                    total = int(response.headers.get("Content-Length") or 0) or None
-                except (TypeError, ValueError):
-                    total = None
-                done = 0
-                while True:
-                    chunk = response.read(1 << 20)
-                    if not chunk:
-                        break
-                    handle.write(chunk)
-                    done += len(chunk)
-                    report("vad", done, total)
-            ok, reason = verify_file(temporary, VAD_SHA256)
+            _fetch_once(url, part, size, report)
+            ok, reason = verify_file(part, expected)
             if not ok:
-                raise ModelIntegrityError(f"silero VAD {reason}")
-            os.replace(temporary, destination)
+                raise ModelIntegrityError(
+                    f"{os.path.basename(destination)} {reason}")
+            os.replace(part, destination)
             return
-        except Exception as error:  # red, hash o disco: se reintenta igual
+        except ModelIntegrityError as error:
             last_error = error
-            log.warning("descarga de VAD fallo (intento %d/%d): %s",
-                        attempt, DOWNLOAD_ATTEMPTS, error)
-            if attempt < DOWNLOAD_ATTEMPTS:
+            log.warning("descarga de %s no verifica (intento %d/%d): %s",
+                        os.path.basename(destination), attempt, attempts, error)
+            # Contenido inválido: reanudarlo no arregla nada, se empieza de cero.
+            if os.path.isfile(part):
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+            if attempt < attempts:
                 time.sleep(2 * attempt)
-    if os.path.isfile(temporary):
-        try:
-            os.remove(temporary)
-        except OSError:
-            pass
+        except Exception as error:  # red o disco: el .part queda para reanudar
+            last_error = error
+            log.warning("descarga de %s falló (intento %d/%d): %s",
+                        os.path.basename(destination), attempt, attempts, error)
+            if attempt < attempts:
+                time.sleep(2 * attempt)
     raise ModelIntegrityError(
-        f"no se pudo descargar Silero VAD tras {DOWNLOAD_ATTEMPTS} intentos: {last_error}")
+        f"no se pudo descargar {os.path.basename(destination)} tras "
+        f"{attempts} intentos: {last_error}")
 
 
 def download_models(data_dir, progress=None):
-    """Baja Parakeet v3 int8 (~670MB) + Silero VAD (~1MB) juntos en un solo paso.
+    """Baja Parakeet v3 int8 (~670MB) + Silero VAD (~1MB).
 
     progress(step, done, total): step = "parakeet"|"vad", done/total en bytes
-    (total None si se desconoce). Sin callback usa log + print simple.
-
-    Cada archivo se verifica con SHA-256. Un archivo presente pero corrupto se
-    vuelve a descargar en lugar de darse por bueno.
+    reales de ese paso (callable solo cuando hay algo que bajar). Sin callback
+    usa log + print simple. Reanudable (`.part` + Range) y con espejo
+    configurable por `DICTADO_HF_ENDPOINT`/`HF_ENDPOINT`. Un archivo presente
+    pero corrupto se vuelve a descargar en lugar de darse por bueno.
     """
-    from huggingface_hub import snapshot_download
-
-    from instant_app.paths import PARAKEET_SUBDIR, VAD_SUBDIR
+    printed = {"progress": False}
 
     def _report(step, done, total):
         if progress is not None:
             progress(step, done, total)
-        elif total and total > (1 << 20):
-            print(f"\r  {step}: {done / 1e6:.0f}/{total / 1e6:.0f} MB", end="", flush=True)
+        elif total > (1 << 20):
+            printed["progress"] = True
+            print(f"\r  {step}: {done / 1e6:.0f}/{total / 1e6:.0f} MB",
+                  end="", flush=True)
 
-    mdir = os.path.join(data_dir, PARAKEET_SUBDIR)
-    os.makedirs(mdir, exist_ok=True)
-    problems = missing_or_corrupt(mdir, PARAKEET_SHA256)
-    if problems:
-        for name, reason in problems:
-            log.warning("parakeet: %s %s", name, reason)
-        if progress is None:
-            print("  [1/2] Parakeet v3 int8 (~670MB)...")
-        log.info("descargando parakeet v3 int8 (~670MB); faltan o no verifican %d archivo(s)",
-                 len(problems))
-        # Los que no verifican se borran para que la descarga los traiga de nuevo.
-        for name, _reason in problems:
-            target = os.path.join(mdir, name)
+    steps = []
+    pending_bytes = 0
+    for step, subdir, entries in _steps():
+        directory = os.path.join(data_dir, subdir)
+        os.makedirs(directory, exist_ok=True)
+        total = sum(expected[0] for _url, _name, expected in entries)
+        done = 0
+        jobs = []
+        for url, name, expected in entries:
+            target = os.path.join(directory, name)
+            ok, reason = verify_file(target, expected)
+            if ok:
+                done += expected[0]
+                log.info("%s ya presente y verificado.", name)
+                continue
             if os.path.isfile(target):
+                log.warning("%s %s; se vuelve a descargar", name, reason)
                 try:
                     os.remove(target)
                 except OSError:
                     log.exception("no pude borrar %s para re-descargarlo", target)
-        snapshot_download(PARAKEET_REPO, local_dir=mdir,
-                          allow_patterns=PARAKEET_FILES)
-        still = missing_or_corrupt(mdir, PARAKEET_SHA256)
-        if still:
-            detail = "; ".join(f"{name}: {reason}" for name, reason in still)
-            raise ModelIntegrityError(
-                f"los modelos descargados no verifican ({detail}). "
-                f"Reintentá `instant setup`; si persiste, revisá la conexión o el disco.")
-        _report("parakeet", 1, 1)
-        if progress is None:
-            print("  [1/2] Parakeet OK (verificado).")
-    else:
-        log.info("parakeet v3 int8 ya presente y verificado.")
-        if progress is None:
-            print("  [1/2] Parakeet ya presente y verificado.")
-        _report("parakeet", 1, 1)
+            jobs.append((url, target, expected))
+        if jobs:
+            steps.append((step, total, done, jobs))
+            pending_bytes += sum(expected[0] for _u, _t, expected in jobs)
+        elif progress is None:
+            print(f"  {step}: ya presente y verificado.")
 
-    vdir = os.path.join(data_dir, VAD_SUBDIR)
-    os.makedirs(vdir, exist_ok=True)
-    vad = os.path.join(vdir, "silero_vad.onnx")
-    ok, reason = verify_file(vad, VAD_SHA256)
-    if not ok:
+    if not steps:
+        return data_dir
+
+    _space_check(pending_bytes, data_dir)
+    log.info("modelos: %.0f MB pendientes desde %s",
+             pending_bytes / 1e6, _endpoint())
+
+    for step, total, done, jobs in steps:
         if progress is None:
-            print("  [2/2] Silero VAD (~1MB)...")
-        log.info("descargando silero VAD (~1MB); el actual %s", reason)
-        _download_vad(vad, _report)
+            print(f"  {step}: bajando ~{(total - done) / 1e6:.0f} MB…")
+        for url, target, expected in jobs:
+            base = done
+
+            def report(file_done, _file_total, _base=base, _step=step,
+                       _total=total):
+                _report(_step, min(_base + file_done, _total), _total)
+
+            _fetch(url, target, expected, report)
+            done += expected[0]
         if progress is None:
-            print("  [2/2] Silero VAD OK (verificado).")
-    else:
-        log.info("silero VAD ya presente y verificado.")
-        if progress is None:
-            print("  [2/2] Silero VAD ya presente y verificado.")
-        _report("vad", 1, 1)
+            if printed["progress"]:
+                print()
+                printed["progress"] = False
+            print(f"  {step}: OK (verificado).")
     return data_dir
 
 

@@ -59,6 +59,63 @@ class AppLifecycleTests(unittest.TestCase):
             user32.PostMessageW.assert_called_once_with(
                 hwnd, gui_lifecycle._WM_CLOSE, 0, 0)
 
+    def test_terminate_existing_gui_prefers_graceful_close(self):
+        from instant_app import gui_lifecycle
+
+        hwnd = 0x1234
+        user32 = SimpleNamespace(
+            FindWindowW=Mock(side_effect=[hwnd, hwnd, 0]),
+            ShowWindow=Mock(), SetForegroundWindow=Mock(),
+            PostMessageW=Mock(return_value=1),
+        )
+        with patch("instant_app.gui_lifecycle.os.name", "nt"), \
+                patch("instant_app.gui_lifecycle._user32", return_value=user32), \
+                patch("instant_app.gui_lifecycle.time.sleep"):
+            self.assertTrue(gui_lifecycle.terminate_existing_gui())
+        # Cierre limpio: WM_CLOSE y la ventana desaparece; no se mata nada.
+        user32.PostMessageW.assert_called_once_with(
+            hwnd, gui_lifecycle._WM_CLOSE, 0, 0)
+
+    def test_terminate_existing_gui_forces_when_close_is_ignored(self):
+        import ctypes as ctypes_module
+        from ctypes import wintypes as wintypes_module
+
+        from instant_app import gui_lifecycle
+
+        hwnd = 0x1234
+        handle = 0x55
+        user32 = SimpleNamespace(
+            FindWindowW=Mock(return_value=hwnd),
+            ShowWindow=Mock(), SetForegroundWindow=Mock(),
+            PostMessageW=Mock(return_value=1),
+            GetWindowThreadProcessId=Mock(),
+        )
+        kernel32 = SimpleNamespace(
+            OpenProcess=Mock(return_value=handle),
+            TerminateProcess=Mock(return_value=1),
+            CloseHandle=Mock(),
+        )
+        real_byref = ctypes_module.byref
+
+        def byref_with_pid(obj):
+            obj.value = 4321
+            return real_byref(obj)
+
+        with patch("instant_app.gui_lifecycle.os.name", "nt"), \
+                patch("instant_app.gui_lifecycle._user32", return_value=user32), \
+                patch("instant_app.gui_lifecycle.ctypes.WinDLL",
+                      return_value=kernel32), \
+                patch("instant_app.gui_lifecycle.ctypes.byref",
+                      side_effect=byref_with_pid), \
+                patch("instant_app.gui_lifecycle.time.sleep"), \
+                patch("instant_app.gui_lifecycle.time.monotonic",
+                      side_effect=[0, 100, 100]):
+            self.assertTrue(gui_lifecycle.terminate_existing_gui(graceful_ms=1))
+        user32.GetWindowThreadProcessId.assert_called_once()
+        kernel32.OpenProcess.assert_called_once_with(0x0001, False, 4321)
+        kernel32.TerminateProcess.assert_called_once_with(handle, 0)
+        kernel32.CloseHandle.assert_called_once_with(handle)
+
     def test_gui_mutex_failure_reports_open_error(self):
         from instant_app import gui
         with patch.object(gui.sys, "platform", "win32"), \
@@ -69,24 +126,84 @@ class AppLifecycleTests(unittest.TestCase):
         self.assertIn("interfaz gráfica no disponible", errors.output[0])
 
 
-    def test_direct_windows_launch_requests_daemon_start(self):
-        with patch.object(entry, "_log_setup"), \
-                patch.object(entry, "_run_gui", return_value=0) as run_gui, \
-                patch.object(entry.sys, "platform", "win32"):
-            self.assertEqual(entry.main([]), 0)
-        run_gui.assert_called_once_with("home", start_daemon_on_open=True)
-
-    def test_setup_and_os_autostart_flags_never_start_daemon(self):
-        for argv, expected in (
-                (["setup"], None),
-                (["setup", "--autostart"], True),
-                (["setup", "--no-autostart"], False)):
-            with self.subTest(argv=argv), \
+    def test_direct_launch_requests_daemon_start(self):
+        for platform in ("win32", "linux", "darwin"):
+            with self.subTest(platform=platform), \
                     patch.object(entry, "_log_setup"), \
                     patch.object(entry, "_run_gui", return_value=0) as run_gui, \
-                    patch.object(entry.sys, "platform", "win32"):
-                self.assertEqual(entry.main(argv), 0)
-            run_gui.assert_called_once_with("setup", autostart_override=expected)
+                    patch.object(entry.sys, "platform", platform):
+                self.assertEqual(entry.main([]), 0)
+            run_gui.assert_called_once_with("home", start_daemon_on_open=True)
+
+    def test_setup_and_os_autostart_flags_open_panel_on_every_os(self):
+        for platform in ("win32", "linux", "darwin"):
+            for argv, expected in (
+                    (["setup"], None),
+                    (["setup", "--autostart"], True),
+                    (["setup", "--no-autostart"], False)):
+                with self.subTest(platform=platform, argv=argv), \
+                        patch.object(entry, "_log_setup"), \
+                        patch.object(entry, "_run_gui", return_value=0) as run_gui, \
+                        patch.object(entry.sys, "platform", platform):
+                    self.assertEqual(entry.main(argv), 0)
+                run_gui.assert_called_once_with("setup", autostart_override=expected)
+
+    def test_diagnostics_opens_panel_on_every_os(self):
+        for platform in ("win32", "linux", "darwin"):
+            with self.subTest(platform=platform), \
+                    patch.object(entry, "_log_setup"), \
+                    patch.object(entry, "_run_gui", return_value=0) as run_gui, \
+                    patch.object(entry.sys, "platform", platform):
+                self.assertEqual(entry.main(["diagnostics"]), 0)
+            run_gui.assert_called_once_with("diagnostics")
+
+    def test_diagnostics_falls_back_to_console_without_panel(self):
+        with patch.object(entry, "_log_setup"), \
+                patch.object(entry, "_run_gui", return_value=2), \
+                patch("instant_app.daemon.cmd_check", return_value=0) as check, \
+                patch("instant_app.config.load", return_value={}), \
+                patch.object(entry.sys, "platform", "linux"):
+            self.assertEqual(entry.main(["diagnostics"]), 0)
+        check.assert_called_once_with({})
+
+    def test_stop_command_reports_daemon_state(self):
+        import io
+        from contextlib import redirect_stdout
+
+        for stopped, panel, expected in ((True, False, "Instant detenido."),
+                                         (False, True, "Instant detenido."),
+                                         (False, False, "No había nada corriendo.")):
+            buffer = io.StringIO()
+            with self.subTest(stopped=stopped, panel=panel), \
+                    patch.object(entry, "_log_setup"), \
+                    patch("instant_app.gui.stop_daemon",
+                          return_value=stopped) as stop, \
+                    patch("instant_app.gui_lifecycle.terminate_existing_gui",
+                          return_value=panel) as close_panel, \
+                    redirect_stdout(buffer):
+                self.assertEqual(entry.main(["stop"]), 0)
+            stop.assert_called_once_with()
+            close_panel.assert_called_once_with()
+            self.assertIn(expected, buffer.getvalue())
+
+    def test_setup_flags_keep_terminal_wizard(self):
+        with patch.object(entry, "_log_setup"), \
+                patch.object(entry, "_run_gui", return_value=0) as run_gui, \
+                patch("instant_app.setup.cmd_setup", return_value=0) as cmd, \
+                patch.object(entry.sys, "platform", "darwin"):
+            self.assertEqual(entry.main(["setup", "--yes"]), 0)
+        run_gui.assert_not_called()
+        self.assertEqual(cmd.call_args.args[0], ["--yes"])
+
+    def test_setup_tui_flag_forces_terminal_wizard(self):
+        with patch.object(entry, "_log_setup"), \
+                patch.object(entry, "_run_gui", return_value=0) as run_gui, \
+                patch("instant_app.setup.cmd_setup", return_value=0) as cmd, \
+                patch.object(entry.sys, "platform", "linux"):
+            self.assertEqual(entry.main(["setup", "--tui"]), 0)
+        run_gui.assert_not_called()
+        # --tui no se reenvía al asistente: es una elección de la entrada.
+        self.assertEqual(cmd.call_args.args[0], [])
 
     def test_existing_daemon_mutex_skips_second_daemon_construction(self):
         daemon = Mock()

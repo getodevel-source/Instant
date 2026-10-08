@@ -1,9 +1,8 @@
-"""Cross-platform floating overlay: Qt Quick on Windows, Tk on Unix."""
+"""Floating overlay: Qt Quick en los tres sistemas, Tk como respaldo."""
 import logging
 import math
 import os
 import queue
-import sys
 import threading
 import time
 
@@ -100,10 +99,22 @@ class Overlay:
     def __init__(self, key_label="F9", style="classic"):
         self._transitions = OverlayTransitions()
         self._lock = threading.Lock()
-        if sys.platform == "win32":
-            self._renderer = _QtQuickOverlay(key_label, style=style)
-        else:
-            self._renderer = _TkOverlay(key_label)
+        self._renderer = self._make_renderer(key_label, style)
+
+    @staticmethod
+    def _make_renderer(key_label, style):
+        """Qt Quick en los tres sistemas; Tk solo si Qt no puede abrir.
+
+        El respaldo cubre máquinas sin PySide6 usable (instalaciones viejas)
+        o sin dónde dibujar Qt Quick (X11 sin GL, Wayland raro): el daemon
+        nunca se queda sin overlay por un fallo del renderer.
+        """
+        try:
+            return _QtQuickOverlay(key_label, style=style)
+        except Exception:
+            log.warning("el overlay de Qt Quick no abrió; se usa el de Tk",
+                        exc_info=True)
+            return _TkOverlay(key_label)
 
     def _send(self, session, state, text="", color=None, milliseconds=0):
         color = color or PALETTE["amber"]

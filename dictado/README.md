@@ -16,6 +16,8 @@ ayuda con tildes y puntuación, pero no reemplaza el reconocimiento de audio.
 
 ## Instalación
 
+En Windows, la vía recomendada es el instalador de la [última release](https://github.com/getodevel-source/Instant/releases/latest) (`Instant-Setup.exe`): por usuario, sin admin, con desinstalador y actualización in-place. El `Instant.exe` portable y los binarios de Linux/macOS viven en la misma release.
+
 Desde la raíz del repositorio, `install.bat` (Windows) o `./install.sh` (Linux/macOS) crea `.venv`, instala Instant y abre el asistente de configuración. `INSTANT_UNATTENDED=1` conserva el modo sin preguntas.
 
 Para desarrollar el paquete desde `dictado/`:
@@ -57,11 +59,12 @@ fija se configura en la barra de tareas.
 ### Linux (X11)
 
 ```bash
-sudo apt install python3-venv libportaudio2 xclip xdotool
+sudo apt install python3-venv libportaudio2 xclip xdotool libxcb-cursor0 libegl1 libgl1 libxkbcommon0
 ```
 
-Wayland: el pegado con `xdotool` no funciona; usa sesión X11 o
-`wtype` manual. El hotkey con `pynput` requiere X.
+El panel Qt necesita las libs xcb/GL (el wheel de PySide6 no las trae);
+`install.sh` las intenta instalar solo. Wayland: el pegado con `xdotool` no
+funciona; usa sesión X11 o `wtype` manual. El hotkey con `pynput` requiere X.
 
 ### macOS
 
@@ -69,33 +72,44 @@ Wayland: el pegado con `xdotool` no funciona; usa sesión X11 o
 brew install portaudio
 ```
 
-Autoriza micrófono y accesibilidad (pegado por teclado) en
-Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado las mapea a multimedia.
+El panel Qt abre sin dependencias extra. Autoriza micrófono y accesibilidad
+(pegado por teclado) en Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado
+las mapea a multimedia.
 
 ## Uso
 
 Con el entorno virtual activado:
 ```bash
-instant setup   # ventana de configuración en Windows; asistente terminal en Linux/macOS
+instant setup   # panel de configuración (los tres sistemas)
 instant run     # daemon: mantén la tecla, suelta para transcribir
+instant stop    # frena el daemon (lo usa también el desinstalador)
 instant check   # boot rapido: tecla + mic probe + warmup (<5s)
 ```
 
-En Windows, `instant setup` abre el centro gráfico PySide6: una sola página
-con scroll y cuatro bloques. Arriba, la portada con el estado del dictado, la
-tecla y los botones de iniciar/detener; después, micrófono con selector y
-prueba de nivel (3 s), tarjeta General con tecla y arranque con Windows, y
-**Vocabulario**: tabla por perfil con término, variantes (`a | b | c`), pill
-de sonido (`≈`) y botón de quitar (`✕`). «Añadir término» agrega una fila en
-blanco lista para escribir. El panel indica los cambios pendientes de guardar
-y, después de guardar, avisa si hace falta reiniciar Instant. El diagnóstico
-muestra el informe en una ventana independiente. La ventana puede cerrarse sin
-detener el daemon, que conserva su icono de bandeja.
+`instant setup` abre el centro gráfico PySide6 en los tres sistemas: una sola
+página con scroll y cuatro bloques. Arriba, la portada con el estado del
+dictado, la tecla y los botones de iniciar/detener; después, micrófono con
+selector y prueba de nivel (3 s), tarjeta General con tecla y arranque con el
+sistema, y **Vocabulario**: tabla por perfil con término, variantes
+(`a | b | c`), pill de sonido (`≈`) y botón de quitar (`✕`). «Añadir término»
+agrega una fila en blanco lista para escribir. El panel indica los cambios
+pendientes de guardar y, después de guardar, avisa si hace falta reiniciar
+Instant. El diagnóstico muestra el informe en una ventana independiente. La
+ventana puede cerrarse sin detener el daemon; en Windows queda el icono de
+bandeja, y en Linux/macOS el daemon sigue vivo hasta `instant-stop.sh`.
 
-El overlay de Windows es Qt Quick con dos estilos (`overlay_style` en la
-config): `orbital` (orbe con anillos que respiran con la voz, por defecto) y
-`classic` (pastilla con barras y tecla visible). Ambos comparten la paleta con
-la ventana.
+Sin ventana (servidores, SSH, scripts): `instant setup --tui` mantiene el
+asistente de terminal; cualquier flag de CLI también lo usa.
+
+`instant` sin argumentos abre el panel y se asegura de un solo daemon activo.
+Si ya hay una ventana abierta, una segunda apertura le pasa el pedido y sale
+(Windows: mutex + `FindWindow`; Linux/macOS: canal `QLocalServer`).
+
+El overlay es Qt Quick en los tres sistemas, con dos estilos (`overlay_style`
+en la config): `orbital` (orbe con anillos que respiran con la voz, por
+defecto) y `classic` (pastilla con barras y tecla visible). Ambos comparten la
+paleta con la ventana. Si Qt no puede abrir (X11 sin GL, instalación vieja sin
+PySide6 usable), el daemon cae solo al respaldo Tk y lo deja en el log.
 
 Para retocar la interfaz, los colores están en
 [`branding.py`](dictado/src/instant_app/branding.py) (`PALETTE`, única fuente de
@@ -109,7 +123,8 @@ porque se cargan sin motor de plantillas;
 ajusta con `compositionScale` y su posición con `_OVERLAY_BOTTOM_GAP` en
 `overlay.py`.
 
-En Linux/macOS se conserva el asistente terminal, que hace, en orden:
+El asistente de terminal (`instant setup --tui`, o con cualquier flag de CLI)
+hace, en orden:
 
 1. **Modelos**: descarga Parakeet (~670 MB) y VAD (~1 MB) si faltan.
 2. **Micrófono**: muestra nombre, backend y canales; permite medir nivel. Guarda nombre e índice como fallback si cambia el orden de dispositivos.
@@ -151,10 +166,13 @@ instant setup --fix-deps
 |---|---|---|---|
 | Python >= 3.12 | `sys.version` | no (instalalo vos) | python.org / tienda |
 | pip | `import pip` | sí (`ensurepip`) | `python -m ensurepip` |
-| numpy, sounddevice, sherpa-onnx, pyperclip, huggingface_hub | `importlib` | sí (`pip install`) | `pip install <paquete>` |
+| numpy, sounddevice, sherpa-onnx, pyperclip | `importlib` | sí (`pip install`) | `pip install <paquete>` |
+| PySide6 (panel, los tres sistemas) | `importlib` | sí (`pip install`) | `pip install PySide6` |
+| Pillow (icono de ventana) | `importlib` | sí (`pip install`) | `pip install Pillow` |
 | keyboard (win) / pynput (linux/mac) | `importlib` | sí (`pip install`) | `pip install <paquete>` |
-| pystray y Pillow (Windows) | icono de bandeja | sí (`pip install`) | `pip install pystray Pillow` |
+| pystray (Windows) | icono de bandeja | sí (`pip install`) | `pip install pystray` |
 | portaudio linux (`libportaudio2`) | lib/ldconfig/dpkg | sí (`apt`) solo con sudo sin password o root | `sudo apt install libportaudio2` |
+| libs Qt linux (`libxcb-cursor0`, GL) | — (la pista la da el panel) | `install.sh` intenta `apt` | `sudo apt install libxcb-cursor0 libegl1 libgl1 libxkbcommon0` |
 | xclip/xsel linux | PATH | sí (`apt`) solo con sudo sin password o root | `sudo apt install xclip` |
 | xdotool linux (X11) | PATH | sí (`apt`) solo con sudo sin password o root | `sudo apt install xdotool` |
 | portaudio mac | `brew --prefix portaudio` | sí (`brew`) solo si tenés brew | `brew install portaudio` |
