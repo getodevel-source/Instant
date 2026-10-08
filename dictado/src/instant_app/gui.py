@@ -173,12 +173,18 @@ def _forward_to_existing_gui(page, start_daemon_on_open):
 
 def _install_gui_server(window):
     """La ventana atiende los pedidos de instancias nuevas (Linux/macOS)."""
+    from PySide6.QtCore import QObject
     from PySide6.QtNetwork import QLocalServer
 
     name = _gui_server_name()
     # Un cierre sucio deja el socket huérfano: se limpia antes de escuchar.
     QLocalServer.removeServer(name)
-    server = QLocalServer(window)
+    # QLocalServer necesita un QObject como parent: el panel web no lo es, su
+    # ventana QML sí (en el doble de tests el propio window ya es QObject).
+    parent = getattr(window, "root", window)
+    if not isinstance(parent, QObject):
+        parent = None
+    server = QLocalServer(parent)
     if not server.listen(name):
         log.warning("sin canal de instancia única: %s", server.errorString())
         return None

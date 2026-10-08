@@ -68,6 +68,23 @@ else:
             # El forward espera el acuse: al volver, la acción ya se aplicó.
             self.assertEqual(window.actions, [("setup", True)])
 
+        def test_web_panel_stub_without_qobject_parent_is_supported(self):
+            """El panel web no es QObject: el canal usa su ventana QML como parent."""
+
+            class _NotAQObject:
+                def __init__(self):
+                    self.root = QObject()
+                    self.actions = []
+
+                def apply_gui_action(self, page=None, start_daemon=False):
+                    self.actions.append((page, start_daemon))
+
+            window = _NotAQObject()
+            self.server = gui._install_gui_server(window)
+            self.assertIsNotNone(self.server)
+            self.assertTrue(gui._forward_to_existing_gui("home", True))
+            self.assertEqual(window.actions, [("home", True)])
+
         def test_forwarding_without_server_is_false(self):
             self.assertFalse(gui._forward_to_existing_gui("home", False))
 
