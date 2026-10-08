@@ -340,10 +340,11 @@ class UpdateFlowTests(unittest.TestCase):
                 patch("instant_app.gui.subprocess.Popen") as popen:
             logic._op_toast_action({"op": "toast_action", "id": verified[-1]["id"],
                                     "action": "0"})
-        popen.assert_called_once()
-        args = popen.call_args.args[0]
+        launches = [entry for entry in popen.call_args_list
+                    if entry.args and "instant-update.bat" in str(entry.args[0])]
+        self.assertEqual(len(launches), 1)
+        args = launches[0].args[0]
         self.assertEqual(args[0], "cmd")
-        self.assertTrue(args[2].endswith("instant-update.bat"))
         self.assertTrue(logic._closed)
 
 

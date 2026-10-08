@@ -17,6 +17,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from instant_app import gui
 
+
+def daemon_spawns(mock):
+    """Llamadas a Popen que son el arranque del daemon (instant ... run).
+
+    En Linux, importar sounddevice dispara `ldconfig` por ctypes y ese Popen
+    también pasa por el parche: contar crudo daba falsos positivos.
+    """
+    found = []
+    for entry in mock.call_args_list:
+        if not entry.args:
+            continue
+        argv = entry.args[0]
+        if not isinstance(argv, (list, tuple)):
+            continue
+        if any("instant" in str(part).lower() for part in argv):
+            found.append(entry)
+    return found
+
 CFG = {"mic_hint": "", "mic_index": None, "key": "f9", "autostart": False}
 
 
@@ -122,9 +140,10 @@ class PanelLifecycleTests(unittest.TestCase):
         with patch("subprocess.Popen", launch):
             logic._start_daemon(save_settings=False)
             logic._start_daemon(save_settings=False)
-        self.assertEqual(launch.call_count, 1)
-        self.assertEqual(launch.call_args.kwargs["env"]["DICTADO_DATA"], logic.data_dir)
-        self.assertEqual(launch.call_args.kwargs["cwd"], gui._workdir())
+        spawns = daemon_spawns(launch)
+        self.assertEqual(len(spawns), 1)
+        self.assertEqual(spawns[0].kwargs["env"]["DICTADO_DATA"], logic.data_dir)
+        self.assertEqual(spawns[0].kwargs["cwd"], gui._workdir())
 
     def test_noargs_start_waits_for_readiness_and_starts_once(self):
         import traceback
@@ -139,26 +158,27 @@ class PanelLifecycleTests(unittest.TestCase):
         logic.model_ready = True
 
         def why():
-            return (f"call_count={len(calls)} pending={logic._daemon_start_pending} "
+            return (f"spawns={len(daemon_spawns(launch))} "
+                    f"pending={logic._daemon_start_pending} "
                     f"token={logic._daemon_start_token}\n" + "\n---\n".join(calls))
 
         with patch("subprocess.Popen", side_effect=record_popen) as launch:
             logic._maybe_start_daemon_on_open()
-            launch.assert_not_called()
+            self.assertEqual(daemon_spawns(launch), [])
             with patch("instant_app.gui.daemon_is_running", return_value=False):
                 logic.refresh_daemon()
             logic.refresh_microphones(initial=True)
             self.assertTrue(logic._daemon_state_ready)
             self.assertTrue(logic._microphones_loaded)
             logic._maybe_start_daemon_on_open()
-            self.assertEqual(launch.call_count, 1, why())
+            self.assertEqual(len(daemon_spawns(launch)), 1, why())
             logic._maybe_start_daemon_on_open()
-            self.assertEqual(launch.call_count, 1, why())
+            self.assertEqual(len(daemon_spawns(launch)), 1, why())
             # Daemon ya corriendo: no se arranca de nuevo.
             logic._start_daemon_on_open = True
             logic._last_daemon_running = True
             logic._maybe_start_daemon_on_open()
-            self.assertEqual(launch.call_count, 1, why())
+            self.assertEqual(len(daemon_spawns(launch)), 1, why())
 
     def test_start_refuses_without_models(self):
         launch = Mock()
@@ -168,7 +188,7 @@ class PanelLifecycleTests(unittest.TestCase):
         logic.model_ready = False
         with patch("subprocess.Popen", launch):
             self.assertFalse(logic._start_daemon(save_settings=False))
-        launch.assert_not_called()
+        self.assertEqual(daemon_spawns(launch), [])
         titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
         self.assertIn("Modelos pendientes", titles)
 
