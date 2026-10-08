@@ -110,7 +110,12 @@ jobs:
           ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
           if [ ! -f "$ISCC" ]; then ISCC="/c/Program Files/Inno Setup 6/ISCC.exe"; fi
           if [ ! -f "$ISCC" ]; then ISCC="iscc"; fi
-          "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$SOURCE" \
+          # MSYS (git-bash del runner) reescribe los argumentos que empiezan con
+          # `/` a rutas de Windows: sin excluir la conversión, ISCC recibe
+          # `DAppVersion=...` y lo toma como nombre de script (falla con
+          # "You may not specify more than one script filename").
+          MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+            "$ISCC" "/DAppVersion=$VERSION" "/DSourceDir=$SOURCE" \
             "/DIconFile=$ICON_PATH" installer/instant.iss
           ls -la dist/Instant-Setup.exe
 
