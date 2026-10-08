@@ -70,7 +70,9 @@ class VersionTests(unittest.TestCase):
 class InstallModeTests(unittest.TestCase):
     def test_source_mode_when_not_frozen(self):
         self.assertEqual(update_module.install_mode(), "source")
-        self.assertEqual(update_module.platform_asset("source"), "Instant.exe")
+        with patch.object(update_module.sys, "platform", "win32"):
+            self.assertEqual(update_module.platform_asset("source"),
+                             "Instant.exe")
 
     def test_installed_mode_requires_uninstaller_next_to_exe(self):
         with tempfile.TemporaryDirectory() as directory:

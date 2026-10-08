@@ -50,8 +50,6 @@ else:
 
         def _send_raw(self, raw):
             """Escribe bytes crudos y espera el acuse del panel."""
-            from PySide6.QtNetwork import QLocalSocket
-
             socket = QLocalSocket()
             socket.connectToServer(gui._gui_server_name())
             self.assertTrue(socket.waitForConnected(500))
@@ -83,23 +81,50 @@ else:
         @unittest.skipIf(sys.platform == "win32",
                          "la rama unix de run_gui solo corre en Linux/macOS")
         def test_run_gui_installs_the_channel(self):
-            """La ventana real atiende el canal: integración de punta a punta."""
-            from unittest.mock import patch
+            """La ventana real atiende el canal: integración de punta a punta.
 
-            from PySide6.QtCore import QTimer
+            En un proceso aparte a propósito: el QApplication compartido de la
+            clase puede quedar con un `quit()` pendiente de otro test y el
+            `exec()` de `run_gui` volvería al instante (Qt sale enseguida si
+            `quitNow` está puesto). Un proceso nuevo es, además, lo que pasa en
+            producción: la segunda apertura es otro proceso.
+            """
+            import shutil
+            import subprocess
+            import tempfile
+            import time
 
-            results = []
-
-            def probe():
-                results.append(gui._forward_to_existing_gui(None, False))
-                self.app.quit()
-
-            QTimer.singleShot(700, probe)
-            with patch.dict(os.environ, {"DISPLAY": os.environ.get("DISPLAY", ":0")}):
-                rc = gui.run_gui("setup")
-            self.assertEqual(rc, 0)
-            self.assertEqual(results, [True],
-                             "el canal no respondió al pedido de otra instancia")
+            home = tempfile.mkdtemp(prefix="instant-gui-home-")
+            self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+            source = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "src"))
+            env = dict(
+                os.environ,
+                QT_QPA_PLATFORM="offscreen",
+                DISPLAY=os.environ.get("DISPLAY", ":0"),
+                HOME=home,
+                DICTADO_DATA=os.path.join(home, "models"),
+                PYTHONPATH=os.pathsep.join(
+                    [source] + ([os.environ["PYTHONPATH"]]
+                                if os.environ.get("PYTHONPATH") else [])),
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c",
+                 "import sys; from instant_app.gui import run_gui; "
+                 "sys.exit(run_gui('setup'))"],
+                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.addCleanup(process.kill)
+            deadline = time.monotonic() + 45
+            answered = False
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    self.fail("el panel murió antes de atender el canal "
+                              f"(rc={process.returncode})")
+                if gui._forward_to_existing_gui(None, False):
+                    answered = True
+                    break
+                time.sleep(0.25)
+            self.assertTrue(answered, "el canal del panel no respondió en 45 s")
 
 
 if __name__ == "__main__":

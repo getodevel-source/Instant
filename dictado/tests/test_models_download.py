@@ -133,7 +133,8 @@ class ModelDownloadTests(unittest.TestCase):
             handle.write(BODY[: len(BODY) // 2])
         models.download_models(self.data_dir, progress=lambda *a: None)
         self.assertIn(f"bytes={len(BODY) // 2}-", self.server.ranges)
-        self.assertEqual(open(encoder, "rb").read(), BODY)
+        with open(encoder, "rb") as handle:
+            self.assertEqual(handle.read(), BODY)
 
     def test_downloads_from_scratch_when_server_ignores_range(self):
         self.server.httpd.ignore_ranges = True

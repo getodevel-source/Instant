@@ -104,7 +104,7 @@ class AppLifecycleTests(unittest.TestCase):
         with patch("instant_app.gui_lifecycle.os.name", "nt"), \
                 patch("instant_app.gui_lifecycle._user32", return_value=user32), \
                 patch("instant_app.gui_lifecycle.ctypes.WinDLL",
-                      return_value=kernel32), \
+                      return_value=kernel32, create=True), \
                 patch("instant_app.gui_lifecycle.ctypes.byref",
                       side_effect=byref_with_pid), \
                 patch("instant_app.gui_lifecycle.time.sleep"), \
