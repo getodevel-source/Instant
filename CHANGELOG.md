@@ -3,6 +3,76 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [0.2.0] - 2026-10-08
+
+Misma UI en los tres sistemas, instalador de Windows y descarga de modelos de primera.
+
+### Agregado
+
+- **Instalador de Windows (`Instant-Setup.exe`), por usuario y sin admin.**
+  Instala la variante en carpeta (onedir) bajo `%LOCALAPPDATA%\Programs\Instant`,
+  con accesos directos, tarea opcional de arranque con Windows y desinstalador
+  propio (aparece en «Aplicaciones instaladas»). El desinstalador frena el
+  daemon antes de borrar y **no** toca configuración ni modelos. El
+  `Instant.exe` portable sigue publicándose en la misma release.
+- **Arranque medido: 20× más rápido con el instalador.** `--version` pasa de
+  2,3-2,9 s (onefile, extrae 97 MB a temp en cada ejecución) a 0,13-0,25 s
+  (onedir). El panel, el daemon y el CLI arrancan igual de rápido.
+- **`instant stop`.** Frena el daemon y cierra el panel sin ventanas colgadas;
+  lo usa el desinstalador (`[UninstallRun]`) y sirve para scripting.
+- **Actualización según cómo esté instalada la app.** Instalada: el panel baja
+  `Instant-Setup.exe`, frena el dictado y lo corre en modo silencioso (in-place,
+  sin admin), y la app se reabre sola. Portable Windows: `instant-update.bat`
+  de siempre (respalda `.bak` y verifica el hash). Linux/macOS: el binario se
+  reemplaza en caliente (`instant update --download DIR --apply` o el panel) y
+  el dictado se reinicia con la versión nueva.
+
+### Cambiado
+
+- **Descarga de modelos de primera.** Progreso con bytes y % reales, reanudable
+  (`Range` sobre un `.part` que sobrevive a un corte), reintentos por archivo
+  con descarte del contenido inválido, chequeo de espacio en disco antes de
+  empezar (con colchón de 256 MB) y espejo configurable con
+  `DICTADO_HF_ENDPOINT`/`HF_ENDPOINT`. Se retira la dependencia
+  `huggingface_hub`: la descarga es propia, sobre stdlib.
+- **Los tests ya no bajan 670 MB reales.** La cobertura de descarga corre
+  contra un servidor HTTP local (`test_models_download.py`) y los tests de
+  reanudación/espacio/espejo son deterministas; `test_regression` bajó de
+  ~20-50 s a 0,4 s y la suite completa de ~30-50 s a ~5 s.
+- **Un solo panel en los tres sistemas.** La ventana Qt de configuración,
+  antes exclusiva de Windows, ahora es también la UI de Linux/macOS:
+  `instant` y `instant setup` abren el panel en los tres sistemas; el
+  asistente de terminal queda disponible con `instant setup --tui` o
+  cualquier flag de CLI (scripts, SSH, servidores). Sin
+  `DISPLAY`/`WAYLAND_DISPLAY` el panel no intenta abrirse y sugiere `--tui`.
+- **El overlay del daemon es Qt Quick en los tres sistemas.** Antes solo
+  Windows usaba el orbe QML y Linux/macOS dibujaban con Tk; ahora el mismo
+  overlay (estilos `orbital`/`classic`, espectro por bandas y nivel reales)
+  corre en los tres, y Tk queda como respaldo automático si Qt no puede
+  abrir (X11 sin GL, instalaciones viejas). Los binarios de Linux/macOS
+  empaquetan los `.qml` y los módulos Qt Quick.
+- **Instancia única portable.** En Linux/macOS una segunda apertura no
+  duplica la ventana: escribe el pedido (página, arranque del daemon) por un
+  canal `QLocalServer` y sale; el panel contesta un acuse para que el
+  lanzador no muera con el pedido en el buffer. En Windows se conserva el
+  mutex + `FindWindow` de siempre.
+- **`PySide6` y `Pillow` son dependencias de los tres sistemas** (la bandeja
+  `pystray` sigue siendo solo de Windows). Los binarios de Linux/macOS del
+  release incluyen el panel; `install.sh` intenta instalar las libs de Qt
+  (`libxcb-cursor0`, GL, xkbcommon) y la tabla de dependencias suma esas
+  filas, con pista de `apt` si el panel no abre.
+- **La suite Qt corre en los tres sistemas en CI** (antes solo Windows):
+  nuevo `tests/test_single_instance.py` cubre el canal con acuse y la rama
+  unix de `run_gui`; `test_app_lifecycle` verifica los gates de arranque en
+  win32/linux/darwin.
+
+### Corregido
+
+- **Los `.qml` del overlay viajan en el paquete.** Un `pip install` (incluido
+  `install.bat`) armaba un wheel sin `instant_app/qml/*.qml`: solo el ejecutable
+  congelado los llevaba por `--add-data`. Ahora `package-data` los incluye, así
+  que la instalación por pip también tiene el overlay Qt Quick.
+
 ## [0.1.2] - 2026-10-04
 
 Avisos sin ventanas y daemon sin congelamientos.
