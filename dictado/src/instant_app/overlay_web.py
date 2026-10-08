@@ -88,7 +88,6 @@ class _WebOverlay:
         qtgui = importlib.import_module("PySide6.QtGui")
         qtqml = importlib.import_module("PySide6.QtQml")
         webengine = importlib.import_module("PySide6.QtWebEngineQuick")
-        webchannel = importlib.import_module("PySide6.QtWebChannel")
         QObject, QPoint, QThread, QTimer, Qt, QUrl = (
             getattr(qtcore, name) for name in ("QObject", "QPoint", "QThread", "QTimer", "Qt", "QUrl"))
         Signal, Slot = qtcore.Signal, qtcore.Slot
