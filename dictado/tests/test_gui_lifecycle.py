@@ -127,10 +127,22 @@ class PanelLifecycleTests(unittest.TestCase):
         self.assertEqual(launch.call_args.kwargs["cwd"], gui._workdir())
 
     def test_noargs_start_waits_for_readiness_and_starts_once(self):
-        launch = Mock()
+        import traceback
+
+        calls = []
+
+        def record_popen(*args, **kwargs):
+            calls.append("".join(traceback.format_stack(limit=8)))
+            return Mock()
+
         logic, _emitted = make_logic(start_daemon_on_open=True)
         logic.model_ready = True
-        with patch("subprocess.Popen", launch):
+
+        def why():
+            return (f"call_count={len(calls)} pending={logic._daemon_start_pending} "
+                    f"token={logic._daemon_start_token}\n" + "\n---\n".join(calls))
+
+        with patch("subprocess.Popen", side_effect=record_popen) as launch:
             logic._maybe_start_daemon_on_open()
             launch.assert_not_called()
             with patch("instant_app.gui.daemon_is_running", return_value=False):
@@ -139,14 +151,14 @@ class PanelLifecycleTests(unittest.TestCase):
             self.assertTrue(logic._daemon_state_ready)
             self.assertTrue(logic._microphones_loaded)
             logic._maybe_start_daemon_on_open()
-            self.assertEqual(launch.call_count, 1)
+            self.assertEqual(launch.call_count, 1, why())
             logic._maybe_start_daemon_on_open()
-            self.assertEqual(launch.call_count, 1)
+            self.assertEqual(launch.call_count, 1, why())
             # Daemon ya corriendo: no se arranca de nuevo.
             logic._start_daemon_on_open = True
             logic._last_daemon_running = True
             logic._maybe_start_daemon_on_open()
-            self.assertEqual(launch.call_count, 1)
+            self.assertEqual(launch.call_count, 1, why())
 
     def test_start_refuses_without_models(self):
         launch = Mock()
