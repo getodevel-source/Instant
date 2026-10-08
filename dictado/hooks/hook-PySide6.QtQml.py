@@ -9,12 +9,12 @@ hiddenimports, binaries, datas = add_qt6_dependencies(__file__)
 # added about 120 MB to Instant. This pinned private helper preserves its
 # plugin dependency validation while restricting collection to our imports.
 _QML_MODULES = (
-    "QtQml",
-    "QtQml/Models",
-    "QtQml/WorkerScript",
+    # Los hosts web (overlay y panel) solo necesitan Window, el canal
+    # QWebChannel y WebEngineView.
     "QtQuick",
     "QtQuick/Window",
-    "QtQuick/Shapes",
+    "QtWebChannel",
+    "QtWebEngine",
 )
 _qml_root = Path(pyside6_library_info.location["QmlImportsPath"]).resolve()
 _qml_dest = PurePath(pyside6_library_info.qt_rel_dir) / "qml"

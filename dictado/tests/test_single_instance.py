@@ -101,6 +101,9 @@ else:
             env = dict(
                 os.environ,
                 QT_QPA_PLATFORM="offscreen",
+                # Chromium en un runner sin GPU: sin esto el renderer
+                # puede no arrancar y el canal nunca contesta.
+                QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu",
                 DISPLAY=os.environ.get("DISPLAY", ":0"),
                 HOME=home,
                 DICTADO_DATA=os.path.join(home, "models"),

@@ -19,10 +19,13 @@ case "$OS" in
     echo "[Instant] Instalando dependencias del sistema..."
     sudo apt-get update
     sudo apt-get install -y python3-venv libportaudio2 xclip xdotool
-    # Libs que el wheel de PySide6 no trae y el panel Qt necesita para abrir
-    # (xcb). Si alguna no existe en esta distro, no aborta la instalación: el
-    # setup lo reporta y sugiere el paquete exacto.
-    sudo apt-get install -y libxcb-cursor0 libegl1 libgl1 libxkbcommon0 || true
+    # Libs que el wheel de PySide6 no trae y el panel/overlay web necesita para
+    # abrir: xcb del panel y el stack de QtWebEngine del overlay (NSS, X11
+    # extendido, ALSA, GBM). Si alguna no existe en esta distro, no aborta la
+    # instalación: el setup lo reporta y sugiere el paquete exacto.
+    sudo apt-get install -y libxcb-cursor0 libegl1 libgl1 libxkbcommon0 \
+      libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 libcups2 \
+      libatk-bridge2.0-0 libgbm1 libasound2 || true
     ;;
   Darwin)
     echo "[Instant] Instalando PortAudio..."

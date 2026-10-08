@@ -62,7 +62,8 @@ fija se configura en la barra de tareas.
 sudo apt install python3-venv libportaudio2 xclip xdotool libxcb-cursor0 libegl1 libgl1 libxkbcommon0
 ```
 
-El panel Qt necesita las libs xcb/GL (el wheel de PySide6 no las trae);
+El panel web necesita las libs xcb/GL de Qt y el stack de QtWebEngine
+(NSS, GBM, ALSA; el wheel de PySide6 no las trae);
 `install.sh` las intenta instalar solo. Wayland: el pegado con `xdotool` no
 funciona; usa sesión X11 o `wtype` manual. El hotkey con `pynput` requiere X.
 
@@ -72,7 +73,7 @@ funciona; usa sesión X11 o `wtype` manual. El hotkey con `pynput` requiere X.
 brew install portaudio
 ```
 
-El panel Qt abre sin dependencias extra. Autoriza micrófono y accesibilidad
+El panel web abre sin dependencias extra. Autoriza micrófono y accesibilidad
 (pegado por teclado) en Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado
 las mapea a multimedia.
 
@@ -105,23 +106,28 @@ asistente de terminal; cualquier flag de CLI también lo usa.
 Si ya hay una ventana abierta, una segunda apertura le pasa el pedido y sale
 (Windows: mutex + `FindWindow`; Linux/macOS: canal `QLocalServer`).
 
-El overlay es Qt Quick en los tres sistemas, con dos estilos (`overlay_style`
-en la config): `orbital` (orbe con anillos que respiran con la voz, por
-defecto) y `classic` (pastilla con barras y tecla visible). Ambos comparten la
-paleta con la ventana. Si Qt no puede abrir (X11 sin GL, instalación vieja sin
-PySide6 usable), el daemon cae solo al respaldo Tk y lo deja en el log.
+El overlay dibuja en web (QtWebEngine) en los tres sistemas, con dos estilos
+(`overlay_style` en la config): `orbital` (orbe con anillos que respiran con la
+voz, por defecto) y `classic` (pastilla con barras y tecla visible). Ambos
+comparten la paleta con la ventana. Si QtWebEngine no puede abrir cae a Tk
+(X11 sin GL, instalación vieja sin webengine): el daemon nunca se queda sin
+overlay. El porque de esta ruta (y sus costos medidos) esta
+en `docs/bakeoff-ui.md`; el renderer vive en
+[`overlay_web.py`](dictado/src/instant_app/overlay_web.py) y la pagina en
+[`web/overlay.html`](dictado/src/instant_app/web/overlay.html) (los hosts QML de
+las ventanas web quedan en `qml/`).
 
 Para retocar la interfaz, los colores están en
 [`branding.py`](dictado/src/instant_app/branding.py) (`PALETTE`, única fuente de
 verdad) y las medidas, la tipografía y los tiempos de animación en
-[`theme.py`](dictado/src/instant_app/theme.py), que arma la hoja de estilo. Los
-overlays repiten la paleta a mano en
-[`qml/overlay.qml`](dictado/src/instant_app/qml/overlay.qml) y
-[`qml/overlay_orbital.qml`](dictado/src/instant_app/qml/overlay_orbital.qml)
-porque se cargan sin motor de plantillas;
-`tests/test_overlay_palette.py` falla si se despegan. El tamaño del orbe se
-ajusta con `compositionScale` y su posición con `_OVERLAY_BOTTOM_GAP` en
-`overlay.py`.
+[`theme.py`](dictado/src/instant_app/theme.py) (tokens). Las páginas
+[`web/overlay.html`](dictado/src/instant_app/web/overlay.html) y
+[`web/panel.html`](dictado/src/instant_app/web/panel.html) repiten paleta y
+tokens a mano porque se sirven tal cual, sin motor de plantillas;
+`tests/test_overlay_palette.py` y `tests/test_panel_page.py` fallan si se
+despegan. La ventana del overlay se centra con
+`WINDOW_SIZES`/`_OVERLAY_BOTTOM_GAP` en `overlay_web.py`; el panel vive en
+`gui.py` (`PanelLogic` + host `qml/panel_web_host.qml`).
 
 El asistente de terminal (`instant setup --tui`, o con cualquier flag de CLI)
 hace, en orden:

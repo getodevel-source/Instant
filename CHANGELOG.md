@@ -3,6 +3,58 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [0.3.0] - 2026-10-08
+
+Toda la UI pasa a web (QtWebEngine), elegida con el bake-off de
+[`docs/bakeoff-ui.md`](docs/bakeoff-ui.md).
+
+### Cambiado
+
+- **El overlay del daemon dibuja en web.** La ventana es la misma de siempre
+  (transparente, siempre encima, sin foco, abajo al centro del monitor activo)
+  pero la página es `instant_app/web/overlay.html`: los dos estilos de siempre
+  (`classic` y `orbital`) y el contrato intacto (modo, mensaje, tecla, nivel,
+  9 bandas y tono por QWebChannel). Si QtWebEngine no puede abrir, el daemon
+  cae al respaldo Tk y lo deja en el log.
+- **El panel de ajustes es web.** La ventana host (`qml/panel_web_host.qml` +
+  `web/panel.html`) atiende el canal de instancia única y el mensaje de la
+  bandeja igual que antes; el estado y las acciones viven en `PanelLogic`
+  (`gui.py`), sin Qt, con los workers entregando por cola al hilo de UI. El
+  chequeo diario silencioso, los toasts con acciones, el diagnóstico, la
+  captura de tecla (`vk:N` en Windows), el vocabulario por perfiles y el
+  guardado (con aviso de reinicio) se conservan tal cual.
+- **Costo aceptado a cambio de unificar el stack:** tope de ~60 fps en el
+  overlay, ~150 MB más de RAM del daemon y ~300 MB más de instalador (medido
+  en el bake-off).
+- El nivel de voz se coalesce del lado del consumidor (un frame JSON cada
+  40 ms con lo último) y la página del overlay pausa su loop en idle: en
+  reposo no hay rAF corriendo.
+
+### Retirado
+
+- El renderer Qt Quick del overlay (`_QtQuickOverlay` y los `.qml`
+  `overlay.qml`/`overlay_orbital.qml`) y el panel QtWidgets completo; el QSS de
+  `theme.py` (quedan sus tokens, que las páginas repiten y un test cuida).
+- Pruebas atadas a los widgets (`test_qml_success` y las partes de widgets de
+  `test_gui_settings`/`test_gui_lifecycle`), reemplazadas por equivalentes
+  sobre `PanelLogic`.
+
+### Agregado
+
+- `dictado/bench/web_overlay_smoke.py` y `dictado/bench/web_panel_smoke.py`:
+  smokes de las UIs web con capturas; no tocan el config ni el autostart
+  reales.
+
+### Pruebas
+
+- `test_gui_lifecycle` y `test_gui_settings` ejercen `PanelLogic` sin Qt
+  (mismo comportamiento de consumidor, sin ventanas).
+- `test_panel_page` ancla el contrato de la página y de los hosts QML
+  (`webChannel: channel` incluido: olvidarlo deja la página sin canal y en
+  silencio); `test_overlay_palette` cubre la paleta del overlay web;
+  `test_overlay_selection` la cadena web → Tk; `test_update` el flujo de
+  actualización sobre la lógica.
+
 ## [0.2.1] - 2026-10-08
 
 Instalador que compila en CI y desinstalación a prueba de carreras.

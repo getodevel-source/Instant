@@ -37,7 +37,8 @@ install.bat          :: Windows
 ./install.sh         # Linux / macOS
 ```
 
-La primera configuración abre el mismo panel Qt en los tres sistemas: descarga Parakeet TDT v3 int8 (~670 MB) y Silero VAD (~1 MB) —con progreso en MB, reanudable si se corta y espejo configurable con `HF_ENDPOINT`— y permite elegir micrófono y tecla. Para configurar sin ventana (servidores, SSH): `instant setup --tui`. El pegado requiere X11 en Linux; macOS puede pedir permisos de micrófono y accesibilidad.
+La primera configuración abre el mismo panel en los tres sistemas (UI web sobre
+QtWebEngine): descarga Parakeet TDT v3 int8 (~670 MB) y Silero VAD (~1 MB) —con progreso en MB, reanudable si se corta y espejo configurable con `HF_ENDPOINT`— y permite elegir micrófono y tecla. Para configurar sin ventana (servidores, SSH): `instant setup --tui`. El pegado requiere X11 en Linux; macOS puede pedir permisos de micrófono y accesibilidad.
 
 Para instalaciones automatizadas, `INSTANT_UNATTENDED=1` ejecuta la configuración sin preguntas. `INSTANT_AUTOSTART=1` activa además el arranque con el sistema.
 
@@ -74,10 +75,10 @@ bandeja cierra ambos. En Linux/macOS el daemon sigue vivo hasta
 `instant-stop.sh` (todavía sin icono de bandeja).
 
 Antes de mantener F9, enfocá el prompt o campo editable de la CLI; Instant copia
-el resultado y envía Ctrl+V al campo enfocado. El overlay del daemon usa Qt
-Quick en los tres sistemas (Tk solo si Qt no puede abrir), no muestra el
-contenido dictado y confirma «Copiado». Windows puede ubicar el icono bajo la
-flecha de iconos ocultos.
+el resultado y envía Ctrl+V al campo enfocado. El overlay del daemon dibuja en
+web (QtWebEngine) en los tres sistemas — Tk queda de respaldo automático —,
+no muestra el contenido dictado y confirma «Copiado». Windows
+puede ubicar el icono bajo la flecha de iconos ocultos.
 
 Mientras dictás, el orbe respira con tu voz (nivel y espectro reales del
 micrófono); al soltar, un arco barre mientras transcribe y el tilde confirma.
@@ -127,7 +128,7 @@ También se puede correr archivo por archivo. Los que usan Qt informan `SKIP` si
 python dictado/tests/test_regression.py     # overlay, setup, audio y contextos
 python dictado/tests/test_context.py        # perfiles de vocabulario y pulido LLM
 python dictado/tests/test_models_download.py # descarga: progreso, reanudación, disco
-python dictado/tests/test_overlay_selection.py # Qt Quick primero, Tk de respaldo
+python dictado/tests/test_overlay_selection.py # web primero, Tk de respaldo
 python dictado/tests/test_daemon_overlay.py # progreso por sesion y feedback
 python dictado/tests/test_datadir.py        # precedencia de DICTADO_DATA
 python dictado/tests/test_autostart.py
@@ -143,10 +144,10 @@ python dictado/tests/test_qml_success.py
 La decisión de motor (por qué Parakeet y qué se descartó) está en
 [`docs/motores.md`](docs/motores.md).
 
-El panel de control es la misma ventana PySide6/Qt Widgets en los tres
+El panel de control es la misma ventana web (QtWebEngine) en los tres
 sistemas; en Linux/macOS el canal de instancia única es `QLocalServer` (en
-Windows, mutex + `FindWindow`). El icono de bandeja (Windows) y el overlay Qt
-Quick del daemon son superficies independientes. El workflow de tags `v*`
+Windows, mutex + `FindWindow`). El icono de bandeja (Windows) y el overlay web
+del daemon son superficies independientes. El workflow de tags `v*`
 publica tres cosas por release: el instalador de Windows (`Inno Setup`, sobre
 la variante onedir), el `Instant.exe` portable y los binarios de Linux/macOS
 (con Qt, QML y Pillow incluidos). Windows usa hooks selectivos de Qt, sin

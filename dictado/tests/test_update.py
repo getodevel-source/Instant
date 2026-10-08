@@ -226,151 +226,126 @@ class DownloadVerifyTests(unittest.TestCase):
         self.assertFalse(os.path.exists(dest + ".part"))
 
 
-try:
-    import PySide6  # noqa: F401
-except ImportError:
-    print("SKIP Qt update button: PySide6 is not installed")
-else:
-    import os as _os
-    from types import SimpleNamespace as _SimpleNamespace
-    from unittest.mock import patch as _patch
+class SyncTasks:
+    """TaskRunner sincrónico para los flujos de actualización."""
 
-    _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    def __init__(self):
+        self.pending = 0
+        self.on_idle = None
+        self.on_error = None
 
-    class QtUpdateButtonTests(unittest.TestCase):
-        @classmethod
-        def setUpClass(cls):
-            import gc as _gc
-            _gc.disable()
-            from PySide6.QtWidgets import QApplication
-            cls.app = QApplication.instance() or QApplication([])
+    def submit(self, fn, on_result=None, on_error=None, on_progress=None):
+        self.pending += 1
+        try:
+            value = fn(lambda payload: on_progress and on_progress(payload))
+        except Exception as exc:  # noqa: BLE001  (igual que el runner real)
+            if on_error is not None:
+                on_error(exc)
+            value = None
+        else:
+            if on_result is not None:
+                on_result(value)
+        finally:
+            self.pending -= 1
+        return id(fn)
 
-        @classmethod
-        def tearDownClass(cls):
-            import gc as _gc
-            _gc.enable()
-            _gc.collect()
+    def drain(self):
+        return 0
 
-        def _window(self):
-            from PySide6.QtCore import QEventLoop
-            from instant_app import gui
-            Window = gui._main_window_class()
-            with _patch("instant_app.gui.config.load", return_value={"mic_hint": "USB Mic", "mic_index": 5, "key": "f9", "autostart": False}), \
-                    _patch("instant_app.gui.models.check", return_value={"parakeet": True, "vad": True}), \
-                    _patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    _patch("instant_app.gui.audio.input_choices", return_value=[(5, "USB Mic", 1, 48000)]), \
-                    _patch("instant_app.gui.audio.preferred_input_index", side_effect=lambda default, _rows: default), \
-                    _patch("instant_app.gui.autostart.is_enabled", return_value=False), \
-                    _patch.dict(sys.modules, {"sounddevice": _SimpleNamespace(default=_SimpleNamespace(device=(5, -1)))}):
-                window = Window(autostart_override=False)
-                window.show()
-                if not window._microphones_loaded:
-                    loop = QEventLoop()
-                    window.microphones_loaded.connect(loop.quit)
-                    if not window._microphones_loaded:
-                        loop.exec()
-                if window._pending_workers:
-                    idle = QEventLoop()
-                    window.workers_idle.connect(idle.quit)
-                    if window._pending_workers:
-                        idle.exec()
-            return window
+    def close(self):
+        self.pending = 0
 
-        def _toasts(self, window):
-            from PySide6.QtWidgets import QFrame
-            return window._toast_host.findChildren(QFrame, "toast")
 
-        def _toast_texts(self, window):
-            from PySide6.QtWidgets import QLabel
-            texts = []
-            for card in self._toasts(window):
-                texts.append(" ".join(
-                    label.text() for label in card.findChildren(QLabel)))
-            return texts
+class UpdateFlowTests(unittest.TestCase):
+    """Botón y toasts de actualización: el flujo completo de PanelLogic."""
 
-        def _click_toast_button(self, window, label):
-            from PySide6.QtWidgets import QPushButton
-            for card in self._toasts(window):
-                for button in card.findChildren(QPushButton):
-                    if button.text() == label:
-                        button.click()
-                        return True
-            return False
+    def _logic(self, cfg=None):
+        from types import SimpleNamespace
+        from instant_app import gui
+        emitted = []
+        base_cfg = {"mic_hint": "", "mic_index": None, "key": "f9",
+                    "autostart": False, "update_last_check": 0}
+        base_cfg.update(cfg or {})
+        with patch("instant_app.gui.config.load", return_value=base_cfg), \
+                patch("instant_app.gui.models.check", return_value={"parakeet": True, "vad": True}), \
+                patch("instant_app.gui.resolve_data_dir", return_value=os.path.join(os.getcwd(), "models")), \
+                patch("instant_app.gui.daemon_is_running", return_value=False), \
+                patch("instant_app.gui.audio.input_choices", return_value=[]), \
+                patch("instant_app.gui.autostart.is_enabled", return_value=False), \
+                patch.dict(sys.modules, {"sounddevice": SimpleNamespace(
+                    default=SimpleNamespace(device=(-1, -1)))}):
+            logic = gui.PanelLogic(
+                emit=lambda kind, payload: emitted.append((kind, payload)),
+                tasks=SyncTasks(), schedule=lambda ms, fn: None)
+        return logic, emitted
 
-        def _wait_idle(self, window):
-            from PySide6.QtCore import QEventLoop
-            if window._pending_workers:
-                loop = QEventLoop()
-                window.workers_idle.connect(loop.quit)
-                if window._pending_workers:
-                    loop.exec()
+    def _toasts(self, emitted):
+        return [payload for kind, payload in emitted if kind == "toast"]
 
-        def _close(self, window):
-            from PySide6.QtCore import QEventLoop
-            if not window._closed:
-                window.close()
-            if window._pending_workers:
-                loop = QEventLoop()
-                window.workers_idle.connect(loop.quit)
-                if window._pending_workers:
-                    loop.exec()
+    def test_check_reports_up_to_date_as_toast(self):
+        logic, emitted = self._logic()
+        info = {"update": False, "current": "0.1.0", "latest": "0.1.0",
+                "notes": "", "asset": "Instant.exe", "asset_url": ""}
+        with patch("instant_app.update.check", return_value=info):
+            logic.check_updates()
+        self.assertEqual(logic.update_button, "Buscar actualizaciones")
+        self.assertTrue(any("al día" in toast["message"] for toast in self._toasts(emitted)),
+                        self._toasts(emitted))
 
-        def test_check_reports_up_to_date_as_toast(self):
-            window = self._window()
-            try:
-                info = {"update": False, "current": "0.1.0", "latest": "0.1.0",
-                        "notes": "", "asset": "Instant.exe", "asset_url": ""}
-                with _patch("instant_app.update.check", return_value=info):
-                    window.update_button.click()
-                    self._wait_idle(window)
-                self.assertTrue(window.update_button.isEnabled())
-                self.assertTrue(
-                    any("al día" in text for text in self._toast_texts(window)),
-                    self._toast_texts(window))
-            finally:
-                self._close(window)
+    def test_silent_check_dresses_button_without_modals(self):
+        logic, emitted = self._logic()
+        info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
+                "notes": "", "asset": "Instant.exe", "asset_url": ""}
+        with patch("instant_app.update.check", return_value=info) as check, \
+                patch("instant_app.gui.config.save", return_value="config.json"):
+            logic._silent_update_check()
+            self.assertIn("0.2.0", logic.update_button)
+            self.assertEqual(logic.state_payload()["updates"]["button"],
+                             logic.update_button)
+            # Silencioso: avisa con el botón, sin toasts.
+            self.assertEqual(self._toasts(emitted), [])
+            # Sellado diario: un segundo intento no vuelve a consultar.
+            logic._update_silent_done = False
+            logic._silent_update_check()
+            self.assertEqual(check.call_count, 1)
 
-        def test_silent_check_dresses_button_without_modals(self):
-            window = self._window()
-            try:
-                info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
-                        "notes": "", "asset": "Instant.exe", "asset_url": ""}
-                window._apply_update_available(info)
-                self.assertIn("0.2.0", window.update_button.text())
-                self.assertEqual(window.update_button.objectName(), "primaryButton")
-            finally:
-                self._close(window)
+    def test_update_decisions_happen_in_toasts(self):
+        logic, emitted = self._logic()
+        info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
+                "notes": "Novedades", "asset": "Instant.exe",
+                "asset_url": "https://x/Instant.exe"}
+        with patch("instant_app.update.check", return_value=info):
+            logic.check_updates()
+        offer = [toast for toast in self._toasts(emitted)
+                 if "versión nueva" in toast["title"]]
+        self.assertTrue(offer)
+        self.assertEqual([a["label"] for a in offer[-1]["actions"]],
+                         ["Descargar", "Ahora no"])
 
-        def test_update_decisions_happen_in_toasts(self):
-            window = self._window()
-            try:
-                info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
-                        "notes": "Novedades", "asset": "Instant.exe",
-                        "asset_url": "https://x/Instant.exe"}
-                with _patch("instant_app.update.check", return_value=info):
-                    window.update_button.click()
-                    self._wait_idle(window)
-                with _patch("instant_app.update.fetch_expected_sha256",
-                             return_value="a" * 64), \
-                        _patch("instant_app.update.download",
-                               return_value=("C:\\tmp\\Instant.exe", "a" * 64)), \
-                        _patch("instant_app.gui.os.path.isfile",
-                               return_value=True), \
-                        _patch("instant_app.gui.subprocess.Popen") as popen:
-                    self.assertTrue(
-                        self._click_toast_button(window, "Descargar"),
-                        self._toast_texts(window))
-                    self._wait_idle(window)
-                    self.assertTrue(
-                        self._click_toast_button(window, "Instalar ahora"),
-                        self._toast_texts(window))
-                    popen.assert_called_once()
-                    args, kwargs = popen.call_args
-                    self.assertEqual(args[0][:3], ["cmd", "/c", args[0][2]])
-                    self.assertTrue(args[0][2].endswith("instant-update.bat"))
-                self.assertTrue(window._closed)
-            finally:
-                self._close(window)
+        # "Descargar" → descarga verificada → oferta de instalar.
+        with patch("instant_app.update.fetch_expected_sha256", return_value="a" * 64), \
+                patch("instant_app.update.download",
+                      return_value=("C:\\tmp\\Instant.exe", "a" * 64)):
+            logic._op_toast_action({"op": "toast_action", "id": offer[-1]["id"],
+                                    "action": "0"})
+        verified = [toast for toast in self._toasts(emitted)
+                    if toast["title"] == "Descarga verificada"]
+        self.assertTrue(verified)
+        self.assertEqual([a["label"] for a in verified[-1]["actions"]],
+                         ["Instalar ahora", "Después"])
+
+        # "Instalar ahora" → portable con script: lanza el .bat y cierra.
+        with patch("instant_app.update.install_mode", return_value="portable"), \
+                patch("instant_app.gui.os.path.isfile", return_value=True), \
+                patch("instant_app.gui.subprocess.Popen") as popen:
+            logic._op_toast_action({"op": "toast_action", "id": verified[-1]["id"],
+                                    "action": "0"})
+        popen.assert_called_once()
+        args = popen.call_args.args[0]
+        self.assertEqual(args[0], "cmd")
+        self.assertTrue(args[2].endswith("instant-update.bat"))
+        self.assertTrue(logic._closed)
+
 
 if __name__ == "__main__":
     unittest.main()

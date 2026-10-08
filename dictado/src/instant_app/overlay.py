@@ -1,19 +1,13 @@
-"""Floating overlay: Qt Quick en los tres sistemas, Tk como respaldo."""
+"""Floating overlay: web (QtWebEngine) primero, Tk como respaldo."""
 import logging
 import math
-import os
 import queue
 import threading
-import time
 
 from instant_app.branding import PALETTE, blend
 
 log = logging.getLogger("instant")
 
-# Margen transparente que el QML reserva para dibujar su sombra (overlay.qml,
-# `shadowMargin`). La ventana es mas grande que la pastilla, asi que al ubicarla
-# hay que descontarlo.
-_OVERLAY_SHADOW_MARGIN = 12
 # La pastilla del dictado vive fija abajo al centro, estilo asistente de voz:
 # siempre en el mismo lugar, sin tapar el campo donde se escribe.
 _OVERLAY_BOTTOM_GAP = 60
@@ -103,16 +97,17 @@ class Overlay:
 
     @staticmethod
     def _make_renderer(key_label, style):
-        """Qt Quick en los tres sistemas; Tk solo si Qt no puede abrir.
+        """Web (QtWebEngine) primero; Tk solo si Qt no puede abrir.
 
-        El respaldo cubre máquinas sin PySide6 usable (instalaciones viejas)
-        o sin dónde dibujar Qt Quick (X11 sin GL, Wayland raro): el daemon
+        El respaldo cubre máquinas sin QtWebEngine usable o sin PySide6
+        (instalaciones viejas) o sin dónde dibujar (X11 sin GL): el daemon
         nunca se queda sin overlay por un fallo del renderer.
         """
         try:
-            return _QtQuickOverlay(key_label, style=style)
+            from instant_app.overlay_web import _WebOverlay
+            return _WebOverlay(key_label, style=style)
         except Exception:
-            log.warning("el overlay de Qt Quick no abrió; se usa el de Tk",
+            log.warning("el overlay web no abrió; se usa el de Tk",
                         exc_info=True)
             return _TkOverlay(key_label)
 
@@ -221,221 +216,6 @@ class Overlay:
 
     def run_event_loop(self, shutdown, on_heartbeat):
         return self._renderer.run_event_loop(shutdown, on_heartbeat)
-
-
-class _QtQuickOverlay:
-    """Daemon-owned Qt/QML window; every QML object stays on the Qt main thread."""
-    STYLES = {"classic": "overlay.qml", "orbital": "overlay_orbital.qml"}
-
-    def __init__(self, key_label, style="classic"):
-        import importlib
-        qtcore = importlib.import_module("PySide6.QtCore")
-        qtgui = importlib.import_module("PySide6.QtGui")
-        qtqml = importlib.import_module("PySide6.QtQml")
-        QObject, QPoint, QThread, QTimer, Qt, QUrl = (
-            getattr(qtcore, name) for name in ("QObject", "QPoint", "QThread", "QTimer", "Qt", "QUrl"))
-        Signal, Slot = qtcore.Signal, qtcore.Slot
-        QCursor, QGuiApplication = qtgui.QCursor, qtgui.QGuiApplication
-        QQmlApplicationEngine = qtqml.QQmlApplicationEngine
-
-        self.application = QGuiApplication.instance() or QGuiApplication(["Instant"])
-        if QThread.currentThread() != self.application.thread():
-            raise RuntimeError("Qt Quick overlay must be created on the QApplication thread")
-        self.application.setQuitOnLastWindowClosed(False)
-
-        class EventBridge(QObject):
-            event = Signal(object)
-            level = Signal(float)
-            bands = Signal(object)
-            pitch = Signal(float)
-
-        class Presenter(QObject):
-            def __init__(presenter, root, owner):
-                super().__init__()
-                presenter.root = root
-                presenter.owner = owner
-                presenter.current_token = -1
-                presenter.last_heartbeat = time.monotonic()
-
-            @Slot(object)
-            def render(presenter, event):
-                token, _session, state, text, color, milliseconds = event
-                if token < presenter.current_token:
-                    return
-                presenter.current_token = token
-                if state == "idle":
-                    presenter.root.setProperty("mode", "idle")
-                    return
-                presenter.root.setProperty("message", text)
-                presenter.root.setProperty("messageColor", color)
-                presenter.root.setProperty("mode", state)
-                presenter.root.setProperty("visible", True)
-                presenter._position()
-                # El ancho anima en 240 ms: al terminar se recentra para que la
-                # pastilla quede abajo al centro también con textos largos.
-                QTimer.singleShot(
-                    260, lambda t=token: presenter._reposition_if_current(t))
-                if milliseconds:
-                    QTimer.singleShot(
-                        milliseconds,
-                        lambda t=token: presenter._expire(t))
-
-            def _position(presenter):
-                cursor = QCursor.pos()
-                screen = QGuiApplication.screenAt(cursor) or QGuiApplication.primaryScreen()
-                bounds = screen.availableGeometry()
-                # Fija abajo al centro del monitor donde se trabaja (el del
-                # cursor): siempre el mismo lugar relativo, pero en la pantalla
-                # del campo que se está dictando, no solo en la principal.
-                # La ventana incluye el margen de la sombra, que se descuenta
-                # para que la pastilla quede centrada de verdad.
-                margin = _OVERLAY_SHADOW_MARGIN
-                pill_width = max(1, presenter.root.width() - margin * 2)
-                pill_height = max(1, presenter.root.height() - margin * 2)
-                x = bounds.left() + (bounds.width() - pill_width) // 2 - margin
-                y = bounds.bottom() - pill_height - _OVERLAY_BOTTOM_GAP - margin
-                x = max(bounds.left() - margin, x)
-                y = max(bounds.top() - margin, y)
-                presenter.root.setPosition(QPoint(x, y))
-                presenter.root.raise_()
-
-            def _reposition_if_current(presenter, token):
-                if (token == presenter.current_token
-                        and presenter.owner._is_latest_token(token)):
-                    presenter._position()
-
-            def _expire(presenter, token):
-                if (token == presenter.current_token
-                        and presenter.owner._is_latest_token(token)):
-                    presenter.root.setProperty("mode", "idle")
-
-            @Slot(float)
-            def setLevel(presenter, value):
-                try:
-                    presenter.root.setProperty(
-                        "level", max(0.0, min(1.0, float(value))))
-                except Exception:
-                    pass
-
-            @Slot(object)
-            def setBands(presenter, values):
-                try:
-                    presenter.root.setProperty(
-                        "bandLevels", [max(0.0, min(1.0, float(v))) for v in values])
-                except Exception:
-                    pass
-
-            @Slot(float)
-            def setPitch(presenter, value):
-                try:
-                    presenter.root.setProperty(
-                        "pitch", max(0.0, min(1.0, float(value))))
-                except Exception:
-                    pass
-
-        self.engine = QQmlApplicationEngine()
-        qml_file = self.STYLES.get(style, self.STYLES["classic"])
-        qml_path = os.path.join(os.path.dirname(__file__), "qml", qml_file)
-        self.engine.load(QUrl.fromLocalFile(qml_path))
-        roots = self.engine.rootObjects()
-        if not roots:
-            raise RuntimeError(f"Could not load Qt Quick overlay: {qml_path}")
-        self.root = roots[0]
-        self.root.setProperty("keyLabel", key_label)
-        self._dispatch_lock = threading.Lock()
-        self._latest_token = -1
-        # Coalescing de nivel: a 20Hz el productor puede superar al loop Qt
-        # (mover ventana, QML pesado) y la cola QueuedConnection crece sin
-        # limite -> overlay "tardio" + CPU para ponerse al dia. Se emite como
-        # maximo cada 40ms por canal; el ultimo valor siempre llega.
-        self._level_gate = 0.0
-        self._bands_gate = 0.0
-        self._pitch_gate = 0.0
-        self._gate_lock = threading.Lock()
-        self.bridge = EventBridge(self.application)
-        self.presenter = Presenter(self.root, self)
-        self.bridge.event.connect(
-            self.presenter.render, Qt.ConnectionType.QueuedConnection)
-        self.bridge.level.connect(
-            self.presenter.setLevel, Qt.ConnectionType.QueuedConnection)
-        self.bridge.bands.connect(
-            self.presenter.setBands, Qt.ConnectionType.QueuedConnection)
-        self.bridge.pitch.connect(
-            self.presenter.setPitch, Qt.ConnectionType.QueuedConnection)
-
-    def _gate_open(self, channel):
-        import time as _time
-        now = _time.monotonic()
-        with self._gate_lock:
-            last = getattr(self, channel)
-            if now - last < 0.04:
-                return False
-            setattr(self, channel, now)
-            return True
-
-    def set_level(self, session, value):
-        del session
-        if not self._gate_open("_level_gate"):
-            return
-        try:
-            self.bridge.level.emit(max(0.0, min(1.0, float(value))))
-        except Exception:
-            pass
-
-    def set_bands(self, session, values):
-        del session
-        if not self._gate_open("_bands_gate"):
-            return
-        try:
-            self.bridge.bands.emit([max(0.0, min(1.0, float(v))) for v in values])
-        except Exception:
-            pass
-
-    def set_pitch(self, session, value):
-        del session
-        if not self._gate_open("_pitch_gate"):
-            return
-        try:
-            self.bridge.pitch.emit(max(0.0, min(1.0, float(value))))
-        except Exception:
-            pass
-
-    def clear_bands(self):
-        try:
-            self.bridge.bands.emit([0.0] * 9)
-        except Exception:
-            pass
-
-    def _is_latest_token(self, token):
-        with self._dispatch_lock:
-            return token == self._latest_token
-
-    def dispatch(self, event):
-        token = event[0]
-        with self._dispatch_lock:
-            self._latest_token = max(self._latest_token, token)
-        self.bridge.event.emit(event)
-
-    def run_event_loop(self, shutdown, on_heartbeat):
-        from PySide6.QtCore import QTimer
-
-        timer = QTimer(self.presenter)
-        timer.setInterval(100)
-
-        def poll():
-            if shutdown.is_set():
-                self.application.quit()
-                return
-            now = time.monotonic()
-            if now - self.presenter.last_heartbeat >= 60:
-                self.presenter.last_heartbeat = now
-                on_heartbeat()
-
-        timer.timeout.connect(poll)
-        timer.start()
-        self.application.exec()
-        timer.stop()
-        return True
 
 
 class _TkOverlay:

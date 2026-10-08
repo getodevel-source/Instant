@@ -1,240 +1,222 @@
-"""Qt window lifecycle behavior, exercised when PySide6 is available."""
+"""Ciclo de vida del panel (`PanelLogic`), sin Qt ni WebEngine.
+
+Cubre el comportamiento de consumidor: qué pasa al cerrar, cuándo arranca el
+daemon, cómo se rutean las actualizaciones y qué copy ve el usuario en cada
+estado. El dibujo de la página lo cubre `test_panel_page.py`; el motor real
+(QtWebEngine) se prueba con el smoke manual.
+"""
 import os
 import sys
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-try:
-    import PySide6  # noqa: F401
-except ImportError:
-    print("SKIP Qt lifecycle behavior: PySide6 is not installed")
-else:
-    from instant_app import gui
+from instant_app import gui
 
-    class QtLifecycleTests(unittest.TestCase):
-        @classmethod
-        def setUpClass(cls):
-            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-            import gc as _gc
-            _gc.disable()
-            from PySide6.QtWidgets import QApplication
-            cls.app = QApplication.instance() or QApplication([])
+CFG = {"mic_hint": "", "mic_index": None, "key": "f9", "autostart": False}
 
-        @classmethod
-        def tearDownClass(cls):
-            import gc as _gc
-            _gc.enable()
-            _gc.collect()
 
-        def setUp(self):
-            # Las ventanas del test anterior se destruyen acá, fuera de todo
-            # event loop: su GC cíclico durante un pump posterior aborta Qt
-            # en offscreen. Producción no lo sufre (una ventana por proceso).
-            import gc as _gc
-            _gc.collect()
+class SyncTasks:
+    """TaskRunner sincrónico: aplica el trabajo en el acto (determinista)."""
 
-        def _wait_idle(self, window):
-            """Espera a que no haya workers y a que se apliquen sus resultados.
+    def __init__(self):
+        self.pending = 0
+        self.on_idle = None
+        self.on_error = None
 
-            `workers_idle` sale del pool apenas termina el worker, pero el
-            resultado viaja como señal encolada y puede aplicarse un instante
-            después; sin drenar el loop, el estado del panel queda a medias.
-            """
-            from PySide6.QtCore import QEventLoop, QTimer
+    def submit(self, fn, on_result=None, on_error=None, on_progress=None):
+        self.pending += 1
+        try:
+            value = fn(lambda payload: on_progress and on_progress(payload))
+        except Exception as exc:  # noqa: BLE001  (igual que el runner real)
+            if on_error is not None:
+                on_error(exc)
+            elif self.on_error is not None:
+                self.on_error(exc)
+            value = None
+        else:
+            if on_result is not None:
+                on_result(value)
+        finally:
+            self.pending -= 1
+        if self.on_idle is not None:
+            self.on_idle()
+        return id(fn)
 
-            loop = QEventLoop()
-            window.workers_idle.connect(loop.quit)
-            if window._pending_workers:
-                loop.exec()
-            settle = QEventLoop()
-            QTimer.singleShot(30, settle.quit)
-            settle.exec()
-            self.assertFalse(window._pending_workers)
+    def drain(self):
+        return 0
 
-        def _close_and_wait(self, window):
-            window.close()
-            self._wait_idle(window)
-        def test_closing_window_does_not_stop_or_query_daemon(self):
-            Window = gui._main_window_class()
-            with patch("instant_app.gui.config.load", return_value={"mic_hint": "", "mic_index": None, "key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(autostart_override=False)
-                self._wait_idle(window)
-            window.show()
-            started, release = threading.Event(), threading.Event()
-            try:
-                window._run_worker(lambda _emit: (started.set(), release.wait(3)), lambda _value: self.fail("closed window received late result"))
-                self.assertTrue(started.wait(2))
-                with patch("instant_app.gui.daemon_is_running", side_effect=AssertionError("close queried daemon")), \
-                        patch.object(window, "stop_daemon", side_effect=AssertionError("close stopped daemon")):
-                    window.close()
-                    release.set()
-                    self._wait_idle(window)
-                self.assertTrue(window._closed)
-            finally:
-                release.set()
-                self._close_and_wait(window)
+    def close(self):
+        self.pending = 0
 
-        def test_daemon_inherits_resolved_model_directory(self):
-            Window = gui._main_window_class()
-            data_dir = os.path.join(os.getcwd(), "models")
-            launch = Mock()
-            with patch("instant_app.gui.config.load", return_value={"mic_hint": "", "mic_index": None, "key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.config.save", return_value="config.json"), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": True, "vad": True}), \
-                    patch("instant_app.gui.resolve_data_dir", return_value=data_dir), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.autostart.is_enabled", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch("subprocess.Popen", launch), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(autostart_override=False)
-                self._wait_idle(window)
-                window.model_ready = True
-                window._start_daemon()
-                window._start_daemon()
-                self.assertEqual(launch.call_count, 1)
-                self.assertEqual(launch.call_args.kwargs["env"]["DICTADO_DATA"], data_dir)
-                self.assertEqual(launch.call_args.kwargs["cwd"], gui._workdir())
-                self._close_and_wait(window)
 
-        def test_noargs_start_waits_for_readiness_and_starts_once(self):
-            Window = gui._main_window_class()
-            with patch("instant_app.gui.config.load", return_value={"mic_hint": "", "mic_index": None, "key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": True, "vad": True}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.resolve_data_dir", return_value=os.path.join(os.getcwd(), "models")), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch("instant_app.gui.autostart.is_enabled", return_value=False), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(start_daemon_on_open=True)
-                with patch.object(window, "_start_daemon") as start_daemon:
-                    window._maybe_start_daemon_on_open()
-                    start_daemon.assert_not_called()
-                    self._wait_idle(window)
-                    self.assertTrue(window._daemon_state_ready)
-                    self.assertTrue(window._microphones_loaded)
-                    start_daemon.assert_called_once_with(save_settings=False)
-                    window._maybe_start_daemon_on_open()
-                    start_daemon.assert_called_once()
-                    window._start_daemon_on_open = True
-                    window._last_daemon_running = True
-                    window._maybe_start_daemon_on_open()
-                    start_daemon.assert_called_once()
-                self._close_and_wait(window)
+def make_logic(emitted=None, tasks=None, schedule=None, **kwargs):
+    emitted = emitted if emitted is not None else []
+    with patch("instant_app.gui.config.load", return_value=dict(CFG)), \
+            patch("instant_app.gui.models.check", return_value={"parakeet": True, "vad": True}), \
+            patch("instant_app.gui.resolve_data_dir", return_value=os.path.join(os.getcwd(), "models")), \
+            patch("instant_app.gui.daemon_is_running", return_value=False), \
+            patch("instant_app.gui.audio.input_choices", return_value=[]), \
+            patch("instant_app.gui.autostart.is_enabled", return_value=False), \
+            patch.dict(sys.modules, {"sounddevice": SimpleNamespace(
+                default=SimpleNamespace(device=(-1, -1)))}):
+        logic = gui.PanelLogic(
+            emit=lambda kind, payload: emitted.append((kind, payload)),
+            tasks=tasks if tasks is not None else SyncTasks(),
+            schedule=schedule if schedule is not None else (lambda ms, fn: None),
+            **kwargs)
+    return logic, emitted
 
-        def test_home_status_explains_cli_focus_for_both_daemon_states(self):
-            Window = gui._main_window_class()
-            for running in (False, True):
-                with self.subTest(running=running), \
-                        patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
-                        patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
-                        patch("instant_app.gui.daemon_is_running", return_value=running), \
-                        patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                        patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                    window = Window()
-                    self._wait_idle(window)
-                    hint = window.status_detail.text()
-                    self.assertIn("prompt o campo editable de la CLI", hint)
-                    self.assertIn("Ctrl+V", hint)
-                    self.assertNotIn("transcribir", hint.lower())
-                    self._close_and_wait(window)
-                    del window
-                    import gc as _gc
-                    _gc.collect()
 
-        def test_installed_mode_runs_the_setup_silently_and_closes(self):
-            Window = gui._main_window_class()
-            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(autostart_override=False)
-                self._wait_idle(window)
-            try:
-                with patch("instant_app.gui.stop_daemon") as stop, \
-                        patch("instant_app.gui.daemon_is_running", return_value=False), \
-                        patch("instant_app.gui.subprocess.Popen") as popen:
-                    window._install_via_setup("C:/tmp/Instant-Setup.exe")
-                stop.assert_called_once_with()
-                command = popen.call_args.args[0]
-                self.assertEqual(command[0], "C:/tmp/Instant-Setup.exe")
-                self.assertIn("/SILENT", command)
-                self.assertIn("/SUPPRESSMSGBOXES", command)
-                self.assertTrue(window._closed)
-            finally:
-                self._close_and_wait(window)
+class PanelLifecycleTests(unittest.TestCase):
+    def test_home_status_explains_cli_focus_for_both_daemon_states(self):
+        for running in (False, True):
+            with self.subTest(running=running):
+                logic, _emitted = make_logic()
+                with patch("instant_app.gui.daemon_is_running", return_value=running):
+                    logic.refresh_daemon()
+                state = logic.state_payload()
+                self.assertEqual(state["status"]["state"],
+                                 "ok" if running else "down")
+                self.assertEqual(state["status"]["title"],
+                                 "Instant está activo" if running else "Listo para dictar")
+                self.assertIn("mantené F9", state["status"]["detail"])
+                self.assertIn("Ctrl+V", state["status"]["detail"])
 
-        def test_install_ready_routes_by_install_mode(self):
-            Window = gui._main_window_class()
-            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(autostart_override=False)
-                self._wait_idle(window)
-            try:
-                with patch("instant_app.update.install_mode", return_value="installed"), \
-                        patch.object(window, "_install_via_setup") as via_setup:
-                    window._install_ready("C:/tmp/Instant-Setup.exe", "hash")
-                via_setup.assert_called_once_with("C:/tmp/Instant-Setup.exe")
-                with patch("instant_app.update.install_mode", return_value="portable"), \
-                        patch("instant_app.gui.sys.platform", "win32"), \
-                        patch("instant_app.gui._workdir", return_value="C:/sinScripts"), \
-                        patch.object(window, "toast") as toast:
-                    window._install_ready("C:/tmp/Instant.exe", "hash")
-                toast.assert_called_once()
-                self.assertIn("instant-update.bat", toast.call_args.args[1])
-            finally:
-                self._close_and_wait(window)
+    def test_closing_drops_late_results_without_touching_daemon(self):
+        started, release = threading.Event(), threading.Event()
+        seen = []
+        logic, _emitted = make_logic(tasks=gui.TaskRunner())
 
-        def test_unix_frozen_update_applies_in_place_and_restarts_daemon(self):
-            Window = gui._main_window_class()
-            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(autostart_override=False)
-                self._wait_idle(window)
-            try:
-                with patch("instant_app.update.install_mode", return_value="portable"), \
-                        patch("instant_app.gui.sys.platform", "linux"), \
-                        patch("instant_app.gui.sys.frozen", True, create=True), \
-                        patch("instant_app.update.apply_binary_update",
-                              return_value="/usr/local/bin/instant") as apply, \
-                        patch.object(window, "stop_daemon") as stop:
-                    window._install_ready("/tmp/instant-linux", "hash")
-                apply.assert_called_once_with("/tmp/instant-linux")
-                stop.assert_called_once_with(restart=True)
-            finally:
-                self._close_and_wait(window)
+        def slow(_emit):
+            started.set()
+            release.wait(5)
+            return "tarde"
 
-        def test_setup_route_scrolls_to_audio_section(self):
-            Window = gui._main_window_class()
-            with patch("instant_app.gui.config.load", return_value={"key": "f9", "autostart": False}), \
-                    patch("instant_app.gui.models.check", return_value={"parakeet": False, "vad": False}), \
-                    patch("instant_app.gui.daemon_is_running", return_value=False), \
-                    patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                    patch.dict(sys.modules, {"sounddevice": SimpleNamespace(default=SimpleNamespace(device=(-1, -1)))}):
-                window = Window(page="setup", autostart_override=False)
-                self._wait_idle(window)
-            self.assertEqual(set(window.pages), {"home", "audio", "settings", "models"})
-            self.assertEqual(window._current_section, "audio")
-            window.navigate("models")
-            self.assertEqual(window._current_section, "models")
-            window.navigate("home")
-            self.assertEqual(window._current_section, "home")
-            self._close_and_wait(window)
+        logic.tasks.submit(slow, lambda value: seen.append(value))
+        self.assertTrue(started.wait(2))
+        with patch("instant_app.gui.daemon_is_running",
+                   side_effect=AssertionError("close consultó el daemon")), \
+                patch("instant_app.gui.stop_daemon",
+                      side_effect=AssertionError("close frenó el daemon")):
+            logic.close()
+        release.set()
+        deadline = time.monotonic() + 3
+        while logic.tasks.pending and time.monotonic() < deadline:
+            logic.tasks.drain()
+            time.sleep(0.02)
+        logic.tasks.drain()
+        self.assertTrue(logic._closed)
+        self.assertEqual(seen, [])
+
+    def test_daemon_inherits_resolved_model_directory_and_start_is_single_flight(self):
+        launch = Mock()
+        logic, _emitted = make_logic()
+        logic._daemon_state_ready = True
+        logic._microphones_loaded = True
+        logic.model_ready = True
+        with patch("subprocess.Popen", launch):
+            logic._start_daemon(save_settings=False)
+            logic._start_daemon(save_settings=False)
+        self.assertEqual(launch.call_count, 1)
+        self.assertEqual(launch.call_args.kwargs["env"]["DICTADO_DATA"], logic.data_dir)
+        self.assertEqual(launch.call_args.kwargs["cwd"], gui._workdir())
+
+    def test_noargs_start_waits_for_readiness_and_starts_once(self):
+        launch = Mock()
+        logic, _emitted = make_logic(start_daemon_on_open=True)
+        logic.model_ready = True
+        with patch("subprocess.Popen", launch):
+            logic._maybe_start_daemon_on_open()
+            launch.assert_not_called()
+            with patch("instant_app.gui.daemon_is_running", return_value=False):
+                logic.refresh_daemon()
+            logic.refresh_microphones(initial=True)
+            self.assertTrue(logic._daemon_state_ready)
+            self.assertTrue(logic._microphones_loaded)
+            logic._maybe_start_daemon_on_open()
+            self.assertEqual(launch.call_count, 1)
+            logic._maybe_start_daemon_on_open()
+            self.assertEqual(launch.call_count, 1)
+            # Daemon ya corriendo: no se arranca de nuevo.
+            logic._start_daemon_on_open = True
+            logic._last_daemon_running = True
+            logic._maybe_start_daemon_on_open()
+            self.assertEqual(launch.call_count, 1)
+
+    def test_start_refuses_without_models(self):
+        launch = Mock()
+        logic, emitted = make_logic()
+        logic._daemon_state_ready = True
+        logic._microphones_loaded = True
+        logic.model_ready = False
+        with patch("subprocess.Popen", launch):
+            self.assertFalse(logic._start_daemon(save_settings=False))
+        launch.assert_not_called()
+        titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
+        self.assertIn("Modelos pendientes", titles)
+
+    def test_daemon_start_timeout_sets_recovery_copy(self):
+        scheduled = []
+        logic, _emitted = make_logic(schedule=lambda ms, fn: scheduled.append((ms, fn)))
+        logic._daemon_state_ready = True
+        logic._microphones_loaded = True
+        logic.model_ready = True
+        with patch("subprocess.Popen", Mock()):
+            self.assertTrue(logic._start_daemon(save_settings=False))
+        timeouts = [fn for ms, fn in scheduled if ms == 10000]
+        self.assertEqual(len(timeouts), 1)
+        timeouts[0]()
+        self.assertFalse(logic._daemon_start_pending)
+        self.assertEqual(logic.status_detail, gui.DAEMON_MISSING_DETAIL)
+
+    def test_update_routes_by_install_mode(self):
+        # Instalado (Windows): frena el daemon y lanza el Setup en silencio.
+        logic, _emitted = make_logic()
+        with patch("instant_app.update.install_mode", return_value="installed"), \
+                patch("instant_app.gui.stop_daemon") as stop, \
+                patch("instant_app.gui.daemon_is_running", return_value=False), \
+                patch("subprocess.Popen") as popen:
+            logic._install_ready("C:/tmp/Instant-Setup.exe", "ab" * 32)
+        stop.assert_called_once()
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0][1:],
+                         ["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+        self.assertTrue(logic._closed)
+
+        # Unix congelado: reemplazo en caliente + reinicio del dictado.
+        logic, emitted = make_logic()
+        with patch.object(sys, "frozen", True, create=True), \
+                patch.object(sys, "platform", "linux"), \
+                patch("instant_app.update.install_mode", return_value="portable"), \
+                patch("instant_app.update.apply_binary_update",
+                      return_value="/usr/local/bin/instant") as apply_update, \
+                patch.object(logic, "stop_daemon_flow") as restart:
+            logic._install_ready("/tmp/instant-linux", "cd" * 32)
+        apply_update.assert_called_once_with("/tmp/instant-linux")
+        restart.assert_called_once_with(restart=True)
+
+        # Portable sin script: aviso con instrucciones, sin lanzar nada.
+        logic, emitted = make_logic()
+        with patch("instant_app.update.install_mode", return_value="portable"), \
+                patch("os.path.isfile", return_value=False), \
+                patch("subprocess.Popen") as popen:
+            logic._install_ready("C:/tmp/instant.exe", "ef" * 32)
+        popen.assert_not_called()
+        messages = [payload for kind, payload in emitted if kind == "toast"]
+        self.assertTrue(any("instant-update.bat" in item["message"] for item in messages))
+
+    def test_apply_gui_action_scrolls_to_audio_and_requests_start(self):
+        logic, emitted = make_logic()
+        logic.apply_gui_action("setup", start_daemon=False)
+        self.assertIn(("navigate", {"page": "audio"}), emitted)
+        logic.apply_gui_action(None, start_daemon=True)
+        self.assertTrue(logic._start_daemon_on_open)
+        self.assertIn(("navigate", {"page": "home"}), emitted)
 
 
 if __name__ == "__main__":

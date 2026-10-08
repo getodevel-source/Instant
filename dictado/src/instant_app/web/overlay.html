@@ -1,0 +1,339 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<!--QWEBCHANNEL-->
+<script>
+/* Overlay de Instant (daemon): misma anatomia que los overlays QML/Tk, en
+   canvas2d. Dos estilos:
+     classic  pastilla de vidrio con 9 barras que siguen su banda real, chip
+              de tecla, spinner al transcribir, tilde verde + "Copiado" al
+              confirmar.
+     orbital  orbe con halo, anillo reactivo, espectro de 9 arcos y barrido
+              al transcribir; al confirmar solo el tilde.
+   Protocolo con el daemon (QWebChannel): pushFrame(json) con
+   {mode, message, keyLabel, style, level?, pitch?, bands?}. La paleta repite
+   instant_app/branding.py (ver tests/test_overlay_palette.py). */
+(() => {
+  const PI = Math.PI;
+
+  // Tokens de marca (espejo de branding.PALETTE).
+  const PALETTE = {
+    accent: "#55d5c8", working: "#8fd7e8", green: "#7cdda6", amber: "#f2c36a",
+    red: "#ff908b", text: "#eaf3f4", muted: "#9db0b6", glass: "#1b2b34",
+    glass_alt: "#0f1c23", line: "#28414a"
+  };
+  const MARGIN = 12;   // margen transparente para la sombra dibujada.
+
+  const canvas = document.getElementById('c');
+  const C = canvas.getContext('2d');
+  const state = {
+    mode: 'idle', message: '', keyLabel: 'F9', style: 'classic',
+    target: { level: 0, pitch: 0.5, bands: new Array(9).fill(0) },
+    level: 0, pitch: 0.5
+  };
+  let running = false, lastMs = 0, timeS = 0;
+
+  const rgb = (hex) => {
+    const v = parseInt(hex.slice(1), 16);
+    return [v >> 16 & 255, (v >> 8) & 255, v & 255];
+  };
+  const rgba = (hex, a) => {
+    const [r, g, b] = rgb(hex);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+  };
+  const mixHex = (h1, h2, t) => {
+    const a = rgb(h1), b = rgb(h2);
+    const v = a.map((x, i) => Math.round(x + (b[i] - x) * t));
+    return 'rgb(' + v.join(',') + ')';
+  };
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(window.innerWidth * dpr);
+    canvas.height = Math.round(window.innerHeight * dpr);
+    C.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // --- Puente con el daemon ---
+  let bridge = null;
+  window.pushFrame = function (f) {
+    if (f.level !== undefined) state.target.level = f.level;
+    if (f.pitch !== undefined) state.target.pitch = f.pitch;
+    if (f.bands) state.target.bands = f.bands;
+    if (f.mode !== undefined) state.mode = f.mode;
+    if (f.message !== undefined) state.message = f.message;
+    if (f.keyLabel) state.keyLabel = f.keyLabel;
+    if (f.style) state.style = f.style;
+    start();
+  };
+  if (typeof qt !== 'undefined' && qt.webChannelTransport) {
+    new QWebChannel(qt.webChannelTransport, function (channel) {
+      bridge = channel.objects.bridge;
+      bridge.frame.connect(function (payload) {
+        try {
+          window.pushFrame(JSON.parse(payload));
+        } catch (e) { /* frame corrupto: se descarta */ }
+      });
+      bridge.event(JSON.stringify({ kind: 'ready' }));
+    });
+  } else {
+    // Sin canal no hay frames: se deja marca visible (y titulo) para el smoke.
+    document.title = 'overlay-web sin-canal';
+    C.fillStyle = "#ff908b";
+    C.font = '12px sans-serif';
+    C.fillText('sin canal', 16, 24);
+  }
+  if (!document.title)
+    document.title = 'overlay-web';
+
+  // --- Dibujo ---
+  function pillBox(textWidth, textHeight) {
+    const feedback = state.mode === 'notice' || state.mode === 'error';
+    const w = feedback ? Math.min(424, Math.max(300, textWidth + 104)) : 300;
+    const h = feedback ? Math.max(78, textHeight + 34) : 78;
+    return {
+      w: w, h: h, x: (window.innerWidth - w) / 2,
+      y: window.innerHeight - MARGIN - h, feedback: feedback
+    };
+  }
+
+  function roundRect(x, y, w, h, r) {
+    C.beginPath();
+    C.roundRect(x, y, w, h, r);
+  }
+
+  function modeColor() {
+    if (state.mode === 'notice') return PALETTE.amber;
+    if (state.mode === 'error') return PALETTE.red;
+    if (state.mode === 'success') return PALETTE.green;
+    if (state.mode === 'processing') return PALETTE.working;
+    return PALETTE.accent;
+  }
+
+  function drawGlass(box) {
+    C.save();
+    C.shadowColor = 'rgba(0,0,0,0.45)';
+    C.shadowBlur = 16;
+    C.shadowOffsetY = 6;
+    const grad = C.createLinearGradient(0, box.y, 0, box.y + box.h);
+    grad.addColorStop(0, rgba(PALETTE.glass, 0.92));
+    grad.addColorStop(1, rgba(PALETTE.glass_alt, 0.94));
+    C.fillStyle = grad;
+    roundRect(box.x, box.y, box.w, box.h, 18);
+    C.fill();
+    C.restore();
+    C.strokeStyle = rgba(PALETTE.line, 0.9);
+    C.lineWidth = 1;
+    roundRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1, 18);
+    C.stroke();
+  }
+
+  function drawCheck(cx, cy, size, color, lineWidth) {
+    C.strokeStyle = color;
+    C.lineWidth = lineWidth;
+    C.lineCap = 'round';
+    C.lineJoin = 'round';
+    C.beginPath();
+    C.moveTo(cx - size * 0.5, cy + size * 0.05);
+    C.lineTo(cx - size * 0.12, cy + size * 0.42);
+    C.lineTo(cx + size * 0.55, cy - size * 0.38);
+    C.stroke();
+  }
+
+  function drawClassic() {
+    const voice = mixHex(PALETTE.accent, PALETTE.working, state.pitch);
+    const msgFont = '14px "Segoe UI", system-ui, sans-serif';
+    C.font = msgFont;
+    const textW = state.message ? C.measureText(state.message).width : 0;
+    const box = pillBox(textW, state.message ? 20 : 0);
+    drawGlass(box);
+
+    const cx = box.x + box.w / 2;
+    const cy = box.y + box.h / 2;
+
+    if (box.feedback) {
+      C.font = msgFont;
+      C.fillStyle = state.mode === 'error' ? PALETTE.red : PALETTE.amber;
+      C.textAlign = 'center';
+      C.textBaseline = 'middle';
+      C.fillText(state.message, cx, cy + 1);
+      return;
+    }
+
+    if (state.mode === 'success') {
+      drawCheck(cx - 34, cy, 22, PALETTE.green, 3);
+      C.font = '14px "Segoe UI", system-ui, sans-serif';
+      C.fillStyle = PALETTE.green;
+      C.textAlign = 'center';
+      C.textBaseline = 'middle';
+      C.fillText('Copiado', cx + 14, cy + 1);
+      return;
+    }
+
+    // Barras: 9 bandas reales, con ataque por nivel y vaiven por indice.
+    const barX = cx - 56;
+    const floorH = 5, maxH = 34;
+    for (let i = 0; i < 9; i++) {
+      const band = state.target.bands[i] || 0;
+      const act = Math.max(state.level, band);
+      const wob = 0.78 + 0.22 * Math.sin(timeS * 4.2 - i * 0.72);
+      const h = Math.min(maxH, floorH + (maxH - floorH) * (0.28 * act + 0.72 * band) * wob);
+      const x = barX + i * 12.5;
+      C.fillStyle = voice;
+      C.globalAlpha = 0.35 + 0.65 * Math.min(1, 0.4 * act + 0.6 * band);
+      roundRect(x, cy - h / 2, 3, h, 1.5);
+      C.fill();
+      C.globalAlpha = 1;
+    }
+
+    if (state.mode === 'processing') {
+      const t0 = (timeS * (1000 / 1150)) % 1;
+      C.strokeStyle = PALETTE.working;
+      C.lineWidth = 3;
+      C.lineCap = 'round';
+      C.beginPath();
+      C.arc(cx, cy, 15, t0 * 2 * PI, t0 * 2 * PI + PI * 0.55);
+      C.stroke();
+    }
+
+    // Chip de tecla.
+    C.font = '600 12px "Segoe UI", system-ui, sans-serif';
+    const label = state.keyLabel || 'F9';
+    const chipW = Math.max(30, C.measureText(label).width + 16);
+    const chipX = box.x + box.w - chipW - 14;
+    roundRect(chipX, cy - 11, chipW, 22, 11);
+    C.fillStyle = rgba(PALETTE.line, 0.55);
+    C.fill();
+    C.fillStyle = PALETTE.muted;
+    C.textAlign = 'center';
+    C.textBaseline = 'middle';
+    C.fillText(label, chipX + chipW / 2, cy + 1);
+  }
+
+  function drawOrbital() {
+    const voice = mixHex(PALETTE.accent, PALETTE.working, state.pitch);
+    const level = state.level;
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight - MARGIN - 100;
+    const active = state.mode === 'starting' || state.mode === 'listening'
+      || state.mode === 'processing';
+
+    if (state.mode === 'notice' || state.mode === 'error') {
+      const color = state.mode === 'error' ? PALETTE.red : PALETTE.amber;
+      C.font = '13px "Segoe UI", system-ui, sans-serif';
+      const w = Math.max(120, C.measureText(state.message).width + 36);
+      const box = { x: cx - w / 2, y: cy + 64, w: w, h: 26, feedback: true };
+      drawGlass(box);
+      C.fillStyle = color;
+      C.textAlign = 'center';
+      C.textBaseline = 'middle';
+      C.fillText(state.message, cx, box.y + 14);
+      return;
+    }
+    if (state.mode === 'success') {
+      drawCheck(cx, cy, 30, PALETTE.green, 4);
+      return;
+    }
+    if (!active)
+      return;
+
+    const nucR = (state.mode === 'processing' ? 22 + 3 * Math.sin(timeS * 2 * PI / 0.9)
+      : 24 + 8 * level);
+    // Halo + nucleo
+    const haloR = nucR + 30 + 26 * level;
+    const grad = C.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+    const a0 = 0.55 + 0.3 * level;
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6;
+      grad.addColorStop(t, rgba(PALETTE.accent, Math.pow(1 - t, 2.4) * a0));
+    }
+    C.fillStyle = 'rgba(0,0,0,0)';
+    C.save();
+    C.globalCompositeOperation = 'lighter';
+    C.fillStyle = grad;
+    C.beginPath();
+    C.arc(cx, cy, haloR, 0, 2 * PI);
+    C.fill();
+    C.restore();
+    C.fillStyle = voice;
+    C.beginPath();
+    C.arc(cx, cy, nucR, 0, 2 * PI);
+    C.fill();
+
+    // Anillo principal + espectro de 9 arcos.
+    C.strokeStyle = rgba(PALETTE.accent, 0.25 + 0.5 * level);
+    C.lineWidth = 2 + 2.5 * level;
+    C.beginPath();
+    C.arc(cx, cy, 56, 0, 2 * PI);
+    C.stroke();
+
+    const rot = timeS * (0.15 + 0.35 * level);
+    const slot = 2 * PI / 9;
+    C.lineWidth = 6;
+    C.lineCap = 'round';
+    for (let i = 0; i < 9; i++) {
+      const band = state.target.bands[i] || 0;
+      const c = (i + 0.5) * slot + rot;
+      const half = 0.5 * slot * (0.12 + 0.88 * band) * 0.85;
+      C.strokeStyle = rgba(PALETTE.accent, 0.25 + 0.6 * band);
+      C.beginPath();
+      C.arc(cx, cy, 78, c - half, c + half);
+      C.stroke();
+    }
+
+    if (state.mode === 'processing') {
+      const t0 = (timeS * (2 * PI / 1.1)) % (2 * PI);
+      const half = 0.5 * (70 * PI / 180);
+      C.strokeStyle = rgba(PALETTE.working, 0.9);
+      C.lineWidth = 10;
+      C.beginPath();
+      C.arc(cx, cy, 78, t0 - half, t0 + half);
+      C.stroke();
+    }
+  }
+
+  function frame(now) {
+    const dt = lastMs ? (now - lastMs) / 1000 : 0.016;
+    lastMs = now;
+    timeS += dt;
+    state.level += (state.target.level - state.level) * (1 - Math.exp(-dt / 0.090));
+    state.pitch += (state.target.pitch - state.pitch) * (1 - Math.exp(-dt / 0.140));
+
+    C.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    if (state.mode !== 'idle')
+      (state.style === 'orbital' ? drawOrbital : drawClassic)();
+
+    if (state.mode === 'idle' && !hasPending()) {
+      running = false;
+      return;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function hasPending() {
+    return state.target.level > 0.001 || state.target.pitch !== 0.5
+      || state.target.bands.some((b) => b > 0.001);
+  }
+
+  function start() {
+    if (running)
+      return;
+    running = true;
+    lastMs = 0;
+    requestAnimationFrame(frame);
+  }
+  start();
+})();
+</script>
+</body>
+</html>

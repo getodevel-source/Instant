@@ -76,8 +76,13 @@ jobs:
             --hidden-import PySide6.QtQml \
             --hidden-import PySide6.QtQuick \
             --additional-hooks-dir dictado/hooks \
-            --add-data "dictado/src/instant_app/qml/overlay.qml;instant_app/qml" \
-            --add-data "dictado/src/instant_app/qml/overlay_orbital.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/overlay_web_host.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/panel_web_host.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/web/overlay.html;instant_app/web" \
+            --add-data "dictado/src/instant_app/web/panel.html;instant_app/web" \
+            --hidden-import PySide6.QtWebEngineQuick \
+            --hidden-import PySide6.QtWebEngineCore \
+            --hidden-import PySide6.QtWebChannel \
             --collect-all sherpa_onnx \
             --collect-all sounddevice \
             --collect-all pystray \
@@ -97,8 +102,13 @@ jobs:
             --hidden-import PySide6.QtQml \
             --hidden-import PySide6.QtQuick \
             --additional-hooks-dir dictado/hooks \
-            --add-data "dictado/src/instant_app/qml/overlay.qml;instant_app/qml" \
-            --add-data "dictado/src/instant_app/qml/overlay_orbital.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/overlay_web_host.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/panel_web_host.qml;instant_app/qml" \
+            --add-data "dictado/src/instant_app/web/overlay.html;instant_app/web" \
+            --add-data "dictado/src/instant_app/web/panel.html;instant_app/web" \
+            --hidden-import PySide6.QtWebEngineQuick \
+            --hidden-import PySide6.QtWebEngineCore \
+            --hidden-import PySide6.QtWebChannel \
             --collect-all sherpa_onnx \
             --collect-all sounddevice \
             --collect-all pystray \
@@ -123,10 +133,10 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          # El panel y el overlay Qt Quick son la UI de los tres sistemas: el
-          # binario de Linux y macOS lleva PySide6 (widgets, red del canal de
-          # instancia única y módulos QML), los .qml y Pillow para los iconos,
-          # además del daemon/CLI de siempre.
+          # El panel y el overlay web son la UI de los tres sistemas: el
+          # binario de Linux y macOS lleva PySide6 (QtWebEngine, red del canal
+          # de instancia única y módulos QML de los hosts), las páginas web y
+          # Pillow para los iconos, además del daemon/CLI de siempre.
           pyinstaller --onefile --name "${{ matrix.binary_name }}" \
             --hidden-import sherpa_onnx \
             --hidden-import sounddevice \
@@ -137,8 +147,13 @@ jobs:
             --hidden-import PIL.Image \
             --hidden-import PIL.ImageDraw \
             --additional-hooks-dir dictado/hooks \
-            --add-data "dictado/src/instant_app/qml/overlay.qml:instant_app/qml" \
-            --add-data "dictado/src/instant_app/qml/overlay_orbital.qml:instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/overlay_web_host.qml:instant_app/qml" \
+            --add-data "dictado/src/instant_app/qml/panel_web_host.qml:instant_app/qml" \
+            --add-data "dictado/src/instant_app/web/overlay.html:instant_app/web" \
+            --add-data "dictado/src/instant_app/web/panel.html:instant_app/web" \
+            --hidden-import PySide6.QtWebEngineQuick \
+            --hidden-import PySide6.QtWebEngineCore \
+            --hidden-import PySide6.QtWebChannel \
             --collect-all sherpa_onnx \
             --collect-all sounddevice \
             dictado/src/instant_app/__main__.py

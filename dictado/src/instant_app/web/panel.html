@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Instant</title>
+<style>
+:root{
+--bg:#0f1a20;--bg-alt:#0c161b;--surface:#16242b;--surface-alt:#1d2f37;--surface-high:#243a43;
+--line:#28414a;--line-soft:#1e333b;--text:#eaf3f4;--muted:#9db0b6;--faint:#6f858c;
+--accent:#55d5c8;--accent-soft:#72d5c7;--accent-btn:#0d7d73;--accent-hover:#109287;--accent-press:#0a655e;
+--hero:#15333d;--hero-alt:#112830;--green:#7cdda6;--amber:#f2c36a;--red:#ff908b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:13px/1.5 system-ui,"Segoe UI",sans-serif;max-width:760px;margin:0 auto;padding:16px 16px 42px}
+h1{font-size:26px;margin:0 0 8px;font-weight:700}
+h2{font-size:20px;margin:0 0 8px;font-weight:650}
+p{margin:4px 0}
+.small{font-size:12px;color:var(--muted)}
+.top{display:flex;align-items:center;gap:8px;padding:8px 0 16px}
+.brand{font-size:18px;font-weight:750;letter-spacing:.2px}
+.brand i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--accent);margin-right:8px}
+.top nav{display:flex;gap:4px;margin-left:16px}
+.top .sp{flex:1}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;margin:0 0 16px}
+.hero{background:linear-gradient(180deg,var(--hero),var(--hero-alt));border-color:var(--line)}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
+.btn{background:var(--surface-high);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:8px 16px;font:inherit;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent-btn);border-color:var(--accent-btn);color:#fff}
+.btn.primary:hover{background:var(--accent-hover)}
+.btn.primary:active{background:var(--accent-press)}
+.btn.danger{color:var(--red)}
+.btn:disabled{opacity:.5;cursor:default}
+.link{background:none;border:none;color:var(--muted);font:inherit;cursor:pointer;padding:8px;border-radius:8px}
+.link:hover{color:var(--accent-soft)}
+select,input[type=text]{background:var(--bg-alt);color:var(--text);border:1px solid var(--line-soft);border-radius:8px;padding:8px;font:inherit;min-width:0}
+select{max-width:100%}
+label.check{display:flex;align-items:center;gap:8px;cursor:pointer}
+.status{display:flex;align-items:center;gap:8px;margin-top:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--faint);flex:none}
+.dot.ok{background:var(--green)}
+.dot.starting{background:var(--amber)}
+.dot.down{background:var(--red)}
+.badge{display:inline-block;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-weight:650}
+.quick{color:var(--muted);font-size:12px}
+.meter{height:10px;background:var(--bg-alt);border:1px solid var(--line-soft);border-radius:8px;overflow:hidden;margin-top:8px}
+.meter>div{height:100%;width:0%;background:var(--accent);transition:width .12s linear}
+table.vocab{width:100%;border-collapse:collapse;margin-top:8px}
+table.vocab th{font-size:12px;color:var(--muted);text-align:left;padding:4px 8px;border-bottom:1px solid var(--line)}
+table.vocab td{padding:4px;border-bottom:1px solid var(--line-soft)}
+table.vocab input{width:100%}
+.icon{background:var(--surface-alt);border:1px solid var(--line);color:var(--text);border-radius:8px;width:32px;height:32px;font:inherit;cursor:pointer}
+.icon.on{color:var(--accent-soft);border-color:var(--accent)}
+.icon.del{color:var(--red)}
+footer{display:flex;align-items:center;gap:8px;color:var(--faint);font-size:12px;padding:8px 0}
+footer .sp{flex:1}
+#toasts{position:fixed;right:16px;bottom:16px;width:360px;max-width:calc(100vw - 32px);display:flex;flex-direction:column;gap:8px;z-index:50}
+.toast{background:var(--surface-alt);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:8px 16px 8px 16px;box-shadow:0 8px 26px rgba(0,0,0,.45)}
+.toast.warn{border-left-color:var(--amber)}
+.toast.error{border-left-color:var(--red)}
+.toast b{display:block}
+.toast p{color:var(--muted);font-size:12px;white-space:pre-line}
+.toast .acts{display:flex;gap:8px;margin-top:8px}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:16px}
+.overlay[hidden]{display:none}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:26px;width:420px;max-width:100%}
+.modal h2{margin-top:0}
+.modal pre{background:var(--bg-alt);border:1px solid var(--line-soft);border-radius:8px;padding:8px;max-height:300px;overflow:auto;font-size:12px;white-space:pre-wrap}
+.keywait{color:var(--amber)}
+.keymsg{color:var(--red);min-height:1.2em}
+</style>
+</head>
+<body>
+<header class="top">
+<span class="brand"><i></i>Instant</span>
+<nav>
+<button class="link" data-page="home">Inicio</button>
+<button class="link" data-page="audio">Micrófono</button>
+<button class="link" data-page="settings">Ajustes</button>
+<button class="link" data-page="models">Voz</button>
+</nav>
+<span class="sp"></span>
+<button class="btn" id="updatesBtn">Buscar actualizaciones</button>
+</header>
+<main>
+<section class="card hero" id="sec-home">
+<h1>Hablá. Soltá. Listo.</h1>
+<div class="status"><span class="dot down" id="statusDot"></span><b id="statusTitle">Listo para dictar</b><span class="badge" id="keyBadge">F9</span></div>
+<p class="small" id="statusDetail">Enfocá el prompt, mantené F9 y soltá para dictar.</p>
+<div class="row">
+<button class="btn primary" id="runBtn">Iniciar dictado</button>
+<button class="btn" id="stopBtn">Detener</button>
+</div>
+<p class="quick" id="quickMic">Micrófono: —</p>
+<p class="quick" id="quickModel">Voz: —</p>
+</section>
+<section class="card" id="sec-audio">
+<h2>Micrófono</h2>
+<div class="row">
+<select id="micCombo" aria-label="Micrófono"></select>
+<button class="btn" id="micRefresh">Actualizar</button>
+<button class="btn" id="micTest">Probar</button>
+</div>
+<div class="meter" id="meterWrap"><div id="meterFill"></div></div>
+<p class="small" id="meterText">La prueba no guarda audio.</p>
+</section>
+<section class="card" id="sec-settings">
+<h2>General</h2>
+<div class="row"><span class="badge" id="keyValue">F9</span><button class="btn" id="keyBtn">Elegir tecla</button></div>
+<div class="row"><label class="check"><input type="checkbox" id="autostart">Iniciar Instant con Windows</label></div>
+</section>
+<section class="card" id="sec-vocab">
+<h2>Vocabulario</h2>
+<div class="row">
+<select id="profileCombo" aria-label="Perfil"></select>
+<button class="btn" id="profileAdd">Añadir perfil</button>
+<button class="btn danger" id="profileRemove">Eliminar perfil</button>
+</div>
+<table class="vocab">
+<thead><tr><th>Término</th><th>Así se escucha</th><th>Sonido</th><th></th></tr></thead>
+<tbody id="vocabBody"></tbody>
+</table>
+<div class="row"><button class="btn" id="vocabAdd">Añadir término</button></div>
+</section>
+<section class="card" id="sec-models">
+<h2>Voz</h2>
+<p id="modelStatus">Comprobando voz…</p>
+<div class="row"><button class="btn primary" id="modelBtn">Descargar voz</button></div>
+<div class="meter" id="modelProgWrap" hidden><div id="modelProgFill"></div></div>
+<p class="small" id="modelProgText"></p>
+</section>
+<section class="card" id="sec-save">
+<div class="row">
+<button class="btn primary" id="saveBtn">Guardar ajustes</button>
+<span class="small" id="settingsStatus"></span>
+</div>
+</section>
+</main>
+<footer>
+<button class="link" id="diagBtn">Diagnóstico</button>
+<span class="sp"></span>
+<span id="dataDir"></span>
+<span id="version"></span>
+</footer>
+<div id="toasts"></div>
+<div class="overlay" id="keyModal" hidden>
+<div class="modal" role="dialog" aria-label="Elegí una tecla">
+<h2>Elegí una tecla</h2>
+<p>Apretá la tecla que quieras usar</p>
+<p class="keywait" id="keyWait">Esperando una tecla…</p>
+<p class="keymsg" id="keyMsg"></p>
+<div class="row"><button class="btn" id="keyCancel">Cancelar</button></div>
+</div>
+</div>
+<div class="overlay" id="diagModal" hidden>
+<div class="modal" role="dialog" aria-label="Diagnóstico de Instant">
+<h2>Diagnóstico</h2>
+<p class="small">Micrófono, tecla y modelos</p>
+<pre id="diagText">Ejecutando comprobaciones…</pre>
+<div class="row"><button class="btn" id="diagClose">Cerrar</button></div>
+</div>
+</div>
+<!--QWEBCHANNEL-->
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const statusDot = $("statusDot"), statusTitle = $("statusTitle"), statusDetail = $("statusDetail");
+const keyBadge = $("keyBadge"), keyValue = $("keyValue");
+const runBtn = $("runBtn"), stopBtn = $("stopBtn");
+const quickMic = $("quickMic"), quickModel = $("quickModel");
+const micCombo = $("micCombo"), meterWrap = $("meterWrap"), meterFill = $("meterFill"), meterText = $("meterText");
+const autostart = $("autostart");
+const profileCombo = $("profileCombo"), vocabBody = $("vocabBody");
+const modelStatus = $("modelStatus"), modelBtn = $("modelBtn");
+const modelProgWrap = $("modelProgWrap"), modelProgFill = $("modelProgFill"), modelProgText = $("modelProgText");
+const saveBtn = $("saveBtn"), settingsStatus = $("settingsStatus");
+const updatesBtn = $("updatesBtn"), dataDir = $("dataDir"), versionEl = $("version");
+const toasts = $("toasts");
+const keyModal = $("keyModal"), keyMsg = $("keyMsg");
+const diagModal = $("diagModal"), diagText = $("diagText");
+const sections = {home: $("sec-home"), audio: $("sec-audio"), settings: $("sec-settings"), models: $("sec-models")};
+
+let bridge = null;
+const queue = [];
+function send(op) {
+  const payload = JSON.stringify(op);
+  if (bridge) {
+    try { bridge.call(payload); return; }
+    catch (e) { queue.push(payload); return; }
+  }
+  queue.push(payload);
+}
+function flush() {
+  while (queue.length && bridge) {
+    const p = queue.shift();
+    try { bridge.call(p); }
+    catch (e) { queue.unshift(p); break; }
+  }
+}
+function parse(raw) {
+  try { return JSON.parse(raw); }
+  catch (e) { return null; }
+}
+function setOptions(sel, items, current) {
+  sel.textContent = "";
+  (items || []).forEach((name) => {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = name;
+    sel.appendChild(o);
+  });
+  if (current !== undefined && current !== null)
+    sel.value = current;
+}
+
+// --- state: snapshot completo, actualiza TODA la UI ---
+function onState(raw) {
+  const s = parse(raw);
+  if (!s) return;
+  if (s.status) {
+    statusDot.className = `dot ${s.status.state}`;
+    statusTitle.textContent = s.status.title
+      || (s.status.state === "ok" ? "Instant está activo" : "Listo para dictar");
+    statusDetail.textContent = s.status.detail
+      || "Enfocá el prompt, mantené F9 y soltá para dictar.";
+    runBtn.textContent = s.status.state === "ok" ? "Reiniciar" : "Iniciar dictado";
+  }
+  const key = s.key_label || "F9";
+  keyBadge.textContent = key;
+  keyValue.textContent = key;
+  if (document.activeElement !== autostart)
+    autostart.checked = !!s.autostart;
+  if (s.mic) {
+    setOptions(micCombo, s.mic.labels || [], s.mic.selected);
+    meterWrap.hidden = !s.mic.meter_visible;
+    quickMic.textContent = `Micrófono: ${s.mic.selected || "—"}`;
+  }
+  if (s.model) {
+    const m = s.model;
+    // m.button: "Descargar voz" | "Reintentar"
+    modelStatus.textContent = m.status
+      || (m.ready ? "" : "Falta descargar la voz (~670 MB).");
+    if (!m.status && m.ready) modelStatus.textContent = "";
+    modelBtn.textContent = m.button || "Descargar voz";
+    const p = m.progress || {};
+    modelProgWrap.hidden = !p.visible;
+    modelProgFill.style.width = `${p.percent || 0}%`;
+    quickModel.textContent = `Voz: ${m.ready ? "lista" : "—"}`;
+  }
+  if (s.vocab) {
+    const v = s.vocab;
+    setOptions(profileCombo, v.profiles || [], v.active);
+    if (document.activeElement === null || !vocabBody.contains(document.activeElement))
+      renderVocab(v.rows || []);
+  }
+  if (s.updates)
+    // button: "Buscar actualizaciones" | "↓ Actualizar a vX.Y.Z"
+    updatesBtn.textContent = s.updates.button || "Buscar actualizaciones";
+  settingsStatus.textContent = s.settings_status
+    || (s.dirty ? "Hay cambios sin guardar." : "");
+  // settings_status de Python: "Ajustes guardados." | "Guardado; reiniciá Instant…"
+  if (s.data_dir !== undefined) dataDir.textContent = s.data_dir;
+  if (s.version !== undefined) versionEl.textContent = `v${s.version}`;
+}
+
+function renderVocab(rows) {
+  vocabBody.textContent = "";
+  rows.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    const tdT = document.createElement("td");
+    const inT = document.createElement("input");
+    inT.type = "text";
+    inT.value = r.term || "";
+    inT.setAttribute("aria-label", "Término");
+    inT.addEventListener("change", () => send({op:"vocab_set", row:i, col:"term", value:inT.value}));
+    tdT.appendChild(inT);
+    const tdH = document.createElement("td");
+    const inH = document.createElement("input");
+    inH.type = "text";
+    inH.value = r.heard || "";
+    inH.setAttribute("aria-label", "Así se escucha");
+    inH.addEventListener("change", () => send({op:"vocab_set", row:i, col:"heard", value:inH.value}));
+    tdH.appendChild(inH);
+    const tdS = document.createElement("td");
+    const bS = document.createElement("button");
+    bS.className = `icon${r.sound ? " on" : ""}`;
+    bS.textContent = "≈";
+    bS.title = "Sonido";
+    bS.setAttribute("aria-label", "Sonido");
+    bS.addEventListener("click", () => send({op:"vocab_toggle_sound", row:i}));
+    tdS.appendChild(bS);
+    const tdD = document.createElement("td");
+    const bD = document.createElement("button");
+    bD.className = "icon del";
+    bD.textContent = "✕";
+    bD.setAttribute("aria-label", "Eliminar");
+    bD.addEventListener("click", () => send({op:"vocab_delete", row:i}));
+    tdD.appendChild(bD);
+    tr.appendChild(tdT);
+    tr.appendChild(tdH);
+    tr.appendChild(tdS);
+    tr.appendChild(tdD);
+    vocabBody.appendChild(tr);
+  });
+}
+
+// --- toasts con acciones ---
+function onToast(raw) {
+  const t = parse(raw);
+  if (!t) return;
+  const box = document.createElement("div");
+  box.className = `toast ${t.level || "info"}`;
+  const b = document.createElement("b");
+  b.textContent = t.title || "";
+  const p = document.createElement("p");
+  p.textContent = t.message || "";
+  box.appendChild(b);
+  box.appendChild(p);
+  (t.actions || []).forEach((a) => {
+    const row = box.querySelector(".acts") || (() => {
+      const d = document.createElement("div");
+      d.className = "acts";
+      box.appendChild(d);
+      return d;
+    })();
+    const btn = document.createElement("button");
+    btn.className = "btn";
+    btn.textContent = a.label;
+    btn.addEventListener("click", () => {
+      send({op:"toast_action", id:t.id, action:a.id});
+      box.remove();
+    });
+    row.appendChild(btn);
+  });
+  toasts.appendChild(box);
+  window.setTimeout(() => box.remove(), t.ms || 4500);
+}
+
+function onMeter(raw) {
+  const m = parse(raw);
+  if (!m) return;
+  meterFill.style.width = `${m.percent || 0}%`;
+  if (m.text) meterText.textContent = m.text;
+}
+function onProgress(raw) {
+  const p = parse(raw);
+  if (!p) return;
+  modelProgWrap.hidden = false;
+  modelProgFill.style.width = `${p.percent || 0}%`;
+  if (p.text) modelProgText.textContent = p.text;
+}
+function onDiagnostics(raw) {
+  const d = parse(raw);
+  if (!d) return;
+  diagModal.hidden = false;
+  if (d.text !== undefined) diagText.textContent = d.text;
+  else if (d.state === "running") diagText.textContent = "Ejecutando comprobaciones…";
+}
+
+// --- captura de tecla ---
+let keyOpen = false;
+function openKeyModal() {
+  keyOpen = true;
+  keyMsg.textContent = "";
+  keyModal.hidden = false;
+  send({op:"key_capture_open"});
+}
+function closeKeyModal() {
+  keyOpen = false;
+  keyModal.hidden = true;
+}
+function normalizeKey(e) {
+  const k = e.key;
+  if (!k) return null;
+  if (/^F\d{1,2}$/.test(k)) return k.toLowerCase();
+  if (k === " ") return "space";
+  const named = {Escape:"escape", Enter:"enter", Tab:"tab", Backspace:"backspace",
+    Delete:"delete", Insert:"insert", Home:"home", End:"end",
+    PageUp:"pageup", PageDown:"pagedown",
+    ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right"};
+  if (named[k]) return named[k];
+  if (k.length === 1) return k.toLowerCase();
+  return null;
+}
+window.addEventListener("keydown", (e) => {
+  if (!keyOpen) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.ctrlKey || e.altKey || e.metaKey) {
+    keyMsg.textContent = "Elegí una sola tecla, sin combinación.";
+    return;
+  }
+  const name = normalizeKey(e);
+  if (!name) {
+    keyMsg.textContent = "No pude identificar esa tecla; probá otra.";
+    return;
+  }
+  keyMsg.textContent = "";
+  send({op:"key_captured", code:e.keyCode, name:name});
+}, true);
+function onKeyResult(raw) {
+  const r = parse(raw);
+  if (!r) return;
+  if (r.ok) closeKeyModal();
+  else keyMsg.textContent = r.message || "";
+}
+
+// --- wiring ---
+document.querySelectorAll("[data-page]").forEach((el) => {
+  el.addEventListener("click", () => {
+    const page = el.getAttribute("data-page");
+    send({op:"navigate", page:page});
+    const sec = sections[page];
+    if (sec && sec.scrollIntoView) sec.scrollIntoView({behavior:"smooth", block:"start"});
+  });
+});
+runBtn.addEventListener("click", () => send({op:"toggle_daemon"}));
+stopBtn.addEventListener("click", () => send({op:"stop_daemon"}));
+$("micRefresh").addEventListener("click", () => send({op:"refresh_mics"}));
+$("micTest").addEventListener("click", () => send({op:"test_mic"}));
+micCombo.addEventListener("change", () => send({op:"select_mic", label:micCombo.value}));
+$("keyBtn").addEventListener("click", openKeyModal);
+$("keyCancel").addEventListener("click", () => { send({op:"key_cancel"}); closeKeyModal(); });
+autostart.addEventListener("change", () => send({op:"set_autostart", value:autostart.checked}));
+profileCombo.addEventListener("change", () => send({op:"context_select", name:profileCombo.value}));
+$("profileAdd").addEventListener("click", () => {
+  const name = window.prompt("Nombre del perfil:", "");
+  if (name) send({op:"context_add", name:name});
+});
+$("profileRemove").addEventListener("click", () => {
+  const active = profileCombo.value;
+  if (window.confirm(`¿Eliminar el perfil «${active}» y sus términos?`))
+    send({op:"context_remove"});
+});
+$("vocabAdd").addEventListener("click", () => send({op:"vocab_add"}));
+saveBtn.addEventListener("click", () => send({op:"save_config"}));
+modelBtn.addEventListener("click", () => send({op:"download_models"}));
+updatesBtn.addEventListener("click", () => send({op:"check_updates"}));
+$("diagBtn").addEventListener("click", () => {
+  diagText.textContent = "Ejecutando comprobaciones…";
+  diagModal.hidden = false;
+  send({op:"diagnostics"});
+});
+$("diagClose").addEventListener("click", () => {
+  diagModal.hidden = true;
+  diagText.textContent = "";
+  send({op:"diagnostics_close"});
+});
+
+// --- puente QWebChannel (objeto registrado: bridge) ---
+if (typeof qt !== "undefined" && qt.webChannelTransport && typeof QWebChannel !== "undefined") {
+  new QWebChannel(qt.webChannelTransport, (channel) => {
+    bridge = channel.objects.bridge;
+    const on = (name, fn) => {
+      try {
+        if (bridge[name] && bridge[name].connect) bridge[name].connect(fn);
+      } catch (e) { /* señal ausente: se ignora */ }
+    };
+    on("state", onState);
+    on("toast", onToast);
+    on("meter", onMeter);
+    on("progress", onProgress);
+    on("diagnostics", onDiagnostics);
+    on("key_result", onKeyResult);
+    flush();
+    send({op:"ready"});
+  });
+} else {
+  document.title = "panel sin canal";
+}
+window.__panelReady = true;
+})();
+</script>
+</body>
+</html>
