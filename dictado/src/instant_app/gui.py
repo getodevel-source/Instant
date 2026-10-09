@@ -447,6 +447,7 @@ class PanelLogic:
             active = context.DEFAULT_PROFILE
         return {
             "version": _current_version(),
+            "page": self.page,
             "status": {
                 "state": "ok" if self._last_daemon_running else "down",
                 "title": self.status_var,
@@ -499,7 +500,6 @@ class PanelLogic:
             },
             "dirty": bool(self._dirty()),
             "settings_status": self.settings_status,
-            "data_dir": self.data_dir,
             "diagnostics": {
                 "open": self._diagnostics_open,
                 "running": self._diagnostic_running,
@@ -542,6 +542,7 @@ class PanelLogic:
 
     def _op_navigate(self, message):
         self.navigate(message.get("page") or "home")
+        self.push_state()
 
     def _op_toggle_daemon(self, _message):
         self.toggle_daemon()
@@ -1643,7 +1644,8 @@ class PanelLogic:
     # ------------------------------------------------------------- navegación
 
     def navigate(self, name):
-        self.page = name or "home"
+        pages = {"home", "audio", "settings", "vocab", "models"}
+        self.page = name if isinstance(name, str) and name in pages else "home"
         self.emit("navigate", {"page": self.page})
 
     def request_daemon_start(self):
