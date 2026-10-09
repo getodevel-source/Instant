@@ -81,11 +81,11 @@ web (QtWebEngine) en los tres sistemas — Tk queda de respaldo automático —,
 no muestra el contenido dictado y confirma «Copiado». Windows
 puede ubicar el icono bajo la flecha de iconos ocultos.
 
-Mientras dictás, el orbe respira con tu voz (nivel y espectro reales del
-micrófono); al soltar, un arco barre mientras transcribe y el tilde confirma.
-Vive fijo abajo al centro del monitor donde trabajás:
+Mientras dictás, una onda compacta responde al nivel y a las nueve bandas
+reales del micrófono. Al soltar, muestra el estado de transcripción y confirma
+cuando pega el texto. Vive abajo, al centro del monitor donde trabajás:
 
-![Orbe del overlay](docs/screenshots/overlay-orbital.png)
+![Espectro de voz del overlay](docs/screenshots/overlay-orbital.png)
 
 ## Actualizaciones
 

@@ -5,6 +5,21 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+### Corregido
+
+- El indicador de voz reemplaza el orbe y los giros decorativos por una onda
+  compacta de 21 barras interpoladas desde las nueve bandas reales; el nivel
+  general deja de aplanar la forma del espectro. Escucha, transcripción,
+  confirmación y avisos comparten la misma cápsula, con entrada y salida breves.
+- La ventana del indicador de voz reduce su altura de 224 a 140 px y el ajuste
+  describe el estilo como espectro reactivo.
+
+### Verificado
+
+- Renderer WebEngine: smoke manual de escucha, transcripción, confirmación y
+  aviso; carga al 100 % y capturas de 480 × 140 px.
+- `python -m unittest tests.test_overlay_web -v`: seis pruebas pasan.
+
 ## [0.3.1] - 2026-10-08
 
 ### Agregado

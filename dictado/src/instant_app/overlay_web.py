@@ -30,7 +30,7 @@ log = logging.getLogger("instant")
 # Tamano de ventana por estilo: la composicion se dibuja abajo al centro
 # del monitor y el ancho extra es para los avisos largos (no hace falta
 # reposicionar ni animar el tamano de la ventana).
-WINDOW_SIZES = {"classic": (480, 140), "orbital": (480, 224)}
+WINDOW_SIZES = {"classic": (480, 140), "orbital": (480, 140)}
 _OVERLAY_BOTTOM_GAP = 60
 _FLUSH_SECONDS = 0.04
 _PAGE_PLACEHOLDER = "<!--QWEBCHANNEL-->"

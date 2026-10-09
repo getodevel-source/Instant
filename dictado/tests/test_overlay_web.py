@@ -58,7 +58,7 @@ class WindowSizesTests(unittest.TestCase):
     def test_both_styles_have_room_for_wide_feedback_pills(self):
         self.assertGreaterEqual(WINDOW_SIZES["classic"][0], 424 + 24)
         self.assertGreaterEqual(WINDOW_SIZES["orbital"][0], 440 + 24)
-        self.assertGreaterEqual(WINDOW_SIZES["orbital"][1], 224)
+        self.assertEqual(WINDOW_SIZES["orbital"][1], 140)
 
     def test_palette_tokens_used_by_the_page_exist(self):
         with open(PAGE_PATH, encoding="utf-8") as handle:
