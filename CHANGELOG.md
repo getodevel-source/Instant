@@ -3,6 +3,15 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [0.4.1] - 2026-10-09
+
+### Mejorado
+
+- Regla C fonética: "Will"→build con vecinas por sonido
+  ("fall"~"falló" + "driver"); nombre real protegido ("testamento de Will").
+- Alises de voz real: `bull`→build, `ploin`→plugin.
+- Lanzadores `.bat`/`.sh` movidos a `scripts/` (raíz limpia).
+
 ## [0.4.0] - 2026-10-09
 
 ### Mejorado (precisión y rendimiento del dictado)

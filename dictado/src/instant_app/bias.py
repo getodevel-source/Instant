@@ -26,15 +26,14 @@ log = logging.getLogger("instant")
 # vecina: sin contexto "lei un comic" y "voy a comer" quedan intactos.
 GENERAL_TERMS = {
     "commit": ["quemet", "kemite", "camer", "quemita"],
-    "build": ["bill", "bifallo", "bil"],
+    "build": ["bill", "bifallo", "bil", "bull"],
     "deploy": ["depliegue", "diploi"],
     "staging": ["esteyin", "esteyshin"],
     "rollback": ["rolbak", "rolback", "crawlback"],
     "workflow": ["work flow", "guorflou"],
     "frontend": ["front end", "fron ten"],
     "backend": ["back end", "bak end", "bakken", "baken"],
-    "plugin": ["pluguin", "plagin", "pline"],
-    "driver": ["draiver"],
+    "plugin": ["pluguin", "plagin", "pline", "ploin"],
     "benchmark": ["benchmar"],
     "Python": ["paiton", "piton"],
     "GitHub": ["hit hub", "jit hub", "github"],

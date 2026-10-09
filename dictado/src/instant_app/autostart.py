@@ -47,9 +47,10 @@ def _find_repo_file(name):
         cands.append(d)
     cands.append(os.getcwd())
     for c in cands:
-        p = os.path.join(c, name)
-        if os.path.isfile(p):
-            return p
+        for cand in (os.path.join(c, name),
+                     os.path.join(c, "scripts", name)):
+            if os.path.isfile(cand):
+                return cand
     return None
 
 

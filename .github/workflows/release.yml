@@ -87,7 +87,7 @@ jobs:
             --add-data "dictado/src/instant_app/qml/panel_web_host.qml;instant_app/qml" \
             --add-data "dictado/src/instant_app/web/overlay.html;instant_app/web" \
             --add-data "dictado/src/instant_app/web/panel.html;instant_app/web" \
-            --add-data "instant-update.bat;." \
+            --add-data "scripts/instant-update.bat;." \
             --hidden-import PySide6.QtWebEngineQuick \
             --hidden-import PySide6.QtWebEngineCore \
             --hidden-import PySide6.QtWebChannel \
@@ -114,7 +114,7 @@ jobs:
             --add-data "dictado/src/instant_app/qml/panel_web_host.qml;instant_app/qml" \
             --add-data "dictado/src/instant_app/web/overlay.html;instant_app/web" \
             --add-data "dictado/src/instant_app/web/panel.html;instant_app/web" \
-            --add-data "instant-update.bat;." \
+            --add-data "scripts/instant-update.bat;." \
             --hidden-import PySide6.QtWebEngineQuick \
             --hidden-import PySide6.QtWebEngineCore \
             --hidden-import PySide6.QtWebChannel \

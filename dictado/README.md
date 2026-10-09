@@ -18,7 +18,7 @@ ayuda con tildes y puntuación, pero no reemplaza el reconocimiento de audio.
 
 En Windows, la vía recomendada es el instalador de la [última release](https://github.com/getodevel-source/Instant/releases/latest) (`Instant-Setup.exe`): por usuario, sin admin, con desinstalador y actualización in-place. El `Instant.exe` portable y los binarios de Linux/macOS viven en la misma release.
 
-Desde la raíz del repositorio, `install.bat` (Windows) o `./install.sh` (Linux/macOS) crea `.venv`, instala Instant y abre el asistente de configuración. `INSTANT_UNATTENDED=1` conserva el modo sin preguntas.
+Desde la raíz del repositorio, `scripts/install.bat` (Windows) o `scripts/install.sh` (Linux/macOS) crea `.venv`, instala Instant y abre el asistente de configuración. `INSTANT_UNATTENDED=1` conserva el modo sin preguntas.
 
 Para desarrollar el paquete desde `dictado/`:
 
@@ -97,7 +97,7 @@ agrega una fila en blanco lista para escribir. El panel indica los cambios
 pendientes de guardar y, después de guardar, avisa si hace falta reiniciar
 Instant. El diagnóstico muestra el informe en una ventana independiente. La
 ventana puede cerrarse sin detener el daemon; en Windows queda el icono de
-bandeja, y en Linux/macOS el daemon sigue vivo hasta `instant-stop.sh`.
+bandeja, y en Linux/macOS el daemon sigue vivo hasta `scripts/instant-stop.sh`.
 
 Sin ventana (servidores, SSH, scripts): `instant setup --tui` mantiene el
 asistente de terminal; cualquier flag de CLI también lo usa.
@@ -231,7 +231,7 @@ Qué crea en cada sistema (solo eso, nada más):
 
 - Windows: acceso `Instant Dictado.lnk` en
   `%APPDATA%/Microsoft/Windows/Start Menu/Programs/Startup`, que apunta
-  a `instant-run.bat` del repo si lo encuentra (modo dev), y si no a
+  a `scripts/instant-run.bat` del repo si lo encuentra (modo dev), y si no a
   `instant.exe run` por PATH o `pythonw -m instant_app run`. Se crea con
   el powershell que ya trae Windows, sin instalar nada nuevo.
 - Linux: archivo `~/.config/autostart/instant.desktop` (estándar

@@ -1611,7 +1611,9 @@ class PanelLogic:
             return
         root = _workdir()
         destination = os.path.join(root, "dist", "Instant.exe")
-        script = os.path.join(root, "instant-update.bat")
+        script = os.path.join(root, "scripts", "instant-update.bat")
+        if not os.path.isfile(script):
+            script = os.path.join(root, "instant-update.bat")
         if getattr(sys, "frozen", False):
             destination = sys.executable
             bundled = os.path.join(getattr(sys, "_MEIPASS", ""),
