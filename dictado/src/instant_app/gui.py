@@ -36,8 +36,8 @@ log = logging.getLogger("instant")
 _APP_USER_MODEL_ID = "getodevel-source.Instant.0.1"
 UPDATE_CHECK_INTERVAL = 86400
 DAEMON_MISSING_DETAIL = ("Instant no pudo iniciar. Revisá Diagnóstico.")
-STATUS_DETAIL = ("Enfocá el prompt o campo editable de la CLI, mantené {key} y "
-                 "soltá: Instant pega con Ctrl+V.")
+STATUS_DETAIL = "Enfocá el campo donde querés escribir."
+MIC_UNAVAILABLE_LABEL = "El micrófono seleccionado no está disponible"
 
 
 def _workdir():
@@ -398,11 +398,14 @@ class PanelLogic:
         self._start_daemon_on_open = start_daemon_on_open
         self._closed = False
         self._daemon_start_pending = False
+        self._daemon_stop_pending = False
         self._daemon_start_token = 0
         self._daemon_check_pending = False
         self._daemon_state_ready = False
         self._last_daemon_running = False
         self._microphones_loaded = False
+        self._microphones_refreshing = False
+        self._microphone_test_pending = False
         self._settings_daemon_state = None
         self._restart_needed = False
         self._restart_settings = None
@@ -445,17 +448,41 @@ class PanelLogic:
             active = context.active_name(self.cfg)
         except Exception:
             active = context.DEFAULT_PROFILE
+        if self._daemon_stop_pending:
+            daemon_status = "stopping"
+            daemon_title = "Deteniendo Instant…"
+        elif self._daemon_start_pending:
+            daemon_status = "starting"
+            daemon_title = "Iniciando Instant…"
+        elif not self._daemon_state_ready or self._daemon_check_pending:
+            daemon_status = "checking"
+            daemon_title = "Comprobando Instant…"
+        elif self._last_daemon_running:
+            daemon_status = "ok"
+            daemon_title = "Instant está activo"
+        else:
+            daemon_status = "down"
+            daemon_title = "Instant está detenido"
         return {
             "version": _current_version(),
             "page": self.page,
             "status": {
-                "state": "ok" if self._last_daemon_running else "down",
-                "title": self.status_var,
+                "state": daemon_status,
+                "title": daemon_title,
                 "detail": self.status_detail,
                 "can_start": bool(self._daemon_state_ready and self._microphones_loaded
+                                  and self._selected_device() is not None
+                                  and self.model_ready
                                   and not self._daemon_start_pending
+                                  and not self._daemon_stop_pending
                                   and not self._last_daemon_running),
-                "can_stop": bool(self._last_daemon_running),
+                "can_toggle": bool(self._daemon_state_ready and self._microphones_loaded
+                                   and self._selected_device() is not None
+                                   and self.model_ready
+                                   and not self._daemon_start_pending
+                                   and not self._daemon_stop_pending),
+                "can_stop": bool(self._last_daemon_running
+                                 and not self._daemon_stop_pending),
             },
             "key_label": self.key_value,
             "autostart": bool(self._autostart_enabled),
@@ -469,13 +496,24 @@ class PanelLogic:
             "mic": {
                 "labels": list(self.mic_labels),
                 "selected": self.mic_selected,
+                "available": self._selected_device() is not None,
+                "has_devices": bool(self.catalog.devices),
+                "unavailable_label": (MIC_UNAVAILABLE_LABEL
+                                      if self.mic_selected == MIC_UNAVAILABLE_LABEL
+                                      and self._selected_device() is None else ""),
+                "refreshing": bool(self._microphones_refreshing
+                                   or not self._microphones_loaded),
+                "testing": bool(self._microphone_test_pending),
                 "meter": dict(self.meter),
             },
             "model": {
                 "ready": bool(self.model_ready),
                 "status": self.model_status,
                 "progress": dict(self.model_progress),
-                "button": "Voz lista" if self.model_ready else "Descargar voz",
+                "button": ("Reintentar descarga"
+                           if not self.model_ready
+                           and self.model_status.startswith("No se pudo")
+                           else "Descargar voz"),
             },
             "vocab": {
                 "profiles": list(configured),
@@ -757,7 +795,11 @@ class PanelLogic:
     # ------------------------------------------------------------ micrófonos
 
     def refresh_microphones(self, initial=False):
+        if self._microphones_refreshing:
+            return
         self._microphones_loaded = False
+        self._microphones_refreshing = True
+        self.push_state()
         preferred = None if initial else self.catalog.pending_device
         refresh = self.catalog.refresh
 
@@ -767,12 +809,13 @@ class PanelLogic:
         def populated(result):
             if self._closed:
                 return
+            self._microphones_refreshing = False
             labels, selected, missing = result
             self.mic_labels = list(labels)
             if selected is not None:
                 self.mic_selected = selected
             elif missing:
-                self.mic_labels.append("El micrófono seleccionado no está disponible")
+                self.mic_labels.append(MIC_UNAVAILABLE_LABEL)
                 self.mic_selected = self.mic_labels[-1]
             elif labels:
                 self.mic_selected = labels[0]
@@ -805,6 +848,7 @@ class PanelLogic:
         def failed(error):
             if self._closed:
                 return
+            self._microphones_refreshing = False
             self.meter = {"percent": 0,
                           "text": f"No se pudo actualizar la lista: {error}"}
             self._microphones_loaded = True
@@ -835,11 +879,14 @@ class PanelLogic:
         self.push_state()
 
     def test_microphone(self):
+        if self._microphone_test_pending:
+            return
         selected = self._selected_device()
         if not selected:
             self.toast("Sin micrófono", "Elegí un micrófono de entrada.",
                        level="warn")
             return
+        self._microphone_test_pending = True
         self.meter = {"percent": 0, "text": "Hablá ahora…"}
         self.push_state()
 
@@ -857,6 +904,7 @@ class PanelLogic:
         def done(peak):
             if self._closed:
                 return
+            self._microphone_test_pending = False
             self.meter = {"percent": self.meter["percent"],
                           "text": (f"Señal detectada ({peak:.3f})." if peak > .005
                                    else "No detecté señal; revisá micrófono/volumen.")}
@@ -865,6 +913,9 @@ class PanelLogic:
         def failed(error):
             if self._closed:
                 return
+            self._microphone_test_pending = False
+            self.meter = {"percent": 0, "text": "No se pudo probar el micrófono."}
+            self.push_state()
             self.toast("Prueba de micrófono", str(error), level="warn")
 
         self.tasks.submit(capture, done, failed, progress)
@@ -915,9 +966,6 @@ class PanelLogic:
              "aliases": list(row.get("aliases", ())),
              "sonido": bool(row.get("sonido"))}
             for row in rows]
-        if not rows:
-            # Perfil vacío: una fila en blanco invita a escribir. No se guarda.
-            self._vocab_rows_cache = [{"term": "", "aliases": [], "sonido": False}]
 
     def _vocab_rows(self):
         """Normaliza el cache con el mismo formato del editor."""
@@ -1044,7 +1092,7 @@ class PanelLogic:
         self.cfg["llm_url"] = snapshot[5]
         self.cfg["threads"], self.cfg["sound"] = snapshot[6], snapshot[7]
         self.cfg["overlay_style"], self.cfg["max_seg"] = snapshot[8], snapshot[9]
-        path = config.save(self.cfg)
+        config.save(self.cfg)
         warning = None
         try:
             desired = snapshot[2]
@@ -1069,15 +1117,16 @@ class PanelLogic:
             self.toast("Arranque con el sistema", warning, level="warn")
         if show_message:
             note = (" Micrófono, tecla, voz y rendimiento guardados; reiniciá "
-                    "Instant para aplicarlos." if self._restart_needed else "")
-            self.toast("Ajustes guardados", f"{note}\n{path}".strip())
+                    "Instant para aplicarlos." if self._restart_needed else
+                    "Se guardaron tus preferencias en este equipo.")
+            self.toast("Ajustes guardados", note)
         self.push_state()
         return True
 
     # ---------------------------------------------------------------- daemon
 
     def toggle_daemon(self):
-        if self._daemon_start_pending:
+        if self._daemon_start_pending or self._daemon_stop_pending:
             return
         if self._last_daemon_running:
             self.save_config(False)
@@ -1097,6 +1146,7 @@ class PanelLogic:
     def _start_daemon(self, save_settings=True):
         if (self._daemon_start_pending or not self._daemon_state_ready
                 or self._daemon_check_pending or not self._microphones_loaded
+                or self._microphones_refreshing or self._daemon_stop_pending
                 or self._last_daemon_running):
             return False
         if not self.model_ready:
@@ -1139,6 +1189,8 @@ class PanelLogic:
         self.push_state()
 
     def stop_daemon_flow(self, restart=False):
+        if self._daemon_stop_pending:
+            return
         pid = _pid_value()
         if pid is None or not self._last_daemon_running:
             if restart:
@@ -1148,6 +1200,7 @@ class PanelLogic:
             return
         # _pid_is_instant hace powershell/Get-CimInstance (hasta 10s):
         # NUNCA en hilo UI. Se verifica en worker y recién ahí se mata.
+        self._daemon_stop_pending = True
         self.status_detail = "Verificando Instant…"
         self.push_state()
 
@@ -1159,18 +1212,23 @@ class PanelLogic:
                 return
             if not is_ours:
                 log.warning("PID %d reciclado por el SO (no es Instant); no se mata.", pid)
+                self._daemon_stop_pending = False
                 self.status_detail = "El daemon ya no estaba; actualizando estado…"
                 self.refresh_daemon()
                 return
-            if os.name == "nt":
-                subprocess.Popen(["taskkill", "/F", "/PID", str(pid)],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            else:
-                try:
+            try:
+                if os.name == "nt":
+                    subprocess.Popen(["taskkill", "/F", "/PID", str(pid)],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                else:
                     os.kill(pid, signal.SIGTERM)
-                except OSError:
-                    pass
+            except OSError as exc:
+                self._daemon_stop_pending = False
+                self.status_detail = "No se pudo detener Instant."
+                self.push_state()
+                self.toast("No se pudo detener Instant", str(exc), level="error")
+                return
             self.status_detail = "Cerrando Instant…"
             self.push_state()
             if self._closed:
@@ -1178,9 +1236,23 @@ class PanelLogic:
             if restart:
                 self.schedule(350, self._wait_before_restart)
             else:
-                self.schedule(700, self.refresh_daemon)
+                self.schedule(700, self._settle_stop_attempt)
 
-        self.tasks.submit(check, checked)
+        def failed(error):
+            if self._closed:
+                return
+            self._daemon_stop_pending = False
+            self.status_detail = "No se pudo comprobar el estado de Instant."
+            self.push_state()
+            self.toast("No se pudo detener Instant", str(error), level="error")
+
+        self.tasks.submit(check, checked, failed)
+
+    def _settle_stop_attempt(self):
+        if self._closed:
+            return
+        self._daemon_stop_pending = False
+        self.refresh_daemon()
 
     def _wait_before_restart(self):
         if self._closed:
@@ -1201,6 +1273,8 @@ class PanelLogic:
                 return
             self._daemon_check_pending = False
             self._daemon_state_ready = True
+            if not running:
+                self._daemon_stop_pending = False
             if running and self._daemon_start_pending:
                 self._daemon_start_pending = False
                 self._daemon_start_token += 1
@@ -1219,6 +1293,10 @@ class PanelLogic:
         def failed(error):
             self._daemon_check_pending = False
             log.warning("no se pudo comprobar el daemon desde el panel: %s", error)
+            if self._daemon_stop_pending:
+                self._daemon_stop_pending = False
+                self.status_detail = "No se pudo comprobar el estado de Instant."
+                self.push_state()
 
         self.tasks.submit(lambda _emit: daemon_is_running(), result, failed)
 

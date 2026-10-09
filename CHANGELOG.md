@@ -5,6 +5,23 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+## [0.3.4] - 2026-10-09
+
+### Mejorado
+
+- Rediseño minimalista del panel en vistas independientes de Inicio, Micrófono,
+  Ajustes, Vocabulario y Voz local.
+- El estado de guardado, el arranque y la disponibilidad de voz/micrófono ahora
+  coinciden con las acciones habilitadas. Se aclaran las pruebas, errores y
+  perfiles vacíos, y se corrige el foco de navegación y diálogos.
+- Se simplifica la portada de GitHub y se actualiza la captura principal.
+
+### Verificado
+
+- `python -m unittest discover -s tests`: 112 pruebas, 2 omitidas por plataforma.
+- `python bench/web_panel_smoke.py --page all --width 1000 --height 640`: las cinco
+  vistas cargan al 100 % en la ventana mínima y se recorre ajustes/vocabulario.
+
 ## [0.3.3] - 2026-10-09
 
 ### Mejorado
