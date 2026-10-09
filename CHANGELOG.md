@@ -5,6 +5,8 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+## [0.3.2] - 2026-10-08
+
 ### Corregido
 
 - El indicador de voz reemplaza el orbe y los giros decorativos por una onda
