@@ -3,6 +3,57 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+## [0.3.1] - 2026-10-08
+
+### Agregado
+
+- Navegación lateral para Inicio, Micrófono, Ajustes, Vocabulario y Voz local;
+  el panel también expone opciones avanzadas de rendimiento y apariencia.
+- El overlay orbital reacciona con nueve barras suavizadas a partir del
+  espectro del micrófono y distingue escucha, transcripción, pegado y avisos.
+- El chequeo diario descarga en segundo plano el paquete de una versión nueva,
+  verifica el SHA256 y muestra progreso, reintento y una acción explícita para
+  actualizar y reiniciar.
+
+### Corregido
+
+- El puente QWebChannel del panel vuelve a despachar las acciones a Python;
+  el medidor toma el nivel publicado por el backend.
+- El estilo orbital queda como valor predeterminado, en línea con la guía de
+  instalación.
+- En Windows instalado, la espera a que cierre el daemon ocurre en segundo
+  plano; si sigue activo, el panel muestra el fallo y permite actuar.
+- El portable de Windows lleva su helper de actualización y pasa la ruta de
+  su propio exe; el cambio conserva el respaldo y revierte si el daemon nuevo
+  no arranca.
+- En Linux/macOS, el binario verificado se copia junto al destino y se cambia
+  de forma atómica, incluso si la carpeta temporal está en otro volumen.
+- El guardado de configuración escribe y sincroniza un archivo temporal antes
+  de reemplazar el JSON anterior; una serialización fallida conserva el último
+  archivo válido, y si un archivo heredado está dañado recupera el `.bak`.
+- Los alias de vocabulario de varias palabras ya no atraviesan puntuación ni
+  consumen comas u otros separadores.
+- Los portables Linux/macOS activan el arranque automático con su propio
+  ejecutable; el diagnóstico de dependencias exige Python 3.12, igual que el
+  paquete publicado, y evita instalar si el intérprete no cumple ese mínimo.
+- La descarga de modelos calcula el espacio pendiente descontando las partes
+  reanudables ya existentes. El panel y la política de privacidad aclaran que
+  un endpoint LLM remoto recibe texto y vocabulario activo, nunca el audio;
+  los logs de sesión dejaron de guardar el texto dictado. El guardado opt-in
+  `DICTADO_SAVE_WAVS` queda documentado como almacenamiento de hasta 50 audios
+  de sesiones sin reconocimiento.
+- Se actualizaron las capturas del panel y del overlay para reflejar la UI
+  nueva.
+
+### Pruebas
+
+- La suite completa pasa en Windows: 110 casos detectados, 108 ejecutados OK
+  y 2 omitidos por plataforma (rama Unix de la UI y reemplazo POSIX). Los smokes del panel y
+  overlay web abren al 100 %; el portable Windows también se construyó y su
+  panel congelado abrió correctamente.
+
 ## [0.3.0] - 2026-10-08
 
 Toda la UI pasa a web (QtWebEngine), elegida con el bake-off de

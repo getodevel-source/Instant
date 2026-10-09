@@ -9,7 +9,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -115,6 +115,13 @@ def with_mics():
 
 
 class LogicSettingsTests(unittest.TestCase):
+    def test_status_hint_tracks_the_selected_hotkey(self):
+        logic, _emitted = make_logic()
+        logic._set_key("enter")
+        detail = logic.state_payload()["status"]["detail"]
+        self.assertIn("mantené Enter", detail)
+        self.assertNotIn("mantené F9", detail)
+
     def test_selected_device_after_refresh(self):
         logic, _emitted = make_logic()
         choices, preferred, sounddevice = with_mics()
@@ -143,10 +150,43 @@ class LogicSettingsTests(unittest.TestCase):
             logic.save_config(show_message=True)
         self.assertEqual(logic.settings_status,
                          "Guardado; reiniciá Instant para aplicar micrófono, "
-                         "tecla, vocabulario o LLM.")
+                         "tecla, voz y rendimiento.")
         saved = [payload for kind, payload in emitted if kind == "toast"
                  and payload["title"] == "Ajustes guardados"]
         self.assertTrue(saved and "reiniciá Instant" in saved[-1]["message"])
+
+    def test_advanced_voice_options_are_dirty_persisted_and_request_restart(self):
+        logic, _emitted = make_logic()
+        logic.handle({"op": "set_advanced", "key": "overlay_style", "value": "orbital"})
+        logic.handle({"op": "set_advanced", "key": "threads", "value": "2"})
+        logic.handle({"op": "set_advanced", "key": "max_seg", "value": "12"})
+        logic.handle({"op": "set_advanced", "key": "sound", "value": True})
+        logic.handle({"op": "set_advanced", "key": "llm_url",
+                      "value": "http://127.0.0.1:8080"})
+        self.assertEqual(logic.settings_status, "Hay cambios sin guardar.")
+
+        logic._last_daemon_running = True
+        with patch("instant_app.gui.config.save", return_value="config.json"), \
+                patch("instant_app.gui.autostart.is_enabled", return_value=False):
+            logic.save_config(show_message=False)
+
+        self.assertEqual(logic.cfg["overlay_style"], "orbital")
+        self.assertEqual(logic.cfg["threads"], 2)
+        self.assertEqual(logic.cfg["max_seg"], 12)
+        self.assertTrue(logic.cfg["sound"])
+        self.assertEqual(logic.cfg["llm_url"], "http://127.0.0.1:8080")
+        self.assertTrue(logic._restart_needed)
+
+    def test_advanced_settings_reject_invalid_values(self):
+        logic, emitted = make_logic()
+        logic.handle({"op": "set_advanced", "key": "llm_url", "value": "ftp://host"})
+        logic.handle({"op": "set_advanced", "key": "llm_url",
+                      "value": "http://[not-a-valid-ipv6-address"})
+        logic.handle({"op": "set_advanced", "key": "max_seg", "value": "120"})
+        self.assertEqual(logic.cfg.get("llm_url", ""), "")
+        self.assertEqual(logic.cfg.get("max_seg", 20.0), 20.0)
+        warnings = [payload for kind, payload in emitted if kind == "toast"]
+        self.assertEqual(len(warnings), 3)
 
     def test_autostart_override_wins_and_save_applies_it(self):
         logic, _emitted = make_logic(autostart_override=True)

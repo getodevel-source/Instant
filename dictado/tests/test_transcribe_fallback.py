@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from instant_app.engine import Engine, SAMPLE_RATE, SILENCE_PEAK, _fit_level
+from instant_app.engine import Engine, SAMPLE_RATE, _fit_level
 
 
 def _check(name, cond):

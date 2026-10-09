@@ -112,17 +112,17 @@ voz, por defecto) y `classic` (pastilla con barras y tecla visible). Ambos
 comparten la paleta con la ventana. Si QtWebEngine no puede abrir cae a Tk
 (X11 sin GL, instalación vieja sin webengine): el daemon nunca se queda sin
 overlay. El porque de esta ruta (y sus costos medidos) esta
-en `docs/bakeoff-ui.md`; el renderer vive en
-[`overlay_web.py`](dictado/src/instant_app/overlay_web.py) y la pagina en
-[`web/overlay.html`](dictado/src/instant_app/web/overlay.html) (los hosts QML de
+en `../docs/bakeoff-ui.md`; el renderer vive en
+[`overlay_web.py`](src/instant_app/overlay_web.py) y la pagina en
+[`web/overlay.html`](src/instant_app/web/overlay.html) (los hosts QML de
 las ventanas web quedan en `qml/`).
 
 Para retocar la interfaz, los colores están en
-[`branding.py`](dictado/src/instant_app/branding.py) (`PALETTE`, única fuente de
+[`branding.py`](src/instant_app/branding.py) (`PALETTE`, única fuente de
 verdad) y las medidas, la tipografía y los tiempos de animación en
-[`theme.py`](dictado/src/instant_app/theme.py) (tokens). Las páginas
-[`web/overlay.html`](dictado/src/instant_app/web/overlay.html) y
-[`web/panel.html`](dictado/src/instant_app/web/panel.html) repiten paleta y
+[`theme.py`](src/instant_app/theme.py) (tokens). Las páginas
+[`web/overlay.html`](src/instant_app/web/overlay.html) y
+[`web/panel.html`](src/instant_app/web/panel.html) repiten paleta y
 tokens a mano porque se sirven tal cual, sin motor de plantillas;
 `tests/test_overlay_palette.py` y `tests/test_panel_page.py` fallan si se
 despegan. La ventana del overlay se centra con

@@ -87,6 +87,7 @@ jobs:
             --add-data "dictado/src/instant_app/qml/panel_web_host.qml;instant_app/qml" \
             --add-data "dictado/src/instant_app/web/overlay.html;instant_app/web" \
             --add-data "dictado/src/instant_app/web/panel.html;instant_app/web" \
+            --add-data "instant-update.bat;." \
             --hidden-import PySide6.QtWebEngineQuick \
             --hidden-import PySide6.QtWebEngineCore \
             --hidden-import PySide6.QtWebChannel \
@@ -113,6 +114,7 @@ jobs:
             --add-data "dictado/src/instant_app/qml/panel_web_host.qml;instant_app/qml" \
             --add-data "dictado/src/instant_app/web/overlay.html;instant_app/web" \
             --add-data "dictado/src/instant_app/web/panel.html;instant_app/web" \
+            --add-data "instant-update.bat;." \
             --hidden-import PySide6.QtWebEngineQuick \
             --hidden-import PySide6.QtWebEngineCore \
             --hidden-import PySide6.QtWebChannel \
@@ -164,6 +166,54 @@ jobs:
             --collect-all sherpa_onnx \
             --collect-all sounddevice \
             dictado/src/instant_app/__main__.py
+
+      - name: Smoke del portable Windows congelado
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "instant-portable-smoke"
+          $appData = Join-Path $root "appdata"
+          $localData = Join-Path $root "localdata"
+          $modelData = Join-Path $root "models"
+          $configDir = Join-Path $appData "instant"
+          New-Item -ItemType Directory -Force -Path $configDir, $localData, $modelData | Out-Null
+          $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+          $utf8 = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::WriteAllText(
+            (Join-Path $configDir "config.json"),
+            ('{"update_last_check":' + $stamp + '}'), $utf8)
+          $env:APPDATA = $appData
+          $env:LOCALAPPDATA = $localData
+          $env:DICTADO_DATA = $modelData
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QTWEBENGINE_CHROMIUM_FLAGS = "--disable-gpu"
+          $exe = [System.IO.Path]::GetFullPath("dist/Instant.exe")
+          $process = Start-Process -FilePath $exe -ArgumentList "setup" -PassThru -WindowStyle Hidden
+          try {
+            $logFile = Join-Path $configDir "instant.log"
+            $deadline = [DateTime]::UtcNow.AddSeconds(75)
+            $ready = $false
+            while ([DateTime]::UtcNow -lt $deadline) {
+              if (Test-Path -LiteralPath $logFile) {
+                $ready = (Get-Content -LiteralPath $logFile -Raw -Encoding utf8) -match "panel abierto \(setup\)"
+                if ($ready) { break }
+              }
+              $process.Refresh()
+              if ($process.HasExited) { break }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) {
+              if (Test-Path -LiteralPath $logFile) { Get-Content -LiteralPath $logFile -Tail 40 -Encoding utf8 }
+              throw "El portable Windows no abrió el panel congelado."
+            }
+            Start-Sleep -Seconds 3
+            "portable Windows congelado OK"
+          } finally {
+            $running = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $exe }
+            foreach ($item in $running) {
+              Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+          }
 
       - name: Smoke del binario congelado (panel con WebEngine)
         if: runner.os != 'Windows'

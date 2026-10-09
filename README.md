@@ -4,7 +4,7 @@ Dictado por voz local en español: mantené F9, hablá y soltá. Instant transcr
 
 ![Ventana de Instant](docs/screenshots/ventana-ajustes.png)
 
-*Una sola pantalla: estado, micrófono, ajustes y vocabulario. Los botones de cada término (sonido `≈`, quitar `✕`) se ven completos, sin recortes.*
+*Inicio, micrófono, ajustes, vocabulario y voz local en una interfaz con navegación lateral.*
 
 ## Instalación
 
@@ -58,11 +58,12 @@ dejar una consola abierta y **no** inicia el daemon: usa `dist/Instant.exe setup
 si el ejecutable está disponible, o `pythonw` en segundo plano. Los argumentos
 explícitos conservan su salida de CLI en consola.
 
-La ventana es una sola página con scroll: portada con estado y tecla,
-micrófono con prueba de nivel, tarjeta General (tecla + arranque con
-el sistema) y **Vocabulario**, una tabla por perfil donde cada término lleva
-sus variantes (`a | b | c`), el pill de sonido (`≈`, corrige también lo que
-suena parecido) y el botón para quitarlo (`✕`).
+El panel agrupa **Inicio**, **Micrófono**, **Ajustes**, **Vocabulario** y
+**Voz local** en una navegación lateral. Desde ahí podés revisar el estado,
+probar el nivel sin guardar audio, elegir la tecla y el arranque con el sistema,
+ajustar el estilo y el rendimiento del overlay, y editar vocabularios por
+perfil. Cada término admite variantes (`a | b | c`), corrección por sonido
+(`≈`) y eliminación (`✕`).
 
 ![Tabla de vocabulario](docs/screenshots/vocab-tabla.png)
 
@@ -90,8 +91,8 @@ Vive fijo abajo al centro del monitor donde trabajás:
 
 Cada release de GitHub (`v*`) trae el instalador de Windows (`Instant-Setup.exe`), el portable (`Instant.exe`) y el binario de cada sistema, siempre con su `.sha256`. La app se actualiza según cómo esté instalada:
 
-- **Instalada con el instalador (Windows):** el botón «Buscar actualizaciones» descarga `Instant-Setup.exe`, frena el dictado, lo corre en modo silencioso (in-place, sin admin) y la app se reabre actualizada.
-- **Portable (Windows):** `instant-update.bat <archivo> <sha256>` frena todo, respalda el exe anterior (`Instant.exe.bak`) y lo cambia; si el daemon nuevo no levanta, restaura el `.bak` y reabre la ventana.
+- **Instalada con el instalador (Windows):** al detectar una versión nueva, la app descarga `Instant-Setup.exe` en segundo plano y verifica su SHA256. Cuando está listo, podés elegir «Actualizar y reiniciar»; Instant frena el dictado, corre el instalador silencioso (in-place, sin admin) y se reabre actualizado.
+- **Portable (Windows):** después de descargar y verificar `Instant.exe`, elegí aplicar; el helper incluido con el ejecutable frena todo, respalda el exe anterior (`Instant.exe.bak`) y lo cambia. Si el daemon nuevo no levanta, restaura el `.bak` y reabre la ventana. Los portables publicados antes de incluir el helper pueden necesitar reemplazar manualmente su primer exe nuevo.
 - **Linux/macOS:** el binario se reemplaza en caliente (el proceso vivo sigue con el viejo hasta reiniciar). Desde el panel o con `instant update --download DIR --apply`. `instant stop` frena el daemon cuando haga falta.
 
 Sin `.sha256` no se instala nada: la descarga se verifica antes de aplicar.
@@ -100,17 +101,27 @@ Sin `.sha256` no se instala nada: la descarga se verifica antes de aplicar.
 instant update              :: dice si hay versión nueva
 instant update --download DIR
 instant update --download DIR --apply   :: Linux/macOS: baja y reemplaza
-instant-update.bat <archivo descargado> :: portable Windows
+instant-update.bat <archivo descargado> <sha256> [exe destino] :: repo/recuperación portable
 ```
 
-La ventana consulta sola una vez por día y, si hay versión, el botón se
-viste de primario («↓ Actualizar a vX»): sin modales ni apuros.
+La ventana consulta sola una vez por día. Si encuentra una versión nueva,
+descarga el paquete verificado y muestra el progreso; la instalación empieza
+solo cuando elegís «Actualizar y reiniciar». Si falla la descarga, podés
+reintentar desde el aviso o el panel. Una copia abierta desde el repositorio
+indica que se actualiza con `git pull`.
 
 ## Privacidad y datos
 
 - El audio se procesa localmente con Silero VAD y Parakeet; no se sube a un servicio.
+- Instant no guarda el texto reconocido en su log de sesión; registra duración,
+  estado y errores para el diagnóstico.
+- Si definís `DICTADO_SAVE_WAVS`, guarda localmente hasta 50 audios de sesiones
+  que terminaron sin texto reconocido, junto con metadatos de duración y nivel.
 - Los modelos se descargan durante la configuración y se guardan en `models/`, que no se versiona.
-- El pulido LLM es opcional y solo usa el servidor local configurado por el usuario.
+- El pulido LLM está apagado por defecto. Al configurarlo, Instant envía solo el
+  texto transcrito y el vocabulario activo al endpoint elegido (nunca el audio);
+  si ese endpoint está fuera de tu equipo, usá HTTPS porque el servidor recibirá
+  ambos.
 
 ## Desarrollo
 
@@ -138,7 +149,10 @@ python dictado/tests/test_update.py         # modos de instalación y sidecar SH
 python dictado/tests/test_tray.py
 python dictado/tests/test_gui_settings.py
 python dictado/tests/test_gui_lifecycle.py
-python dictado/tests/test_qml_success.py
+python dictado/tests/test_panel_page.py      # contrato del panel y QWebChannel
+python dictado/tests/test_config.py           # guardado atómico de preferencias
+python dictado/tests/test_deps.py             # mínimo de Python y diagnóstico
+python dictado/tests/test_privacy_logs.py     # logs sin texto dictado
 ```
 
 La decisión de motor (por qué Parakeet y qué se descartó) está en

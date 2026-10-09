@@ -78,8 +78,6 @@ class AppLifecycleTests(unittest.TestCase):
 
     def test_terminate_existing_gui_forces_when_close_is_ignored(self):
         import ctypes as ctypes_module
-        from ctypes import wintypes as wintypes_module
-
         from instant_app import gui_lifecycle
 
         hwnd = 0x1234

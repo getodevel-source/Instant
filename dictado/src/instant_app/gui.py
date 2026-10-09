@@ -36,7 +36,7 @@ log = logging.getLogger("instant")
 _APP_USER_MODEL_ID = "getodevel-source.Instant.0.1"
 UPDATE_CHECK_INTERVAL = 86400
 DAEMON_MISSING_DETAIL = ("Instant no pudo iniciar. Revisá Diagnóstico.")
-STATUS_DETAIL = ("Enfocá el prompt o campo editable de la CLI, mantené F9 y "
+STATUS_DETAIL = ("Enfocá el prompt o campo editable de la CLI, mantené {key} y "
                  "soltá: Instant pega con Ctrl+V.")
 
 
@@ -411,6 +411,13 @@ class PanelLogic:
         self._vocab_rows_cache = []
         self._available_update = None
         self._pending_update = None
+        self._ready_update = None
+        self._update_checking = False
+        self._update_download_pending = False
+        self._update_install_pending = False
+        from instant_app.update import install_mode
+        self._update_source_mode = install_mode() == "source"
+        self.update_progress = {"visible": False, "percent": 0, "text": ""}
         self._update_silent_done = False
         self._diagnostic_running = False
         self._diagnostics_open = False
@@ -420,7 +427,7 @@ class PanelLogic:
         self.mic_selected = None
         self.key_value = hotkey.key_label(self.cfg.get("key", "f9"))
         self.status_var = "Listo para dictar"
-        self.status_detail = STATUS_DETAIL
+        self.status_detail = STATUS_DETAIL.format(key=self.key_value)
         self.meter = {"percent": 0, "text": "La prueba no guarda audio."}
         self.model_status = ""
         self.model_progress = {"visible": False, "percent": 0}
@@ -451,6 +458,13 @@ class PanelLogic:
             },
             "key_label": self.key_value,
             "autostart": bool(self._autostart_enabled),
+            "advanced": {
+                "llm_url": self.cfg.get("llm_url", ""),
+                "threads": self.cfg.get("threads", 4),
+                "sound": bool(self.cfg.get("sound", False)),
+                "overlay_style": self.cfg.get("overlay_style", "orbital"),
+                "max_seg": self.cfg.get("max_seg", 20),
+            },
             "mic": {
                 "labels": list(self.mic_labels),
                 "selected": self.mic_selected,
@@ -473,7 +487,16 @@ class PanelLogic:
                     for row in self._vocab_rows_cache
                 ],
             },
-            "updates": {"button": self.update_button},
+            "updates": {
+                "button": self.update_button,
+                "action": "apply_update" if self._ready_update else
+                          "retry_update" if self._available_update and not self._update_download_pending
+                          and not self._update_checking and not self._update_source_mode
+                          else "check_updates",
+                "busy": self._update_checking or self._update_download_pending
+                        or self._update_install_pending,
+                "progress": dict(self.update_progress),
+            },
             "dirty": bool(self._dirty()),
             "settings_status": self.settings_status,
             "data_dir": self.data_dir,
@@ -549,6 +572,51 @@ class PanelLogic:
         self._update_settings_status()
         self.push_state()
 
+    def _op_set_advanced(self, message):
+        key = message.get("key")
+        value = message.get("value")
+        if key == "llm_url":
+            value = str(value or "").strip()
+            if value:
+                from urllib.parse import urlsplit
+                try:
+                    parsed = urlsplit(value)
+                except ValueError:
+                    parsed = None
+                if (parsed is None or parsed.scheme not in {"http", "https"}
+                        or not parsed.hostname):
+                    self.toast("Dirección no válida",
+                               "Usá una URL http:// o https://, o dejá el campo vacío.",
+                               level="warn")
+                    return
+            self.cfg["llm_url"] = value
+        elif key == "threads":
+            try:
+                threads = int(value)
+            except (TypeError, ValueError):
+                self.toast("Cantidad de hilos no válida", "Elegí entre 1 y 8.", level="warn")
+                return
+            cpu_count = os.cpu_count() or 4
+            self.cfg["threads"] = max(1, min(8, cpu_count, threads))
+        elif key == "max_seg":
+            try:
+                max_seg = float(value)
+            except (TypeError, ValueError):
+                self.toast("Duración no válida", "Usá un valor entre 1 y 60 segundos.", level="warn")
+                return
+            if not 1 <= max_seg <= 60:
+                self.toast("Duración no válida", "Usá un valor entre 1 y 60 segundos.", level="warn")
+                return
+            self.cfg["max_seg"] = max_seg
+        elif key == "sound":
+            self.cfg["sound"] = value is True or value in (1, "1", "true", "on")
+        elif key == "overlay_style" and value in {"classic", "orbital"}:
+            self.cfg["overlay_style"] = value
+        else:
+            return
+        self._update_settings_status()
+        self.push_state()
+
     def _op_context_select(self, message):
         self.context_select(message.get("name"))
 
@@ -578,6 +646,16 @@ class PanelLogic:
 
     def _op_check_updates(self, _message):
         self.check_updates()
+
+    def _op_retry_update(self, _message):
+        if (self._available_update and not self._update_download_pending
+                and not self._update_source_mode):
+            self._start_update_download(self._available_update)
+
+    def _op_apply_update(self, _message):
+        if self._ready_update and not self._update_install_pending:
+            target, expected, _version = self._ready_update
+            self._install_ready(target, expected)
 
     def _op_toast_action(self, message):
         callbacks = self._toast_callbacks.pop(message.get("id"), None)
@@ -638,11 +716,15 @@ class PanelLogic:
             for name, items in context.profiles(self.cfg).items())
         return (mic, self.key_value.strip().lower(), bool(self._autostart_enabled),
                 self.cfg["active_context"], context_state,
-                self.cfg.get("llm_url", ""))
+                self.cfg.get("llm_url", ""),
+                self.cfg.get("threads", 4), bool(self.cfg.get("sound", False)),
+                self.cfg.get("overlay_style", "orbital"),
+                self.cfg.get("max_seg", 20.0))
 
     @staticmethod
     def _restart_signature(snapshot):
-        return snapshot[0], snapshot[1], snapshot[3], snapshot[4], snapshot[5]
+        return (snapshot[0], snapshot[1], snapshot[3], snapshot[4], snapshot[5],
+                snapshot[6], snapshot[7], snapshot[8], snapshot[9])
 
     def _same_settings(self, left, right):
         return (self.catalog.same_identity(left[0], right[0])
@@ -655,7 +737,7 @@ class PanelLogic:
             self.settings_status = "Hay cambios sin guardar."
         elif self._restart_needed:
             self.settings_status = ("Guardado; reiniciá Instant para aplicar "
-                                    "micrófono, tecla, vocabulario o LLM.")
+                                    "micrófono, tecla, voz y rendimiento.")
         else:
             self.settings_status = "Ajustes guardados."
 
@@ -816,7 +898,10 @@ class PanelLogic:
         self.emit("key_result", {"ok": True, "message": ""})
 
     def _set_key(self, key):
+        previous_detail = STATUS_DETAIL.format(key=self.key_value)
         self.key_value = hotkey.key_label(key)
+        if self.status_detail == previous_detail:
+            self.status_detail = STATUS_DETAIL.format(key=self.key_value)
         self._update_settings_status()
         self.push_state()
 
@@ -956,6 +1041,8 @@ class PanelLogic:
         self.cfg["key"], self.cfg["lang"], self.cfg["autostart"] = (
             snapshot[1], "es", snapshot[2])
         self.cfg["llm_url"] = snapshot[5]
+        self.cfg["threads"], self.cfg["sound"] = snapshot[6], snapshot[7]
+        self.cfg["overlay_style"], self.cfg["max_seg"] = snapshot[8], snapshot[9]
         path = config.save(self.cfg)
         warning = None
         try:
@@ -978,9 +1065,9 @@ class PanelLogic:
         self._saved_settings = saved
         self._update_settings_status()
         if warning:
-            self.toast("Arranque con Windows", warning, level="warn")
+            self.toast("Arranque con el sistema", warning, level="warn")
         if show_message:
-            note = (" Micrófono, tecla, vocabulario y LLM guardados; reiniciá "
+            note = (" Micrófono, tecla, voz y rendimiento guardados; reiniciá "
                     "Instant para aplicarlos." if self._restart_needed else "")
             self.toast("Ajustes guardados", f"{note}\n{path}".strip())
         self.push_state()
@@ -1051,8 +1138,6 @@ class PanelLogic:
         self.push_state()
 
     def stop_daemon_flow(self, restart=False):
-        from instant_app.daemon import pid_path  # noqa: F401  (compat: mismo camino)
-
         pid = _pid_value()
         if pid is None or not self._last_daemon_running:
             if restart:
@@ -1123,10 +1208,10 @@ class PanelLogic:
                 self._settings_daemon_changed(running)
             if running:
                 self.status_var = "Instant está activo"
-                self.status_detail = STATUS_DETAIL
+                self.status_detail = STATUS_DETAIL.format(key=self.key_value)
             else:
                 self.status_var = "Listo para dictar"
-                self.status_detail = STATUS_DETAIL
+                self.status_detail = STATUS_DETAIL.format(key=self.key_value)
             self.push_state()
             self._maybe_start_daemon_on_open()
 
@@ -1231,7 +1316,7 @@ class PanelLogic:
     # ---------------------------------------------------------- actualizar
 
     def _silent_update_check(self):
-        """Chequeo diario silencioso: nunca interrumpe, solo avisa."""
+        """Chequeo diario; si hay una versión nueva, la baja y verifica."""
         if self._update_silent_done or self._closed:
             return
         self._update_silent_done = True
@@ -1256,11 +1341,48 @@ class PanelLogic:
 
     def _apply_update_available(self, info):
         self._available_update = info
-        self.update_button = f"↓ Actualizar a v{info['latest']}"
+        version = info.get("latest") or "nueva"
+        if self._update_source_mode:
+            self._ready_update = None
+            self.update_button = f"Disponible v{version}"
+            self.update_progress = {
+                "visible": False, "percent": 0,
+                "text": "Esta copia desde el repo se actualiza con git pull.",
+            }
+            self.push_state()
+            return False
+        if self._ready_update and self._pending_update:
+            if self._pending_update.get("latest") == version:
+                self.update_button = f"Reiniciar para aplicar v{version}"
+                self.push_state()
+                return
+            self._ready_update = None
+        if self._update_download_pending:
+            return
+        self._start_update_download(info)
+        return True
+
+    def _start_update_download(self, info):
+        if self._closed or self._update_download_pending:
+            return
+        self._pending_update = info
+        self._update_download_pending = True
+        version = info.get("latest") or "nueva"
+        self.update_button = f"Descargando v{version}…"
+        self.update_progress = {
+            "visible": True, "percent": 0,
+            "text": "Conectando con el servidor de actualizaciones…",
+        }
         self.push_state()
+        self.tasks.submit(self._download_update, self._update_ready,
+                          self._update_download_failed, self._update_download_progress)
 
     def check_updates(self):
+        if self._update_checking or self._update_download_pending:
+            return
         from instant_app import update as update_module
+        self._update_checking = True
+        self.update_button = "Buscando actualizaciones…"
         self.push_state()
         self.tasks.submit(lambda _emit: update_module.check(),
                           self._updates_result, self._updates_failed)
@@ -1268,55 +1390,139 @@ class PanelLogic:
     def _updates_failed(self, error):
         if self._closed:
             return
-        self.toast("Actualizaciones", f"No se pudo consultar versiones:\n{error}",
+        self._update_checking = False
+        if not self._available_update:
+            self.update_button = "Buscar actualizaciones"
+        self.push_state()
+        self.toast("Actualizaciones",
+                   f"No se pudo consultar versiones:{chr(10)}{error}",
                    level="warn")
+
+    @staticmethod
+    def _update_progress_text(done, total):
+        done_mb = done / (1024 * 1024)
+        if total:
+            total_mb = total / (1024 * 1024)
+            return (f"Descargando: {done_mb:.0f} de {total_mb:.0f} MB "
+                    f"({done / total:.0%})")
+        return f"Descargando: {done_mb:.0f} MB"
+
+    def _update_download_progress(self, event):
+        if self._closed or not self._update_download_pending:
+            return
+        done = max(0, int(event.get("done") or 0))
+        total = max(0, int(event.get("total") or 0))
+        percent = min(100, int(100 * done / total)) if total else 0
+        self.update_progress = {
+            "visible": True,
+            "percent": percent,
+            "indeterminate": not bool(total),
+            "text": self._update_progress_text(done, total),
+        }
+        self.push_state()
 
     def _updates_result(self, info):
         if self._closed:
             return
+        self._update_checking = False
         if not info.get("update"):
             self._available_update = None
+            self._pending_update = None
+            self._ready_update = None
             self.update_button = "Buscar actualizaciones"
+            self.update_progress = {"visible": False, "percent": 0, "text": ""}
             self.push_state()
             self.toast("Actualizaciones",
                        f"Estás al día (versión {info.get('current') or '?'}).")
             return
         from instant_app import update as update_module
         notes = update_module.clean_notes(info.get("notes"))
+        was_pending = self._update_download_pending
+        was_ready = bool(self._ready_update)
         self._available_update = info
-        self.toast(f"Hay versión nueva: {info['latest']}",
-                   f"Tenés {info.get('current') or '?'}.\n{notes}",
-                   actions=(("Descargar", self._download_pending),
-                            ("Ahora no", lambda: None)))
+        if was_ready:
+            self._update_ready(self._ready_update)
+            return
+        started = self._apply_update_available(info)
+        if not was_pending:
+            if self._update_source_mode:
+                details = "Esta copia del repo se actualiza con git pull."
+            elif started:
+                details = (f"Tenés {info.get('current') or '?'}; se está "
+                           "descargando en segundo plano.")
+            else:
+                details = "La descarga de esta versión ya está en curso."
+            if notes:
+                details += chr(10) + notes
+            self.toast(f"Hay versión nueva: {info['latest']}", details)
 
     def _download_pending(self):
-        self._pending_update = self._available_update
-        self.tasks.submit(self._download_update, self._update_ready,
-                          self._updates_failed)
+        if self._available_update:
+            self._start_update_download(self._available_update)
 
-    def _download_update(self, _emit):
+    def _download_update(self, emit):
         import tempfile
         from instant_app import update as update_module
         info = self._pending_update
         target = os.path.join(tempfile.gettempdir(), "instant_update", info["asset"])
         expected = update_module.fetch_expected_sha256(info["asset_url"])
-        update_module.download(info["asset_url"], target, expected_sha256=expected)
+        last_report = [0.0]
+
+        def report(done, total):
+            now = time.monotonic()
+            if total and done < total and now - last_report[0] < 0.2:
+                return
+            last_report[0] = now
+            emit({"done": done, "total": total})
+
+        update_module.download(
+            info["asset_url"], target, expected_sha256=expected, progress=report)
         return target, expected
+
+    def _update_download_failed(self, error):
+        if self._closed:
+            return
+        self._update_download_pending = False
+        self.update_progress = {
+            "visible": False, "percent": 0,
+            "text": "No se pudo descargar la actualización.",
+        }
+        version = (self._available_update or {}).get("latest", "nueva")
+        self.update_button = f"Reintentar descarga v{version}"
+        self.push_state()
+        self.toast("Descarga de actualización fallida", str(error), level="warn",
+                   actions=(("Reintentar", self._download_pending),
+                            ("Después", lambda: None)))
 
     def _update_ready(self, payload):
         if self._closed:
             return
-        target, expected = payload
-        self.toast("Descarga verificada",
-                   f"{target}\n\nSe frena el dictado un momento (si estás "
-                   "por dictar, mejor después) y se aplica la actualización.",
-                   actions=(("Instalar ahora",
+        target, expected = payload[:2]
+        self._update_download_pending = False
+        version = (payload[2] if len(payload) > 2 else
+                   (self._pending_update or {}).get("latest", "nueva"))
+        self._ready_update = (target, expected, version)
+        self.update_button = f"Reiniciar para aplicar v{version}"
+        self.update_progress = {
+            "visible": False, "percent": 100,
+            "text": "Descarga verificada. Lista para instalar.",
+        }
+        self.push_state()
+        self.toast("Actualización lista",
+                   f"v{version} se descargó y verificó. Instant se va a cerrar "
+                   "un momento para aplicar el cambio.",
+                   actions=(("Actualizar y reiniciar",
                              lambda: self._install_ready(target, expected)),
                             ("Después", lambda: None)))
 
     def _install_ready(self, target, expected):
         from instant_app import update as update_module
 
+        if self._update_install_pending:
+            return
+        self._update_install_pending = True
+        self.update_button = "Preparando actualización…"
+        self.push_state()
         mode = update_module.install_mode()
         if mode == "installed":
             self._install_via_setup(target)
@@ -1325,43 +1531,94 @@ class PanelLogic:
             self._install_in_place(target)
             return
         root = _workdir()
+        destination = os.path.join(root, "dist", "Instant.exe")
         script = os.path.join(root, "instant-update.bat")
+        if getattr(sys, "frozen", False):
+            destination = sys.executable
+            bundled = os.path.join(getattr(sys, "_MEIPASS", ""),
+                                   "instant-update.bat")
+            script = ""
+            if os.path.isfile(bundled):
+                # El onefile borra _MEIPASS al salir. Copiamos el helper chico
+                # a Temp antes de cerrarnos y le pasamos el exe portable real.
+                try:
+                    import tempfile
+                    import shutil
+                    helper_dir = os.path.join(
+                        tempfile.gettempdir(), f"instant_update_{os.getpid()}")
+                    os.makedirs(helper_dir, exist_ok=True)
+                    script = os.path.join(helper_dir, "instant-update.bat")
+                    shutil.copyfile(bundled, script)
+                except OSError as exc:
+                    self._update_install_failed(exc)
+                    return
         if not os.path.isfile(script):
+            self._update_install_pending = False
+            self.update_button = f"Reiniciar para aplicar v{(self._pending_update or {}).get('latest', '')}"
+            self.push_state()
             self.toast(
                 "Actualizaciones",
                 "No encuentro instant-update.bat junto a la app "
-                "(instalación portable sin scripts).\n\n"
-                f"Instalá a mano: cerrá Instant por completo y copiá\n{target}\n"
+                "(instalación portable sin scripts)." + chr(10) + chr(10) +
+                f"Instalá a mano: cerrá Instant por completo y copiá{chr(10)}{target}{chr(10)}"
                 f"sobre tu binario de Instant (SHA256 {expected[:16]}…).",
                 level="warn")
             return
         try:
-            subprocess.Popen(["cmd", "/c", script, target, expected], cwd=root)
+            subprocess.Popen(
+                ["cmd", "/c", script, target, expected, destination], cwd=root)
         except Exception as exc:  # noqa: BLE001  (se informa al usuario)
-            self.toast("Actualizaciones", f"No pude lanzar el instalador:\n{exc}",
+            self._update_install_pending = False
+            self.update_button = f"Reiniciar para aplicar v{(self._pending_update or {}).get('latest', '')}"
+            self.push_state()
+            self.toast("Actualizaciones",
+                       f"No pude lanzar el instalador:{chr(10)}{exc}",
                        level="error")
             return
         self.close()
 
     def _install_via_setup(self, installer_path):
         """Modo instalado (Windows): el Setup nuevo actualiza y reabre solo."""
+        # Frenar y esperar al daemon puede tardar varios segundos. Hacerlo en
+        # el worker evita congelar el panel mientras Windows suelta sus archivos.
+        self.tasks.submit(
+            lambda _emit: self._prepare_installer(),
+            lambda _value: self._launch_setup_installer(installer_path),
+            self._update_install_failed)
+
+    @staticmethod
+    def _prepare_installer():
         # El daemon no tiene ventana: el Restart Manager del instalador no
         # puede cerrarlo, así que se frena acá y se espera a que suelte
         # los archivos antes de copiar encima.
         stop_daemon()
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 8.0
         while daemon_is_running() and time.monotonic() < deadline:
             time.sleep(0.1)
+        if daemon_is_running():
+            raise RuntimeError("El servicio de dictado sigue activo. Cerralo y reintentá.")
+
+    def _launch_setup_installer(self, installer_path):
+        if self._closed:
+            return
         try:
             subprocess.Popen(
                 [installer_path, "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
                 close_fds=True)
         except Exception as exc:  # noqa: BLE001  (se informa al usuario)
-            self.toast("Actualizaciones", f"No pude lanzar el instalador:\n{exc}",
-                       level="error")
+            self._update_install_failed(exc)
             return
         log.info("instalador %s lanzado en silencio", installer_path)
         self.close()
+
+    def _update_install_failed(self, error):
+        if self._closed:
+            return
+        self._update_install_pending = False
+        self.update_button = (f"Reintentar instalación v"
+                              f"{(self._pending_update or {}).get('latest', '')}")
+        self.push_state()
+        self.toast("Actualización sin aplicar", str(error), level="error")
 
     def _install_in_place(self, downloaded):
         """Linux/macOS: reemplazo en caliente del binario y reinicio del daemon."""
@@ -1370,7 +1627,11 @@ class PanelLogic:
         try:
             applied = update_module.apply_binary_update(downloaded)
         except Exception as exc:  # noqa: BLE001  (se informa al usuario)
-            self.toast("Actualizaciones", f"No pude aplicar:\n{exc}", level="error")
+            self._update_install_pending = False
+            self.update_button = f"Reiniciar para aplicar v{(self._pending_update or {}).get('latest', '')}"
+            self.push_state()
+            self.toast("Actualizaciones", f"No pude aplicar:{chr(10)}{exc}",
+                       level="error")
             return
         log.info("binario actualizado en %s", applied)
         self.toast("Actualizaciones",
@@ -1400,6 +1661,8 @@ class PanelLogic:
             self.request_daemon_start()
 
     def close(self):
+        if self._closed:
+            return
         self._closed = True
         self.tasks.close()
         self.emit("close", {})
@@ -1424,8 +1687,10 @@ def compose_panel_page(html, qwebchannel_js):
 
 def write_panel_page():
     """Compone web/panel.html + qwebchannel.js en el dir de datos."""
+    from importlib import import_module
     from PySide6.QtCore import QFile, QIODevice
-    import PySide6.QtWebChannel  # noqa: F401  (registra :/qtwebchannel/qwebchannel.js)
+
+    import_module("PySide6.QtWebChannel")  # registra :/qtwebchannel/qwebchannel.js
 
     from instant_app.paths import config_dir
 
@@ -1498,12 +1763,13 @@ class _WebPanel:
 
             @Slot(str)
             def call(self, payload):
-                self.received(payload)
+                self.received.emit(payload)
 
             received = Signal(str)
 
         self.bridge = Bridge(self.application)
         self.root.registerBridge(self.bridge)
+        self._window_closing = False
 
         self.logic = PanelLogic(
             page=page, autostart_override=autostart_override,
@@ -1561,7 +1827,7 @@ class _WebPanel:
             elif kind == "navigate":
                 self.bridge.navigate.emit(json.dumps(payload, ensure_ascii=False))
             elif kind == "close":
-                self.close()
+                self._close_window()
             # "idle" y "mic_loaded" no tienen contraparte en la página.
         except Exception:
             log.debug("no pude empujar %s al panel", kind, exc_info=True)
@@ -1579,9 +1845,21 @@ class _WebPanel:
 
     def _on_closed(self):
         """El usuario cerró la ventana: se cierra la lógica y sale el proceso."""
+        self._window_closing = True
         try:
             self.logic.close()
         finally:
+            self.application.quit()
+
+    def _close_window(self):
+        """Cierra el host QML sin reentrar por la señal `closed` de la ventana."""
+        if self._window_closing:
+            return
+        self._window_closing = True
+        try:
+            self.root.close()
+        except Exception:
+            log.exception("no pude cerrar la ventana del panel")
             self.application.quit()
 
     # ------------------------------------------------------------- pública

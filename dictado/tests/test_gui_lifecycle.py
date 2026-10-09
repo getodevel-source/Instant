@@ -131,6 +131,38 @@ class PanelLifecycleTests(unittest.TestCase):
         self.assertTrue(logic._closed)
         self.assertEqual(seen, [])
 
+    def test_logic_close_closes_qml_window_once_without_reentry(self):
+        logic, _emitted = make_logic()
+        panel = object.__new__(gui._WebPanel)
+        panel.logic = logic
+        panel._window_closing = False
+
+        class FakeApplication:
+            def __init__(self):
+                self.quit_calls = 0
+
+            def quit(self):
+                self.quit_calls += 1
+
+        class FakeRoot:
+            def __init__(self):
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+                panel._on_closed()
+
+        panel.application = FakeApplication()
+        panel.root = FakeRoot()
+        logic.emit = panel._emit
+
+        logic.close()
+        logic.close()
+
+        self.assertEqual(panel.root.close_calls, 1)
+        self.assertEqual(panel.application.quit_calls, 1)
+        self.assertTrue(panel._window_closing)
+
     def test_daemon_inherits_resolved_model_directory_and_start_is_single_flight(self):
         launch = Mock()
         logic, _emitted = make_logic()

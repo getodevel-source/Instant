@@ -4,7 +4,7 @@ Comparación con evidencia de las dos rutas candidatas para el overlay del
 dictado: el MISMO diseño objetivo implementado dos veces — QML (ShaderEffect
 compilado con qsb) y canvas2d dentro de QtWebEngine — alimentadas por el mismo
 replay de voz y medidas con el mismo método. Resultados y conclusiones:
-[`docs/bakeoff-ui.md`](../../docs/bakeoff-ui.md).
+[`docs/bakeoff-ui.md`](../../../docs/bakeoff-ui.md).
 
 ## Piezas
 

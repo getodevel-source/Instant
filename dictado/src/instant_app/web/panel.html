@@ -3,150 +3,296 @@
 <head>
 <meta charset="utf-8">
 <title>Instant</title>
-<style>
-:root{
+<style>:root{
 --bg:#0f1a20;--bg-alt:#0c161b;--surface:#16242b;--surface-alt:#1d2f37;--surface-high:#243a43;
 --line:#28414a;--line-soft:#1e333b;--text:#eaf3f4;--muted:#9db0b6;--faint:#6f858c;
 --accent:#55d5c8;--accent-soft:#72d5c7;--accent-btn:#0d7d73;--accent-hover:#109287;--accent-press:#0a655e;
 --hero:#15333d;--hero-alt:#112830;--green:#7cdda6;--amber:#f2c36a;--red:#ff908b;
+--curve:cubic-bezier(.32,.72,0,1)
 }
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font:13px/1.5 system-ui,"Segoe UI",sans-serif;max-width:760px;margin:0 auto;padding:16px 16px 42px}
-h1{font-size:26px;margin:0 0 8px;font-weight:700}
-h2{font-size:20px;margin:0 0 8px;font-weight:650}
-p{margin:4px 0}
+html{scroll-behavior:smooth;scrollbar-color:var(--surface-high) transparent}
+html,body{margin:0;min-height:100%;padding:0}
+body{background:var(--bg);color:var(--text);font:13px/1.55 system-ui,"Segoe UI",sans-serif}
+button,input,select{font:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.app-shell{min-height:100vh;display:grid;grid-template-columns:224px minmax(0,1fr);background:radial-gradient(ellipse at 72% -18%,rgba(85,213,200,.08),transparent 46%),var(--bg)}
+.sidebar{position:sticky;top:0;align-self:start;height:100vh;display:flex;flex-direction:column;gap:24px;padding:24px 15px 18px;background:linear-gradient(180deg,rgba(22,36,43,.96),rgba(12,22,27,.98));box-shadow:inset -1px 0 var(--line-soft);z-index:2}
+.brand{display:flex;align-items:center;gap:11px;padding:2px 10px;color:var(--text);font-size:18px;font-weight:750;letter-spacing:.2px;text-decoration:none}
+.brand-mark{position:relative;width:28px;height:28px;border-radius:10px;background:linear-gradient(145deg,var(--surface-high),var(--bg-alt));box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 0 22px rgba(85,213,200,.12);display:grid;place-items:center}
+.brand-mark i{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 16px rgba(85,213,200,.8)}
+.workspace-label{padding:0 11px;color:var(--faint);font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase}
+.side-nav{display:grid;gap:5px}
+.nav-link{display:flex;align-items:center;gap:11px;width:100%;padding:10px 11px;border:0;border-radius:12px;background:transparent;color:var(--muted);font-weight:600;text-align:left;cursor:pointer;transition:background .34s var(--curve),color .34s var(--curve),transform .34s var(--curve)}
+.nav-link:hover{background:rgba(36,58,67,.64);color:var(--text);transform:translateX(2px)}
+.nav-link[aria-current="page"]{background:linear-gradient(105deg,rgba(85,213,200,.14),rgba(36,58,67,.36));color:var(--accent-soft);box-shadow:inset 0 0 0 1px rgba(85,213,200,.12)}
+.nav-glyph{width:25px;height:25px;border-radius:9px;display:grid;place-items:center;background:rgba(36,58,67,.64);font-size:11px;color:var(--muted)}
+.nav-link[aria-current="page"] .nav-glyph{background:rgba(85,213,200,.16);color:var(--accent)}
+.sidebar-bottom{display:grid;gap:12px;margin-top:auto;padding:0 9px}
+.privacy-note{padding:12px;border-radius:14px;background:linear-gradient(145deg,rgba(21,51,61,.9),rgba(17,40,48,.72));box-shadow:inset 0 0 0 1px rgba(85,213,200,.1)}
+.privacy-note b{display:block;font-size:12px}
+.privacy-note span{display:block;margin-top:4px;color:var(--muted);font-size:11px}
+.sidebar-meta{display:flex;justify-content:space-between;gap:8px;overflow:hidden;color:var(--faint);font-size:10px}
+.sidebar-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace{min-width:0}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:82px;padding:16px clamp(22px,4vw,54px)}
+.breadcrumb{display:flex;align-items:center;gap:9px;color:var(--faint);font-size:12px}
+.breadcrumb strong{color:var(--text);font-weight:650}
+.top-actions{display:flex;align-items:center;gap:12px}
+.content{width:min(1180px,100%);margin:0 auto;padding:0 clamp(22px,4vw,54px) 48px}
+section[id]{scroll-margin-top:20px}
+h1,h2,h3,p{margin-top:0}
+h1{margin-bottom:10px;font-size:clamp(30px,3vw,42px);line-height:1.08;font-weight:730;letter-spacing:-.045em}
+h2{margin-bottom:4px;font-size:17px;line-height:1.25;font-weight:680;letter-spacing:-.02em}
+h3{margin:0;font-size:13px;font-weight:650}
+p{margin-bottom:6px}
 .small{font-size:12px;color:var(--muted)}
-.top{display:flex;align-items:center;gap:8px;padding:8px 0 16px}
-.brand{font-size:18px;font-weight:750;letter-spacing:.2px}
-.brand i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--accent);margin-right:8px}
-.top nav{display:flex;gap:4px;margin-left:16px}
-.top .sp{flex:1}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;margin:0 0 16px}
-.hero{background:linear-gradient(180deg,var(--hero),var(--hero-alt));border-color:var(--line)}
-.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
-.btn{background:var(--surface-high);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:8px 16px;font:inherit;cursor:pointer}
-.btn:hover{border-color:var(--accent)}
-.btn.primary{background:var(--accent-btn);border-color:var(--accent-btn);color:#fff}
+.eyebrow,.section-kicker{display:inline-flex;align-items:center;gap:7px;color:var(--accent-soft);font-size:10px;font-weight:700;letter-spacing:.15em;text-transform:uppercase}
+.eyebrow{margin-bottom:14px}
+.eyebrow::before{content:"";width:17px;height:1px;background:var(--accent)}
+.card{position:relative;min-width:0;margin:0 0 16px;padding:22px;border-radius:21px;background:linear-gradient(145deg,rgba(27,43,52,.9),rgba(22,36,43,.92));box-shadow:inset 0 0 0 1px rgba(40,65,74,.72),0 18px 48px rgba(0,0,0,.14)}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:15px}
+.card-head p{margin:5px 0 0;color:var(--muted);font-size:12px}
+.card-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:12px;background:rgba(36,58,67,.75);color:var(--accent);font-size:12px}
+.hero{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(220px,.88fr);gap:20px;min-height:278px;padding:30px 32px;overflow:hidden;background:radial-gradient(ellipse at 80% 48%,rgba(85,213,200,.12),transparent 36%),linear-gradient(125deg,var(--hero),var(--hero-alt));box-shadow:inset 0 0 0 1px rgba(85,213,200,.15),0 24px 70px rgba(0,0,0,.18)}
+.hero-copy{position:relative;z-index:1;align-self:center}
+.hero-copy>p:not(.eyebrow){max-width:490px;margin-bottom:14px;color:var(--muted)}
+.status{display:flex;align-items:center;gap:9px;margin:18px 0 5px}
+.status b{font-size:14px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--faint);flex:none}
+.dot.ok{background:var(--green);box-shadow:0 0 13px rgba(124,221,166,.65)}
+.dot.starting{background:var(--amber);box-shadow:0 0 13px rgba(242,195,106,.55)}
+.dot.down{background:var(--faint)}
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:35px;padding:5px 9px;border-radius:9px;background:rgba(36,58,67,.8);box-shadow:inset 0 0 0 1px rgba(157,176,182,.1);color:var(--text);font-size:11px;font-weight:700}
+.row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}
+.hero-actions{margin-top:17px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:12px;min-height:38px;padding:8px 14px;border:0;border-radius:12px;background:var(--surface-high);box-shadow:inset 0 0 0 1px rgba(157,176,182,.08);color:var(--text);font-weight:600;cursor:pointer;transition:transform .28s var(--curve),background .34s var(--curve),box-shadow .34s var(--curve)}
+.btn:hover{transform:translateY(-1px);background:color-mix(in srgb,var(--surface-high) 78%,var(--accent) 22%);box-shadow:inset 0 0 0 1px rgba(85,213,200,.3)}
+.btn:active{transform:scale(.985)}
+.btn.primary{background:var(--accent-btn);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 7px 22px rgba(13,125,115,.2)}
 .btn.primary:hover{background:var(--accent-hover)}
 .btn.primary:active{background:var(--accent-press)}
 .btn.danger{color:var(--red)}
-.btn:disabled{opacity:.5;cursor:default}
-.link{background:none;border:none;color:var(--muted);font:inherit;cursor:pointer;padding:8px;border-radius:8px}
-.link:hover{color:var(--accent-soft)}
-select,input[type=text]{background:var(--bg-alt);color:var(--text);border:1px solid var(--line-soft);border-radius:8px;padding:8px;font:inherit;min-width:0}
-select{max-width:100%}
-label.check{display:flex;align-items:center;gap:8px;cursor:pointer}
-.status{display:flex;align-items:center;gap:8px;margin-top:8px}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--faint);flex:none}
-.dot.ok{background:var(--green)}
-.dot.starting{background:var(--amber)}
-.dot.down{background:var(--red)}
-.badge{display:inline-block;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;padding:4px 8px;font-weight:650}
-.quick{color:var(--muted);font-size:12px}
-.meter{height:10px;background:var(--bg-alt);border:1px solid var(--line-soft);border-radius:8px;overflow:hidden;margin-top:8px}
-.meter>div{height:100%;width:0%;background:var(--accent);transition:width .12s linear}
-table.vocab{width:100%;border-collapse:collapse;margin-top:8px}
-table.vocab th{font-size:12px;color:var(--muted);text-align:left;padding:4px 8px;border-bottom:1px solid var(--line)}
-table.vocab td{padding:4px;border-bottom:1px solid var(--line-soft)}
+.btn:disabled{opacity:.48;cursor:default;transform:none}
+.btn-arrow{width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.13);font-size:13px;transition:transform .35s var(--curve)}
+.btn:hover .btn-arrow{transform:translate(2px,-1px)}
+.quick-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:19px}
+.quick{display:inline-flex;align-items:center;gap:7px;padding:6px 9px;border-radius:9px;background:rgba(12,22,27,.3);color:var(--muted);font-size:11px}
+.quick::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.hero-visual{position:relative;display:grid;place-items:center;min-height:210px;overflow:hidden;isolation:isolate}
+.orbital-scene{position:relative;width:202px;height:202px;display:grid;place-items:center}
+.orbital-scene::before{content:"";position:absolute;inset:23px;border-radius:50%;background:radial-gradient(circle,rgba(85,213,200,.2),rgba(85,213,200,.04) 58%,transparent 72%);filter:blur(8px);opacity:.7}
+.orbital-ring{position:absolute;inset:25px;border:1px solid rgba(85,213,200,.32);border-radius:50%;transform:scale(.82);opacity:.45}
+.orbital-ring.ring-two{inset:8px;border-color:rgba(143,215,232,.22);border-style:dashed;transform:scale(.88);opacity:.4}
+.orbital-ring.ring-three{inset:43px;border-color:rgba(85,213,200,.16);transform:scale(.94);opacity:.5}
+.orbital-core{position:relative;width:66px;height:66px;border-radius:50%;background:radial-gradient(circle at 37% 32%,#72d5c7,var(--accent) 43%,#0d7d73 100%);box-shadow:0 0 34px rgba(85,213,200,.4),inset 0 2px 7px rgba(255,255,255,.38),inset 0 -8px 16px rgba(12,22,27,.28);transition:transform .5s var(--curve),box-shadow .5s var(--curve)}
+.orbital-scene[data-status="ok"] .orbital-ring{animation:orbit-breathe 5.5s var(--curve) infinite alternate}
+.orbital-scene[data-status="ok"] .ring-two{animation:orbit-turn 28s linear infinite}
+.orbital-scene[data-status="ok"] .orbital-core{animation:core-breathe 2.6s var(--curve) infinite alternate}
+@keyframes orbit-breathe{to{transform:scale(1.08);opacity:.82}}
+@keyframes orbit-turn{to{transform:rotate(360deg) scale(.88)}}
+@keyframes core-breathe{to{transform:scale(1.08);box-shadow:0 0 48px rgba(85,213,200,.58),inset 0 2px 7px rgba(255,255,255,.42),inset 0 -8px 16px rgba(12,22,27,.28)}}
+.orb-label{position:absolute;bottom:-5px;padding:5px 9px;border-radius:99px;background:rgba(12,22,27,.76);box-shadow:inset 0 0 0 1px rgba(40,65,74,.7);color:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.overview-grid{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(280px,.88fr);gap:16px}
+.overview-grid>.card{margin:0}
+.section-heading{display:flex;align-items:flex-start;gap:11px}
+.section-heading .copy{min-width:0}
+.section-heading h2{margin:0}
+.section-heading p{margin:4px 0 0;color:var(--muted);font-size:12px}
+.control-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+select,input[type=text],input[type=url],input[type=number]{min-width:0;max-width:100%;min-height:38px;padding:8px 11px;border:0;border-radius:10px;background:var(--bg-alt);box-shadow:inset 0 0 0 1px rgba(40,65,74,.76),inset 0 1px 0 rgba(255,255,255,.025);color:var(--text);transition:box-shadow .3s var(--curve),background .3s var(--curve)}
+select:hover,input:hover{background:var(--bg-alt)}
+select{flex:1}
+input[type=url]{width:min(100%,560px)}
+input[type=number]{width:90px}
+label.check{display:inline-flex;align-items:center;gap:9px;cursor:pointer}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent-btn)}
+.meter{height:9px;width:100%;margin:9px 0 7px;overflow:hidden;border-radius:99px;background:rgba(12,22,27,.8);box-shadow:inset 0 0 0 1px rgba(40,65,74,.62)}
+.meter>div{height:100%;width:0%;border-radius:inherit;background:linear-gradient(90deg,var(--accent-btn),var(--accent));transition:width .35s var(--curve)}
+#meterWrap[hidden],#modelProgWrap[hidden]{display:none}
+#meterFill{background:linear-gradient(90deg,var(--accent-btn),var(--accent))}
+.meter-caption{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px}
+.update-progress{width:min(1180px,calc(100% - 44px));margin:0 auto 14px;padding:11px 14px;border-radius:13px;background:var(--surface-alt);box-shadow:inset 0 0 0 1px rgba(85,213,200,.12)}
+.update-progress[hidden]{display:none}
+.update-progress p{margin:0;color:var(--muted);font-size:12px}
+.update-progress .meter{margin-top:7px}
+.update-progress .meter[hidden]{display:none}
+.update-progress .meter.indeterminate>div{width:38%;animation:update-sweep 1.2s var(--curve) infinite alternate}
+@keyframes update-sweep{from{transform:translateX(0)}to{transform:translateX(150%)}}
+.settings-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.setting-line{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;box-shadow:inset 0 -1px rgba(40,65,74,.45)}
+.setting-line:first-of-type{padding-top:0}
+.setting-line:last-of-type{box-shadow:none}
+.setting-line .help{display:block;margin-top:3px;color:var(--muted);font-size:11px}
+.details-settings{margin-top:12px;border-radius:13px;background:rgba(12,22,27,.24);box-shadow:inset 0 0 0 1px rgba(40,65,74,.4)}
+.details-settings summary{padding:12px 14px;color:var(--accent-soft);font-weight:650;cursor:pointer}
+.details-body{display:grid;gap:14px;padding:0 14px 14px}
+.advanced-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.field{display:grid;gap:6px;min-width:0}
+.field label,.field-title{color:var(--muted);font-size:11px;font-weight:650}
+.field small{color:var(--faint);font-size:10px;line-height:1.45}
+.privacy-copy{max-width:760px;color:var(--faint);font-size:10px}
+.vocab-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vocab-scroll{overflow-x:auto;margin-top:13px}
+table.vocab{width:100%;min-width:590px;border-collapse:collapse}
+table.vocab th{padding:7px 9px;color:var(--muted);font-size:11px;font-weight:650;text-align:left}
+table.vocab td{padding:5px;border-top:1px solid rgba(40,65,74,.56)}
 table.vocab input{width:100%}
-.icon{background:var(--surface-alt);border:1px solid var(--line);color:var(--text);border-radius:8px;width:32px;height:32px;font:inherit;cursor:pointer}
-.icon.on{color:var(--accent-soft);border-color:var(--accent)}
+table.vocab th:first-child{width:34%}
+table.vocab th:nth-child(2){width:49%}
+.icon{width:34px;height:34px;border:0;border-radius:10px;background:var(--surface-high);box-shadow:inset 0 0 0 1px rgba(40,65,74,.7);color:var(--text);font-size:14px;cursor:pointer;transition:transform .3s var(--curve),background .3s var(--curve)}
+.icon:hover{transform:translateY(-1px);background:color-mix(in srgb,var(--surface-high) 70%,var(--accent) 30%)}
+.icon.on{color:var(--accent-soft)}
 .icon.del{color:var(--red)}
-footer{display:flex;align-items:center;gap:8px;color:var(--faint);font-size:12px;padding:8px 0}
-footer .sp{flex:1}
-#toasts{position:fixed;right:16px;bottom:16px;width:360px;max-width:calc(100vw - 32px);display:flex;flex-direction:column;gap:8px;z-index:50}
-.toast{background:var(--surface-alt);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:12px;padding:8px 16px 8px 16px;box-shadow:0 8px 26px rgba(0,0,0,.45)}
+.settings-save{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:15px}
+#settingsStatus{min-height:20px;color:var(--muted);font-size:11px}
+footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;color:var(--faint);font-size:11px}
+.link{padding:7px 0;border:0;background:none;color:var(--muted);font:inherit;cursor:pointer}
+.link:hover{color:var(--accent-soft)}
+#toasts{position:fixed;right:20px;bottom:20px;z-index:5;display:flex;width:360px;max-width:calc(100vw - 36px);flex-direction:column;gap:9px}
+.toast{padding:11px 14px;border-radius:14px;background:var(--surface-alt);box-shadow:inset 0 0 0 1px rgba(40,65,74,.85),0 14px 38px rgba(0,0,0,.36);border-left:3px solid var(--accent)}
 .toast.warn{border-left-color:var(--amber)}
 .toast.error{border-left-color:var(--red)}
 .toast b{display:block}
-.toast p{color:var(--muted);font-size:12px;white-space:pre-line}
-.toast .acts{display:flex;gap:8px;margin-top:8px}
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:16px}
+.toast p{margin:4px 0 0;color:var(--muted);font-size:12px;white-space:pre-line}
+.toast .acts{display:flex;gap:8px;margin-top:9px}
+.overlay{position:fixed;inset:0;z-index:6;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.64)}
 .overlay[hidden]{display:none}
-.modal{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:26px;width:420px;max-width:100%}
-.modal h2{margin-top:0}
-.modal pre{background:var(--bg-alt);border:1px solid var(--line-soft);border-radius:8px;padding:8px;max-height:300px;overflow:auto;font-size:12px;white-space:pre-wrap}
+.modal{width:440px;max-width:100%;padding:24px;border-radius:20px;background:var(--surface);box-shadow:inset 0 0 0 1px rgba(40,65,74,.85),0 24px 70px rgba(0,0,0,.4)}
+.modal h2{margin:0 0 7px}
+.modal pre{max-height:300px;overflow:auto;padding:12px;border-radius:12px;background:var(--bg-alt);color:var(--muted);font-size:11px;white-space:pre-wrap}
 .keywait{color:var(--amber)}
-.keymsg{color:var(--red);min-height:1.2em}
-</style>
+.keymsg{min-height:1.2em;color:var(--red)}
+@media(max-width:1040px){.app-shell{grid-template-columns:194px minmax(0,1fr)}.sidebar{padding-right:12px;padding-left:12px}.content{padding-right:24px;padding-left:24px}.topbar{padding-right:24px;padding-left:24px}.hero{grid-template-columns:minmax(0,1fr) 220px;padding:25px}.orbital-scene{transform:scale(.88)}}
+@media(max-width:820px){.app-shell{grid-template-columns:minmax(0,1fr)}.sidebar{position:relative;height:auto;display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;padding:12px 16px;box-shadow:inset 0 -1px var(--line-soft)}.brand{padding:2px 4px}.workspace-label,.privacy-note{display:none}.side-nav{display:flex;grid-column:1/-1;gap:4px;overflow-x:auto}.nav-link{width:auto;flex:none;padding:8px 10px}.nav-glyph{width:21px;height:21px}.sidebar-bottom{display:none}.topbar{min-height:64px;padding:12px 18px}.content{padding:0 18px 35px}.update-progress{width:calc(100% - 36px)}}
+@media(max-width:600px){.hero{grid-template-columns:1fr;gap:0;padding:22px}.hero-visual{min-height:155px}.orbital-scene{transform:scale(.72);margin:-20px 0}.overview-grid,.advanced-grid{grid-template-columns:1fr}.card{padding:17px;border-radius:18px}.topbar{align-items:flex-start;flex-direction:column;gap:8px}.top-actions{width:100%}.top-actions .btn{width:100%}.breadcrumb{font-size:11px}.setting-line{align-items:flex-start}.vocab-toolbar>*{max-width:100%}#toasts{right:10px;bottom:10px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}</style>
 </head>
 <body>
-<header class="top">
-<span class="brand"><i></i>Instant</span>
-<nav>
-<button class="link" data-page="home">Inicio</button>
-<button class="link" data-page="audio">Micrófono</button>
-<button class="link" data-page="settings">Ajustes</button>
-<button class="link" data-page="models">Voz</button>
+<div class="app-shell">
+<aside class="sidebar" aria-label="Navegación de Instant">
+<a class="brand" href="#" aria-label="Instant, inicio">
+  <span class="brand-mark" aria-hidden="true"><i></i></span><span>Instant</span>
+</a>
+<p class="workspace-label">Asistente de voz</p>
+<nav class="side-nav" aria-label="Secciones">
+<button class="nav-link" data-page="home" aria-current="page"><span class="nav-glyph" aria-hidden="true">01</span>Inicio</button>
+<button class="nav-link" data-page="audio"><span class="nav-glyph" aria-hidden="true">02</span>Micrófono</button>
+<button class="nav-link" data-page="settings"><span class="nav-glyph" aria-hidden="true">03</span>Ajustes</button>
+<button class="nav-link" data-page="vocab"><span class="nav-glyph" aria-hidden="true">04</span>Vocabulario</button>
+<button class="nav-link" data-page="models"><span class="nav-glyph" aria-hidden="true">05</span>Voz local</button>
 </nav>
-<span class="sp"></span>
-<button class="btn" id="updatesBtn">Buscar actualizaciones</button>
+<div class="sidebar-bottom">
+<div class="privacy-note"><b>Audio en tu equipo</b><span>El dictado funciona sin enviar grabaciones a la nube.</span></div>
+<div class="sidebar-meta"><span id="version"></span><span id="dataDir"></span></div>
+</div>
+</aside>
+<div class="workspace">
+<header class="topbar">
+<div class="breadcrumb"><strong>Instant</strong><span aria-hidden="true">/</span><span>Dictado privado en español</span></div>
+<div class="top-actions"><button class="btn" id="updatesBtn" data-op="check_updates">Buscar actualizaciones</button></div>
 </header>
-<main>
-<section class="card hero" id="sec-home">
-<h1>Hablá. Soltá. Listo.</h1>
-<div class="status"><span class="dot down" id="statusDot"></span><b id="statusTitle">Listo para dictar</b><span class="badge" id="keyBadge">F9</span></div>
-<p class="small" id="statusDetail">Enfocá el prompt, mantené F9 y soltá para dictar.</p>
-<div class="row">
-<button class="btn primary" id="runBtn">Iniciar dictado</button>
+<div class="update-progress" id="updateProgressWrap" role="status" aria-live="polite" hidden>
+<p id="updateProgressText"></p>
+<div class="meter" id="updateProgressMeter" role="progressbar" aria-label="Descarga de actualización" aria-valuemin="0" aria-valuemax="100" hidden><div id="updateProgressFill"></div></div>
+</div>
+<main class="content">
+<section class="card hero" id="sec-home" aria-labelledby="homeTitle">
+<div class="hero-copy">
+<p class="eyebrow">Dictado local · Español</p>
+<h1 id="homeTitle">Hablá. Soltá. Listo.</h1>
+<p>Convertí tu voz en texto en el campo que tengas enfocado. Mantené una tecla, hablá y seguí escribiendo.</p>
+<div class="status"><span class="dot down" id="statusDot" aria-hidden="true"></span><b id="statusTitle">Listo para dictar</b><span class="badge" id="keyBadge">F9</span></div>
+<p class="small" id="statusDetail">Enfocá el campo, mantené F9 y soltá para dictar.</p>
+<div class="row hero-actions">
+<button class="btn primary" id="runBtn"><span>Iniciar dictado</span><span class="btn-arrow" aria-hidden="true">↗</span></button>
 <button class="btn" id="stopBtn">Detener</button>
 </div>
-<p class="quick" id="quickMic">Micrófono: —</p>
-<p class="quick" id="quickModel">Voz: —</p>
+<div class="quick-row"><span class="quick" id="quickMic">Micrófono: —</span><span class="quick" id="quickModel">Voz: —</span></div>
+</div>
+<div class="hero-visual" aria-hidden="true">
+<div class="orbital-scene" id="heroVisual" data-status="down">
+<span class="orbital-ring"></span><span class="orbital-ring ring-two"></span><span class="orbital-ring ring-three"></span>
+<span class="orbital-core"></span><span class="orb-label">Voz en el equipo</span>
+</div>
+</div>
 </section>
-<section class="card" id="sec-audio">
-<h2>Micrófono</h2>
-<div class="row">
+<div class="overview-grid">
+<section class="card" id="sec-audio" aria-labelledby="audioTitle">
+<div class="card-head">
+<div class="section-heading"><span class="card-mark" aria-hidden="true">02</span><div class="copy"><h2 id="audioTitle">Micrófono</h2><p>Elegí la entrada que usás para hablar.</p></div></div>
+</div>
+<div class="control-row">
 <select id="micCombo" aria-label="Micrófono"></select>
-<button class="btn" id="micRefresh">Actualizar</button>
-<button class="btn" id="micTest">Probar</button>
+<button class="btn" id="micRefresh">Buscar</button>
+<button class="btn primary" id="micTest">Probar nivel</button>
 </div>
 <div class="meter" id="meterWrap"><div id="meterFill"></div></div>
-<p class="small" id="meterText">La prueba no guarda audio.</p>
+<div class="meter-caption"><span id="meterText">La prueba no guarda audio.</span><span>Entrada local</span></div>
 </section>
-<section class="card" id="sec-settings">
-<h2>General</h2>
-<div class="row"><span class="badge" id="keyValue">F9</span><button class="btn" id="keyBtn">Elegir tecla</button></div>
-<div class="row"><label class="check"><input type="checkbox" id="autostart">Iniciar Instant con Windows</label></div>
+<section class="card" id="sec-models" aria-labelledby="modelTitle">
+<div class="card-head">
+<div class="section-heading"><span class="card-mark" aria-hidden="true">05</span><div class="copy"><h2 id="modelTitle">Voz local</h2><p id="modelStatus">Comprobando voz…</p></div></div>
+</div>
+<div class="meter" id="modelProgWrap" hidden><div id="modelProgFill"></div></div>
+<p class="small" id="modelProgText"></p>
+<div class="control-row"><button class="btn primary" id="modelBtn">Descargar voz</button><span class="small">Parakeet · CPU</span></div>
 </section>
-<section class="card" id="sec-vocab">
-<h2>Vocabulario</h2>
-<div class="row">
-<select id="profileCombo" aria-label="Perfil"></select>
+</div>
+<div class="settings-grid">
+<section class="card" id="sec-settings" aria-labelledby="settingsTitle">
+<div class="card-head">
+<div class="section-heading"><span class="card-mark" aria-hidden="true">03</span><div class="copy"><h2 id="settingsTitle">Ajustes</h2><p>Configurá cómo se activa y cómo responde el dictado.</p></div></div>
+</div>
+<div class="setting-line">
+<div><b>Tecla para dictar</b><span class="help">Mantenela mientras hablás; soltala para transcribir.</span></div>
+<div class="control-row"><span class="badge" id="keyValue">F9</span><button class="btn" id="keyBtn">Elegir tecla</button></div>
+</div>
+<div class="setting-line">
+<div><b>Inicio de sesión</b><span class="help">Dejá Instant listo cuando prendés tu equipo.</span></div>
+<label class="check"><input type="checkbox" id="autostart">Iniciar Instant al iniciar sesión</label>
+</div>
+<details class="details-settings">
+<summary>Controles de voz y rendimiento</summary>
+<div class="details-body">
+<div class="advanced-grid">
+<div class="field"><label for="overlayStyleSelect">Animación del indicador</label><select id="overlayStyleSelect"><option value="orbital">Orbital · energía y espectro</option><option value="classic">Clásica · barras de voz</option></select><small>El indicador aparece durante el dictado y se oculta al terminar.</small></div>
+<div class="field"><label for="threadsSelect">Hilos de CPU</label><select id="threadsSelect"><option value="1">1 hilo</option><option value="2">2 hilos</option><option value="4">4 hilos</option><option value="6">6 hilos</option><option value="8">8 hilos</option></select><small>Más hilos pueden acelerar el reconocimiento y usar más CPU.</small></div>
+<div class="field"><label for="maxSegmentInput">Duración máxima por segmento</label><input id="maxSegmentInput" type="number" min="1" max="60" step="1"><small>El audio largo se divide para reconocerlo con más estabilidad.</small></div>
+<div class="field"><span class="field-title">Confirmación sonora</span><label class="check"><input id="soundCheck" type="checkbox">Emitir un tono al terminar</label><small>El tono se reproduce localmente.</small></div>
+</div>
+<div class="field"><label for="llmUrlInput">Servidor opcional para pulir el texto</label><input id="llmUrlInput" type="url" placeholder="http://127.0.0.1:8080" spellcheck="false" autocomplete="off"><small>Se envían el texto transcrito y el vocabulario activo; nunca el audio. Si el servidor está fuera de tu equipo, usá HTTPS: recibirá ambos. Vacío significa que esta función está apagada.</small></div>
+</div>
+</details>
+<div class="settings-save">
+<button class="btn primary" id="saveBtn"><span>Guardar ajustes</span><span class="btn-arrow" aria-hidden="true">↗</span></button>
+<span id="settingsStatus" role="status" aria-live="polite"></span>
+</div>
+</section>
+<section class="card" id="sec-vocab" aria-labelledby="vocabTitle">
+<div class="card-head">
+<div class="section-heading"><span class="card-mark" aria-hidden="true">04</span><div class="copy"><h2 id="vocabTitle">Vocabulario</h2><p>Ayudá al reconocedor con marcas, nombres y términos propios.</p></div></div>
+</div>
+<div class="vocab-toolbar">
+<select id="profileCombo" aria-label="Perfil de vocabulario"></select>
 <button class="btn" id="profileAdd">Añadir perfil</button>
 <button class="btn danger" id="profileRemove">Eliminar perfil</button>
 </div>
-<table class="vocab">
-<thead><tr><th>Término</th><th>Así se escucha</th><th>Sonido</th><th></th></tr></thead>
+<div class="vocab-scroll"><table class="vocab">
+<thead><tr><th>Término</th><th>Así se escucha</th><th>Sonido</th><th><span class="small">Quitar</span></th></tr></thead>
 <tbody id="vocabBody"></tbody>
-</table>
+</table></div>
 <div class="row"><button class="btn" id="vocabAdd">Añadir término</button></div>
 </section>
-<section class="card" id="sec-models">
-<h2>Voz</h2>
-<p id="modelStatus">Comprobando voz…</p>
-<div class="row"><button class="btn primary" id="modelBtn">Descargar voz</button></div>
-<div class="meter" id="modelProgWrap" hidden><div id="modelProgFill"></div></div>
-<p class="small" id="modelProgText"></p>
-</section>
-<section class="card" id="sec-save">
-<div class="row">
-<button class="btn primary" id="saveBtn">Guardar ajustes</button>
-<span class="small" id="settingsStatus"></span>
 </div>
-</section>
+<footer><button class="link" id="diagBtn">Abrir diagnóstico</button><span>Audio local · Modelo en CPU · Sin grabación guardada</span></footer>
 </main>
-<footer>
-<button class="link" id="diagBtn">Diagnóstico</button>
-<span class="sp"></span>
-<span id="dataDir"></span>
-<span id="version"></span>
-</footer>
-<div id="toasts"></div>
+</div>
+</div>
+<div id="toasts" aria-live="polite"></div>
 <div class="overlay" id="keyModal" hidden>
-<div class="modal" role="dialog" aria-label="Elegí una tecla">
-<h2>Elegí una tecla</h2>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="keyModalTitle">
+<h2 id="keyModalTitle">Elegí una tecla</h2>
 <p>Apretá la tecla que quieras usar</p>
 <p class="keywait" id="keyWait">Esperando una tecla…</p>
 <p class="keymsg" id="keyMsg"></p>
@@ -154,8 +300,8 @@ footer .sp{flex:1}
 </div>
 </div>
 <div class="overlay" id="diagModal" hidden>
-<div class="modal" role="dialog" aria-label="Diagnóstico de Instant">
-<h2>Diagnóstico</h2>
+<div class="modal" role="dialog" aria-modal="true" aria-labelledby="diagModalTitle">
+<h2 id="diagModalTitle">Diagnóstico</h2>
 <p class="small">Micrófono, tecla y modelos</p>
 <pre id="diagText">Ejecutando comprobaciones…</pre>
 <div class="row"><button class="btn" id="diagClose">Cerrar</button></div>
@@ -171,16 +317,20 @@ const keyBadge = $("keyBadge"), keyValue = $("keyValue");
 const runBtn = $("runBtn"), stopBtn = $("stopBtn");
 const quickMic = $("quickMic"), quickModel = $("quickModel");
 const micCombo = $("micCombo"), meterWrap = $("meterWrap"), meterFill = $("meterFill"), meterText = $("meterText");
-const autostart = $("autostart");
+const autostart = $("autostart"), overlayStyleSelect = $("overlayStyleSelect");
+const threadsSelect = $("threadsSelect"), maxSegmentInput = $("maxSegmentInput");
+const soundCheck = $("soundCheck"), llmUrlInput = $("llmUrlInput");
 const profileCombo = $("profileCombo"), vocabBody = $("vocabBody");
 const modelStatus = $("modelStatus"), modelBtn = $("modelBtn");
 const modelProgWrap = $("modelProgWrap"), modelProgFill = $("modelProgFill"), modelProgText = $("modelProgText");
 const saveBtn = $("saveBtn"), settingsStatus = $("settingsStatus");
 const updatesBtn = $("updatesBtn"), dataDir = $("dataDir"), versionEl = $("version");
+const updateProgressWrap = $("updateProgressWrap"), updateProgressText = $("updateProgressText");
+const updateProgressMeter = $("updateProgressMeter"), updateProgressFill = $("updateProgressFill");
 const toasts = $("toasts");
 const keyModal = $("keyModal"), keyMsg = $("keyMsg");
 const diagModal = $("diagModal"), diagText = $("diagText");
-const sections = {home: $("sec-home"), audio: $("sec-audio"), settings: $("sec-settings"), models: $("sec-models")};
+const sections = {home: $("sec-home"), audio: $("sec-audio"), settings: $("sec-settings"), vocab: $("sec-vocab"), models: $("sec-models")};
 
 let bridge = null;
 const queue = [];
@@ -219,22 +369,27 @@ function setOptions(sel, items, current) {
 function onState(raw) {
   const s = parse(raw);
   if (!s) return;
+  const key = s.key_label || "F9";
   if (s.status) {
     statusDot.className = `dot ${s.status.state}`;
     statusTitle.textContent = s.status.title
       || (s.status.state === "ok" ? "Instant está activo" : "Listo para dictar");
     statusDetail.textContent = s.status.detail
-      || "Enfocá el prompt, mantené F9 y soltá para dictar.";
-    runBtn.textContent = s.status.state === "ok" ? "Reiniciar" : "Iniciar dictado";
+      || `Enfocá el prompt, mantené ${key} y soltá para dictar.`;
+    const runLabel = runBtn.querySelector("span");
+    if (runLabel) runLabel.textContent = s.status.state === "ok" ? "Reiniciar" : "Iniciar dictado";
+    const heroVisual = $("heroVisual");
+    if (heroVisual) heroVisual.dataset.status = s.status.state;
   }
-  const key = s.key_label || "F9";
   keyBadge.textContent = key;
   keyValue.textContent = key;
   if (document.activeElement !== autostart)
     autostart.checked = !!s.autostart;
   if (s.mic) {
     setOptions(micCombo, s.mic.labels || [], s.mic.selected);
-    meterWrap.hidden = !s.mic.meter_visible;
+    meterWrap.hidden = false;
+    meterFill.style.width = `${s.mic.meter?.percent || 0}%`;
+    meterText.textContent = s.mic.meter?.text || "La prueba no guarda audio.";
     quickMic.textContent = `Micrófono: ${s.mic.selected || "—"}`;
   }
   if (s.model) {
@@ -244,6 +399,7 @@ function onState(raw) {
       || (m.ready ? "" : "Falta descargar la voz (~670 MB).");
     if (!m.status && m.ready) modelStatus.textContent = "";
     modelBtn.textContent = m.button || "Descargar voz";
+    modelBtn.disabled = !!m.ready;
     const p = m.progress || {};
     modelProgWrap.hidden = !p.visible;
     modelProgFill.style.width = `${p.percent || 0}%`;
@@ -255,9 +411,29 @@ function onState(raw) {
     if (document.activeElement === null || !vocabBody.contains(document.activeElement))
       renderVocab(v.rows || []);
   }
-  if (s.updates)
-    // button: "Buscar actualizaciones" | "↓ Actualizar a vX.Y.Z"
+  if (s.updates) {
     updatesBtn.textContent = s.updates.button || "Buscar actualizaciones";
+    updatesBtn.dataset.op = s.updates.action || "check_updates";
+    updatesBtn.disabled = !!s.updates.busy;
+    const p = s.updates.progress || {};
+    updateProgressWrap.hidden = !p.text;
+    updateProgressText.textContent = p.text || "";
+    updateProgressMeter.hidden = !p.visible;
+    updateProgressMeter.classList.toggle("indeterminate", !!p.indeterminate);
+    updateProgressFill.style.width = `${p.percent || 0}%`;
+    if (p.visible && !p.indeterminate)
+      updateProgressMeter.setAttribute("aria-valuenow", String(p.percent || 0));
+    else
+      updateProgressMeter.removeAttribute("aria-valuenow");
+  }
+  if (s.advanced) {
+    const a = s.advanced;
+    overlayStyleSelect.value = a.overlay_style || "orbital";
+    threadsSelect.value = String(a.threads || 4);
+    if (document.activeElement !== maxSegmentInput) maxSegmentInput.value = String(a.max_seg || 20);
+    soundCheck.checked = !!a.sound;
+    if (document.activeElement !== llmUrlInput) llmUrlInput.value = a.llm_url || "";
+  }
   settingsStatus.textContent = s.settings_status
     || (s.dirty ? "Hay cambios sin guardar." : "");
   // settings_status de Python: "Ajustes guardados." | "Guardado; reiniciá Instant…"
@@ -414,8 +590,26 @@ document.querySelectorAll("[data-page]").forEach((el) => {
     send({op:"navigate", page:page});
     const sec = sections[page];
     if (sec && sec.scrollIntoView) sec.scrollIntoView({behavior:"smooth", block:"start"});
+    document.querySelectorAll(".nav-link[data-page]").forEach((link) => {
+      if (link === el) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
   });
 });
+if (typeof IntersectionObserver !== "undefined") {
+  const navObserver = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (!visible) return;
+    const page = Object.keys(sections).find((key) => sections[key] === visible.target);
+    if (!page) return;
+    document.querySelectorAll(".nav-link[data-page]").forEach((link) => {
+      if (link.dataset.page === page) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+  }, {rootMargin:"-15% 0px -65% 0px", threshold:[0,.2,.5]});
+  Object.values(sections).forEach((section) => navObserver.observe(section));
+}
 runBtn.addEventListener("click", () => send({op:"toggle_daemon"}));
 stopBtn.addEventListener("click", () => send({op:"stop_daemon"}));
 $("micRefresh").addEventListener("click", () => send({op:"refresh_mics"}));
@@ -424,6 +618,11 @@ micCombo.addEventListener("change", () => send({op:"select_mic", label:micCombo.
 $("keyBtn").addEventListener("click", openKeyModal);
 $("keyCancel").addEventListener("click", () => { send({op:"key_cancel"}); closeKeyModal(); });
 autostart.addEventListener("change", () => send({op:"set_autostart", value:autostart.checked}));
+overlayStyleSelect.addEventListener("change", () => send({op:"set_advanced", key:"overlay_style", value:overlayStyleSelect.value}));
+threadsSelect.addEventListener("change", () => send({op:"set_advanced", key:"threads", value:threadsSelect.value}));
+maxSegmentInput.addEventListener("change", () => send({op:"set_advanced", key:"max_seg", value:maxSegmentInput.value}));
+soundCheck.addEventListener("change", () => send({op:"set_advanced", key:"sound", value:soundCheck.checked}));
+llmUrlInput.addEventListener("change", () => send({op:"set_advanced", key:"llm_url", value:llmUrlInput.value.trim()}));
 profileCombo.addEventListener("change", () => send({op:"context_select", name:profileCombo.value}));
 $("profileAdd").addEventListener("click", () => {
   const name = window.prompt("Nombre del perfil:", "");
@@ -437,7 +636,7 @@ $("profileRemove").addEventListener("click", () => {
 $("vocabAdd").addEventListener("click", () => send({op:"vocab_add"}));
 saveBtn.addEventListener("click", () => send({op:"save_config"}));
 modelBtn.addEventListener("click", () => send({op:"download_models"}));
-updatesBtn.addEventListener("click", () => send({op:"check_updates"}));
+updatesBtn.addEventListener("click", () => send({op:updatesBtn.dataset.op || "check_updates"}));
 $("diagBtn").addEventListener("click", () => {
   diagText.textContent = "Ejecutando comprobaciones…";
   diagModal.hidden = false;

@@ -37,7 +37,7 @@
   const state = {
     mode: 'idle', message: '', keyLabel: 'F9', style: 'classic',
     target: { level: 0, pitch: 0.5, bands: new Array(9).fill(0) },
-    level: 0, pitch: 0.5
+    level: 0, pitch: 0.5, bands: new Array(9).fill(0)
   };
   let running = false, lastMs = 0, timeS = 0;
 
@@ -52,7 +52,7 @@
   const mixHex = (h1, h2, t) => {
     const a = rgb(h1), b = rgb(h2);
     const v = a.map((x, i) => Math.round(x + (b[i] - x) * t));
-    return 'rgb(' + v.join(',') + ')';
+    return '#' + v.map((channel) => channel.toString(16).padStart(2, '0')).join('');
   };
 
   function resize() {
@@ -67,10 +67,17 @@
   // --- Puente con el daemon ---
   let bridge = null;
   window.pushFrame = function (f) {
+    const previousMode = state.mode;
     if (f.level !== undefined) state.target.level = f.level;
     if (f.pitch !== undefined) state.target.pitch = f.pitch;
-    if (f.bands) state.target.bands = f.bands;
     if (f.mode !== undefined) state.mode = f.mode;
+    if (Array.isArray(f.bands) && f.bands.length === 9)
+      state.target.bands = f.bands.map((value) => Math.max(0, Math.min(1, Number(value) || 0)));
+    if (state.mode !== previousMode && state.mode !== 'listening' && state.mode !== 'starting') {
+      state.target.level = 0;
+      state.target.pitch = 0.5;
+      state.target.bands.fill(0);
+    }
     if (f.message !== undefined) state.message = f.message;
     if (f.keyLabel) state.keyLabel = f.keyLabel;
     if (f.style) state.style = f.style;
@@ -184,7 +191,7 @@
     const barX = cx - 56;
     const floorH = 5, maxH = 34;
     for (let i = 0; i < 9; i++) {
-      const band = state.target.bands[i] || 0;
+      const band = state.bands[i] || 0;
       const act = Math.max(state.level, band);
       const wob = 0.78 + 0.22 * Math.sin(timeS * 4.2 - i * 0.72);
       const h = Math.min(maxH, floorH + (maxH - floorH) * (0.28 * act + 0.72 * band) * wob);
@@ -221,93 +228,187 @@
   }
 
   function drawOrbital() {
-    const voice = mixHex(PALETTE.accent, PALETTE.working, state.pitch);
-    const level = state.level;
+    const mode = state.mode;
     const cx = window.innerWidth / 2;
-    const cy = window.innerHeight - MARGIN - 100;
-    const active = state.mode === 'starting' || state.mode === 'listening'
-      || state.mode === 'processing';
+    const cy = 91;
+    const voice = mixHex(PALETTE.accent, PALETTE.working, state.pitch);
 
-    if (state.mode === 'notice' || state.mode === 'error') {
-      const color = state.mode === 'error' ? PALETTE.red : PALETTE.amber;
-      C.font = '13px "Segoe UI", system-ui, sans-serif';
-      const w = Math.max(120, C.measureText(state.message).width + 36);
-      const box = { x: cx - w / 2, y: cy + 64, w: w, h: 26, feedback: true };
+    if (mode === 'notice' || mode === 'error') {
+      const color = mode === 'error' ? PALETTE.red : PALETTE.amber;
+      C.font = '600 12px "Segoe UI", system-ui, sans-serif';
+      const w = Math.min(424, Math.max(172, C.measureText(state.message).width + 58));
+      const box = { x: cx - w / 2, y: 178, w: w, h: 34, feedback: true };
       drawGlass(box);
+      C.beginPath();
+      C.arc(box.x + 18, box.y + 17, 8, 0, 2 * PI);
+      C.fillStyle = rgba(color, 0.16);
+      C.fill();
+      C.strokeStyle = color;
+      C.lineWidth = 1.7;
+      C.beginPath();
+      C.arc(box.x + 18, box.y + 17, 5, 0, 2 * PI);
+      C.stroke();
       C.fillStyle = color;
-      C.textAlign = 'center';
+      C.textAlign = 'left';
       C.textBaseline = 'middle';
-      C.fillText(state.message, cx, box.y + 14);
+      C.fillText(state.message || (mode === 'error' ? 'No se pudo completar' : 'Listo'), box.x + 33, box.y + 17, w - 43);
       return;
     }
-    if (state.mode === 'success') {
-      drawCheck(cx, cy, 30, PALETTE.green, 4);
+
+    if (mode === 'success') {
+      const box = { x: cx - 77, y: 178, w: 154, h: 34, feedback: true };
+      drawGlass(box);
+      drawCheck(cx - 33, box.y + 17, 15, PALETTE.green, 2.6);
+      C.fillStyle = PALETTE.green;
+      C.font = '700 10px "Segoe UI", system-ui, sans-serif';
+      C.textAlign = 'left';
+      C.textBaseline = 'middle';
+      C.fillText('PEGADO', cx - 19, box.y + 17);
       return;
     }
-    if (!active)
+
+    if (mode !== 'starting' && mode !== 'listening' && mode !== 'processing')
       return;
 
-    const nucR = (state.mode === 'processing' ? 22 + 3 * Math.sin(timeS * 2 * PI / 0.9)
-      : 24 + 8 * level);
-    // Halo + nucleo
-    const haloR = nucR + 30 + 26 * level;
-    const grad = C.createRadialGradient(cx, cy, 0, cx, cy, haloR);
-    const a0 = 0.55 + 0.3 * level;
-    for (let i = 0; i <= 6; i++) {
-      const t = i / 6;
-      grad.addColorStop(t, rgba(PALETTE.accent, Math.pow(1 - t, 2.4) * a0));
-    }
-    C.fillStyle = 'rgba(0,0,0,0)';
+    const level = state.level;
+    const processing = mode === 'processing';
+    const beat = 0.5 + 0.5 * Math.sin(timeS * (processing ? 5.2 : 2.1));
+    const coreR = processing ? 22 + beat * 2 : 23 + level * 9;
+    const haloR = coreR + 31 + level * 20;
+    const alpha = 0.025 + level * 0.055;
+
+    // Soft light field under the instrument glass.
     C.save();
     C.globalCompositeOperation = 'lighter';
-    C.fillStyle = grad;
+    const halo = C.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+    halo.addColorStop(0, rgba(PALETTE.accent, alpha));
+    halo.addColorStop(0.38, rgba(PALETTE.accent, alpha * 0.42));
+    halo.addColorStop(1, rgba(PALETTE.accent, 0));
+    C.fillStyle = halo;
     C.beginPath();
     C.arc(cx, cy, haloR, 0, 2 * PI);
     C.fill();
     C.restore();
-    C.fillStyle = voice;
-    C.beginPath();
-    C.arc(cx, cy, nucR, 0, 2 * PI);
-    C.fill();
 
-    // Anillo principal + espectro de 9 arcos.
-    C.strokeStyle = rgba(PALETTE.accent, 0.25 + 0.5 * level);
-    C.lineWidth = 2 + 2.5 * level;
+    // Orbiting particles move slowly; their light follows the real input level.
+    for (let i = 0; i < 12; i++) {
+      const a = timeS * (0.11 + (i % 3) * 0.018) + i * 2 * PI / 12;
+      const pulse = 0.5 + 0.5 * Math.sin(timeS * 2.4 - i * 0.9);
+      const r = 89 + 4 * pulse + level * 5;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r * 0.78;
+      C.beginPath();
+      C.arc(x, y, 0.8 + pulse * 1.15 + level * 0.7, 0, 2 * PI);
+      C.fillStyle = rgba(PALETTE.accent, 0.18 + pulse * 0.2 + level * 0.28);
+      C.fill();
+    }
+
+    // A fine outer track with a moving tracer.
+    C.strokeStyle = rgba(PALETTE.working, 0.19 + level * 0.16);
+    C.lineWidth = 1;
     C.beginPath();
-    C.arc(cx, cy, 56, 0, 2 * PI);
+    C.arc(cx, cy, 77, -0.2 * PI, 1.8 * PI);
+    C.stroke();
+    const tracer = timeS * (processing ? 1.2 : 0.24);
+    C.strokeStyle = rgba(voice, 0.75);
+    C.lineWidth = 2.2;
+    C.lineCap = 'round';
+    C.beginPath();
+    C.arc(cx, cy, 77, tracer, tracer + 0.28 + level * 0.16);
     C.stroke();
 
-    const rot = timeS * (0.15 + 0.35 * level);
+    // Center orb: a luminous core with a glass highlight.
+    C.fillStyle = rgba(PALETTE.accent, 0.1);
+    C.beginPath();
+    C.arc(cx, cy, coreR + 2, 0, 2 * PI);
+    C.fill();
+    C.strokeStyle = rgba(PALETTE.working, 0.46 + level * 0.24);
+    C.lineWidth = 1;
+    C.beginPath();
+    C.arc(cx, cy, coreR + 1, -0.72 * PI, 0.18 * PI);
+    C.stroke();
+    const core = C.createRadialGradient(cx - coreR * 0.38, cy - coreR * 0.42, 1, cx, cy, coreR);
+    core.addColorStop(0, rgba(PALETTE.accent, 0.92));
+    core.addColorStop(0.64, voice);
+    core.addColorStop(1, rgba(PALETTE.accent, 0.68));
+    C.fillStyle = core;
+    C.beginPath();
+    C.arc(cx, cy, coreR, 0, 2 * PI);
+    C.fill();
+
+    // Nine radial capsules are smoothed from the microphone's real spectrum.
+    const rot = timeS * (processing ? 0.78 : 0.12 + level * 0.22);
     const slot = 2 * PI / 9;
-    C.lineWidth = 6;
-    C.lineCap = 'round';
     for (let i = 0; i < 9; i++) {
-      const band = state.target.bands[i] || 0;
-      const c = (i + 0.5) * slot + rot;
-      const half = 0.5 * slot * (0.12 + 0.88 * band) * 0.85;
-      C.strokeStyle = rgba(PALETTE.accent, 0.25 + 0.6 * band);
+      const band = state.bands[i] || 0;
+      const angle = -PI / 2 + i * slot + rot;
+      const inner = 58 + band * 2;
+      const length = 10 + band * 23;
+      const thickness = 3.2 + band * 3.2;
+      const x = cx + Math.cos(angle) * inner;
+      const y = cy + Math.sin(angle) * inner;
+      C.save();
+      C.translate(x, y);
+      C.rotate(angle);
+      C.fillStyle = mixHex(voice, PALETTE.text, 0.24);
+      C.globalAlpha = 0.76 + band * 0.24;
+      roundRect(0, -thickness / 2, length, thickness, thickness / 2);
+      C.fill();
+      C.restore();
+    }
+    const shine = C.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.36, 0, cx - coreR * 0.18, cy - coreR * 0.2, coreR * 0.9);
+    shine.addColorStop(0, 'rgba(255,255,255,0.3)');
+    shine.addColorStop(1, 'rgba(255,255,255,0)');
+    C.fillStyle = shine;
+    C.beginPath();
+    C.arc(cx, cy, coreR, 0, 2 * PI);
+    C.fill();
+
+    if (processing) {
+      const sweep = (timeS * 1.15) % (2 * PI);
+      C.strokeStyle = rgba(PALETTE.working, 0.92);
+      C.lineWidth = 4;
       C.beginPath();
-      C.arc(cx, cy, 78, c - half, c + half);
+      C.arc(cx, cy, 77, sweep, sweep + 0.72);
       C.stroke();
     }
 
-    if (state.mode === 'processing') {
-      const t0 = (timeS * (2 * PI / 1.1)) % (2 * PI);
-      const half = 0.5 * (70 * PI / 180);
-      C.strokeStyle = rgba(PALETTE.working, 0.9);
-      C.lineWidth = 10;
-      C.beginPath();
-      C.arc(cx, cy, 78, t0 - half, t0 + half);
-      C.stroke();
-    }
+    // Status and shortcut stay readable without covering the active spectrum.
+    const box = { x: cx - 91, y: 178, w: 182, h: 34, feedback: false };
+    drawGlass(box);
+    const statusColor = processing ? PALETTE.working : PALETTE.accent;
+    C.beginPath();
+    C.arc(box.x + 15, box.y + 17, 4, 0, 2 * PI);
+    C.fillStyle = statusColor;
+    C.fill();
+    C.font = '700 9px "Segoe UI", system-ui, sans-serif';
+    C.fillStyle = PALETTE.text;
+    C.textAlign = 'left';
+    C.textBaseline = 'middle';
+    const label = processing ? 'TRANSCRIBIENDO' : mode === 'starting' ? 'PREPARANDO' : 'ESCUCHANDO';
+    C.fillText(label, box.x + 26, box.y + 17);
+    const key = state.keyLabel || 'F9';
+    C.font = '600 9px "Segoe UI", system-ui, sans-serif';
+    const chipW = Math.max(25, C.measureText(key).width + 12);
+    const chipX = box.x + box.w - chipW - 6;
+    roundRect(chipX, box.y + 7, chipW, 20, 10);
+    C.fillStyle = rgba(PALETTE.accent, 0.14);
+    C.fill();
+    C.fillStyle = PALETTE.accent;
+    C.textAlign = 'center';
+    C.fillText(key, chipX + chipW / 2, box.y + 17);
   }
-
   function frame(now) {
     const dt = lastMs ? (now - lastMs) / 1000 : 0.016;
     lastMs = now;
     timeS += dt;
     state.level += (state.target.level - state.level) * (1 - Math.exp(-dt / 0.090));
     state.pitch += (state.target.pitch - state.pitch) * (1 - Math.exp(-dt / 0.140));
+    for (let i = 0; i < state.bands.length; i++) {
+      const target = state.target.bands[i] || 0;
+      const tau = target > state.bands[i] ? 0.055 : 0.135;
+      state.bands[i] += (target - state.bands[i]) * (1 - Math.exp(-dt / tau));
+    }
 
     C.clearRect(0, 0, window.innerWidth, window.innerHeight);
     if (state.mode !== 'idle')

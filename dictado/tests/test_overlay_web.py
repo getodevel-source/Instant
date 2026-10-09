@@ -47,7 +47,8 @@ class ComposePageTests(unittest.TestCase):
         with open(PAGE_PATH, encoding="utf-8") as handle:
             source = handle.read()
         for expected in ("<!--QWEBCHANNEL-->", "window.pushFrame", "bridge.frame.connect",
-                         "bridge.event", "classic", "orbital"):
+                         "bridge.event", "classic", "orbital", "state.bands",
+                         "TRANSCRIBIENDO", "ESCUCHANDO", "toString(16)"):
             self.assertIn(expected, source)
         # El "Copiado" es copy del renderer classic, como en el QML.
         self.assertIn("Copiado", source)

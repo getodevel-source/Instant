@@ -15,6 +15,7 @@ from instant_app.branding import PALETTE
 from instant_app.gui import compose_panel_page
 
 PACKAGE = os.path.join(os.path.dirname(__file__), "..", "src", "instant_app")
+GUI_SOURCE = os.path.join(PACKAGE, "gui.py")
 PANEL_PAGE = os.path.join(PACKAGE, "web", "panel.html")
 OVERLAY_PAGE = os.path.join(PACKAGE, "web", "overlay.html")
 HOSTS = {
@@ -43,8 +44,16 @@ class PanelPageContractTests(unittest.TestCase):
         for expected in ("Hablá. Soltá. Listo.", "Iniciar dictado", "Detener",
                          "Guardar ajustes", "Añadir perfil", "Eliminar perfil",
                          "Añadir término", "Descargar voz", "Elegir tecla",
-                         "Iniciar Instant con Windows", "Diagnóstico",
+                         "Iniciar Instant al iniciar sesión", "Diagnóstico",
                          "Buscar actualizaciones", "La prueba no guarda audio."):
+            self.assertIn(expected, source)
+
+    def test_redesign_keeps_navigation_progress_and_advanced_settings(self):
+        source = self._source()
+        for expected in ("class=\"side-nav\"", "aria-current=\"page\"",
+                         "IntersectionObserver", "updateProgressWrap",
+                         "overlayStyleSelect", "threadsSelect", "maxSegmentInput",
+                         "soundCheck", "llmUrlInput", "op:\"set_advanced\""):
             self.assertIn(expected, source)
 
     def test_no_color_escapes_the_palette(self):
@@ -60,6 +69,11 @@ class PanelPageContractTests(unittest.TestCase):
 
 
 class HostContractTests(unittest.TestCase):
+    def test_panel_bridge_emits_qt_signal_for_web_messages(self):
+        with open(GUI_SOURCE, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("self.received.emit(payload)", source)
+
     def test_hosts_bind_the_channel_and_register_the_bridge(self):
         for name, path in HOSTS.items():
             with self.subTest(host=name), open(path, encoding="utf-8") as handle:

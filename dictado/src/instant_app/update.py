@@ -11,7 +11,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import urllib.request
 
 REPO = "getodevel-source/Instant"
@@ -113,8 +115,23 @@ def apply_binary_update(downloaded, target=None):
             "en Windows no se puede reemplazar el binario en uso; "
             "se actualiza con el instalador o instant-update.bat")
     target = target or sys.executable
-    os.chmod(downloaded, 0o755)
-    os.replace(downloaded, target)
+    directory = os.path.dirname(os.path.abspath(target))
+    fd, staged = tempfile.mkstemp(prefix=".instant-update-", suffix=".part",
+                                  dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as destination, open(downloaded, "rb") as source:
+            shutil.copyfileobj(source, destination, length=1024 * 1024)
+            destination.flush()
+            os.fsync(destination.fileno())
+        os.chmod(staged, 0o755)
+        os.replace(staged, target)
+    except Exception:
+        try:
+            os.remove(staged)
+        except OSError:
+            pass
+        raise
+    os.remove(downloaded)
     return target
 
 

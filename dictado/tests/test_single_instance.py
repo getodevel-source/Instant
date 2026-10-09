@@ -12,7 +12,8 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 try:
-    import PySide6  # noqa: F401
+    from importlib import import_module
+    import_module("PySide6")
 except ImportError:
     print("SKIP canal de instancia única: PySide6 no está instalado")
 else:

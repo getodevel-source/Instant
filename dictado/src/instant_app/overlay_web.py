@@ -56,8 +56,10 @@ def compose_page(html, qwebchannel_js):
 
 
 def _read_qwebchannel():
+    from importlib import import_module
     from PySide6.QtCore import QFile, QIODevice
-    import PySide6.QtWebChannel  # noqa: F401  (registra :/qtwebchannel/qwebchannel.js)
+
+    import_module("PySide6.QtWebChannel")  # registra :/qtwebchannel/qwebchannel.js
     handle = QFile(":/qtwebchannel/qwebchannel.js")
     if not handle.open(QIODevice.OpenModeFlag.ReadOnly):
         raise RuntimeError("no pude leer :/qtwebchannel/qwebchannel.js")

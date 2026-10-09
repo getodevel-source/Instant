@@ -133,6 +133,33 @@ class ApplyUpdateTests(unittest.TestCase):
                 self.assertEqual(handle.read(), b"nuevo")
             self.assertFalse(os.path.isfile(downloaded))
 
+    def test_binary_is_staged_beside_target_before_atomic_replace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target_dir = os.path.join(directory, "mounted-app")
+            os.makedirs(target_dir)
+            downloaded = os.path.join(directory, "instant-linux.download")
+            target = os.path.join(target_dir, "instant")
+            with open(downloaded, "wb") as handle:
+                handle.write(b"nuevo")
+            with open(target, "wb") as handle:
+                handle.write(b"viejo")
+            replace = os.replace
+            staged_from = []
+
+            def atomic_replace(source, destination):
+                staged_from.append(source)
+                self.assertEqual(os.path.dirname(source), os.path.dirname(destination))
+                replace(source, destination)
+
+            with patch.object(update_module.sys, "platform", "linux"), \
+                    patch.object(update_module.os, "replace", side_effect=atomic_replace):
+                update_module.apply_binary_update(downloaded, target)
+
+            self.assertEqual(len(staged_from), 1)
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"nuevo")
+            self.assertFalse(os.path.isfile(downloaded))
+
     def test_apply_binary_update_refuses_on_windows(self):
         with patch.object(update_module.sys, "platform", "win32"):
             with self.assertRaises(RuntimeError):
@@ -256,8 +283,29 @@ class SyncTasks:
         self.pending = 0
 
 
+class DeferredTasks:
+    """Worker manual para comprobar cuándo se ejecutan las operaciones lentas."""
+
+    def __init__(self):
+        self.jobs = []
+        self.pending = 0
+        self.on_idle = None
+        self.on_error = None
+
+    def submit(self, fn, on_result=None, on_error=None, on_progress=None):
+        self.jobs.append((fn, on_result, on_error, on_progress))
+        self.pending += 1
+        return len(self.jobs)
+
+    def drain(self):
+        return 0
+
+    def close(self):
+        self.pending = 0
+
+
 class UpdateFlowTests(unittest.TestCase):
-    """Botón y toasts de actualización: el flujo completo de PanelLogic."""
+    """Chequeo, descarga automática verificada y aplicación desde PanelLogic."""
 
     def _logic(self, cfg=None):
         from types import SimpleNamespace
@@ -266,87 +314,224 @@ class UpdateFlowTests(unittest.TestCase):
         base_cfg = {"mic_hint": "", "mic_index": None, "key": "f9",
                     "autostart": False, "update_last_check": 0}
         base_cfg.update(cfg or {})
-        with patch("instant_app.gui.config.load", return_value=base_cfg), \
-                patch("instant_app.gui.models.check", return_value={"parakeet": True, "vad": True}), \
-                patch("instant_app.gui.resolve_data_dir", return_value=os.path.join(os.getcwd(), "models")), \
-                patch("instant_app.gui.daemon_is_running", return_value=False), \
-                patch("instant_app.gui.audio.input_choices", return_value=[]), \
-                patch("instant_app.gui.autostart.is_enabled", return_value=False), \
-                patch.dict(sys.modules, {"sounddevice": SimpleNamespace(
-                    default=SimpleNamespace(device=(-1, -1)))}):
+        with (
+            patch("instant_app.gui.config.load", return_value=base_cfg),
+            patch("instant_app.gui.models.check",
+                  return_value={"parakeet": True, "vad": True}),
+            patch("instant_app.gui.resolve_data_dir",
+                  return_value=os.path.join(os.getcwd(), "models")),
+            patch("instant_app.gui.daemon_is_running", return_value=False),
+            patch("instant_app.gui.audio.input_choices", return_value=[]),
+            patch("instant_app.gui.autostart.is_enabled", return_value=False),
+            patch.dict(sys.modules, {"sounddevice": SimpleNamespace(
+                default=SimpleNamespace(device=(-1, -1)))}),
+        ):
             logic = gui.PanelLogic(
                 emit=lambda kind, payload: emitted.append((kind, payload)),
                 tasks=SyncTasks(), schedule=lambda ms, fn: None)
+            logic._update_source_mode = False
         return logic, emitted
 
     def _toasts(self, emitted):
         return [payload for kind, payload in emitted if kind == "toast"]
 
-    def test_check_reports_up_to_date_as_toast(self):
-        logic, emitted = self._logic()
-        info = {"update": False, "current": "0.1.0", "latest": "0.1.0",
-                "notes": "", "asset": "Instant.exe", "asset_url": ""}
-        with patch("instant_app.update.check", return_value=info):
-            logic.check_updates()
-        self.assertEqual(logic.update_button, "Buscar actualizaciones")
-        self.assertTrue(any("al día" in toast["message"] for toast in self._toasts(emitted)),
-                        self._toasts(emitted))
-
-    def test_silent_check_dresses_button_without_modals(self):
-        logic, emitted = self._logic()
-        info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
-                "notes": "", "asset": "Instant.exe", "asset_url": ""}
-        with patch("instant_app.update.check", return_value=info) as check, \
-                patch("instant_app.gui.config.save", return_value="config.json"):
-            logic._silent_update_check()
-            self.assertIn("0.2.0", logic.update_button)
-            self.assertEqual(logic.state_payload()["updates"]["button"],
-                             logic.update_button)
-            # Silencioso: avisa con el botón, sin toasts.
-            self.assertEqual(self._toasts(emitted), [])
-            # Sellado diario: un segundo intento no vuelve a consultar.
-            logic._update_silent_done = False
-            logic._silent_update_check()
-            self.assertEqual(check.call_count, 1)
-
-    def test_update_decisions_happen_in_toasts(self):
-        logic, emitted = self._logic()
-        info = {"update": True, "current": "0.1.0", "latest": "0.2.0",
+    def _release(self, version="0.2.0"):
+        return {"update": True, "current": "0.1.0", "latest": version,
                 "notes": "Novedades", "asset": "Instant.exe",
                 "asset_url": "https://x/Instant.exe"}
-        with patch("instant_app.update.check", return_value=info):
+
+    def test_silent_check_downloads_and_verifies_update(self):
+        logic, _emitted = self._logic()
+        info = self._release()
+        with (
+            patch("instant_app.update.check", return_value=info),
+            patch("instant_app.update.fetch_expected_sha256",
+                  return_value="a" * 64),
+            patch("instant_app.update.download") as download,
+            patch("instant_app.gui.config.save", return_value="config.json"),
+        ):
+            logic._silent_update_check()
+
+        download.assert_called_once()
+        self.assertEqual(download.call_args.kwargs["expected_sha256"], "a" * 64)
+        self.assertIn("Reiniciar para aplicar v0.2.0", logic.update_button)
+        self.assertEqual(logic.state_payload()["updates"]["action"], "apply_update")
+
+        # El sello diario evita otra consulta, pero no oculta la descarga lista.
+        logic._update_silent_done = False
+        with patch("instant_app.update.check") as check:
+            logic._silent_update_check()
+        check.assert_not_called()
+
+    def test_update_button_check_downloads_in_background_with_progress(self):
+        from instant_app import gui
+        logic, emitted = self._logic()
+
+        def fake_download(_url, _target, **kwargs):
+            kwargs["progress"](512, 1024)
+
+        with (
+            patch("instant_app.update.check", return_value=self._release()),
+            patch("instant_app.update.fetch_expected_sha256",
+                  return_value="b" * 64),
+            patch("instant_app.update.download", side_effect=fake_download) as download,
+        ):
             logic.check_updates()
-        offer = [toast for toast in self._toasts(emitted)
-                 if "versión nueva" in toast["title"]]
-        self.assertTrue(offer)
-        self.assertEqual([a["label"] for a in offer[-1]["actions"]],
-                         ["Descargar", "Ahora no"])
 
-        # "Descargar" → descarga verificada → oferta de instalar.
-        with patch("instant_app.update.fetch_expected_sha256", return_value="a" * 64), \
-                patch("instant_app.update.download",
-                      return_value=("C:\\tmp\\Instant.exe", "a" * 64)):
-            logic._op_toast_action({"op": "toast_action", "id": offer[-1]["id"],
-                                    "action": "0"})
-        verified = [toast for toast in self._toasts(emitted)
-                    if toast["title"] == "Descarga verificada"]
-        self.assertTrue(verified)
-        self.assertEqual([a["label"] for a in verified[-1]["actions"]],
-                         ["Instalar ahora", "Después"])
+        download.assert_called_once()
+        progress_states = [
+            payload["updates"]["progress"]
+            for kind, payload in emitted if kind == "state"
+            if payload["updates"]["progress"].get("percent") == 50
+        ]
+        self.assertTrue(progress_states)
+        self.assertIn("Descarga verificada", logic.state_payload()["updates"]["progress"]["text"])
+        self.assertEqual(logic.state_payload()["updates"]["action"], "apply_update")
+        ready = [toast for toast in self._toasts(emitted)
+                 if toast["title"] == "Actualización lista"]
+        self.assertTrue(ready)
+        self.assertEqual([a["label"] for a in ready[-1]["actions"]],
+                         ["Actualizar y reiniciar", "Después"])
 
-        # "Instalar ahora" → portable con script: lanza el .bat y cierra.
-        with patch("instant_app.update.install_mode", return_value="portable"), \
-                patch("instant_app.gui.os.path.isfile", return_value=True), \
-                patch("instant_app.gui.subprocess.Popen") as popen:
-            logic._op_toast_action({"op": "toast_action", "id": verified[-1]["id"],
-                                    "action": "0"})
+        with (
+            patch("instant_app.update.install_mode", return_value="portable"),
+            patch("instant_app.gui.os.path.isfile", return_value=True),
+            patch("instant_app.gui.subprocess.Popen") as popen,
+        ):
+            logic.handle({"op": "apply_update"})
+
         launches = [entry for entry in popen.call_args_list
                     if entry.args and "instant-update.bat" in str(entry.args[0])]
         self.assertEqual(len(launches), 1)
-        args = launches[0].args[0]
-        self.assertEqual(args[0], "cmd")
+        self.assertEqual(launches[0].args[0][0], "cmd")
+        self.assertEqual(launches[0].args[0][-1],
+                         os.path.join(gui._workdir(), "dist", "Instant.exe"))
         self.assertTrue(logic._closed)
 
+    def test_download_failure_can_be_retried(self):
+        logic, emitted = self._logic()
+        info = self._release()
+        with (
+            patch("instant_app.update.check", return_value=info),
+            patch("instant_app.update.fetch_expected_sha256",
+                  side_effect=[RuntimeError("sin red"), "c" * 64]),
+            patch("instant_app.update.download"),
+        ):
+            logic.check_updates()
+            self.assertEqual(logic.state_payload()["updates"]["action"], "retry_update")
+            self.assertIn("Reintentar descarga", logic.update_button)
+            logic.handle({"op": "retry_update"})
+
+        self.assertEqual(logic.state_payload()["updates"]["action"], "apply_update")
+        self.assertTrue(any(toast["title"] == "Actualización lista"
+                            for toast in self._toasts(emitted)))
+
+    def test_installed_update_waits_for_daemon_in_worker(self):
+        logic, _emitted = self._logic()
+        logic.tasks = DeferredTasks()
+        logic._pending_update = self._release()
+        logic._ready_update = ("C:/temp/Instant-Setup.exe", "d" * 64, "0.2.0")
+
+        with (patch("instant_app.update.install_mode", return_value="installed"),
+              patch("instant_app.gui.stop_daemon") as stop,
+              patch("instant_app.gui.daemon_is_running", return_value=False),
+              patch("instant_app.gui.subprocess.Popen") as popen):
+            logic.handle({"op": "apply_update"})
+
+            self.assertTrue(logic._update_install_pending)
+            self.assertEqual(len(logic.tasks.jobs), 1)
+            stop.assert_not_called()
+            popen.assert_not_called()
+
+            fn, on_result, on_error, _progress = logic.tasks.jobs.pop()
+            result = fn(lambda _payload: None)
+            on_result(result)
+
+        stop.assert_called_once_with()
+        popen.assert_called_once()
+        self.assertTrue(logic._closed)
+
+    def test_installed_update_reports_daemon_that_will_not_stop(self):
+        logic, emitted = self._logic()
+        logic.tasks = DeferredTasks()
+        logic._pending_update = self._release()
+        logic._ready_update = ("C:/temp/Instant-Setup.exe", "a" * 64, "0.2.0")
+
+        with (patch("instant_app.update.install_mode", return_value="installed"),
+              patch("instant_app.gui.stop_daemon") as stop,
+              patch("instant_app.gui.daemon_is_running", return_value=True),
+              patch("instant_app.gui.time.monotonic", side_effect=[0, 9]),
+              patch("instant_app.gui.time.sleep") as sleep,
+              patch("instant_app.gui.subprocess.Popen") as popen):
+            logic.handle({"op": "apply_update"})
+            fn, _on_result, on_error, _progress = logic.tasks.jobs.pop()
+            with self.assertRaisesRegex(RuntimeError, "sigue activo") as caught:
+                fn(lambda _payload: None)
+            on_error(caught.exception)
+
+        stop.assert_called_once_with()
+        sleep.assert_not_called()
+        popen.assert_not_called()
+        self.assertFalse(logic._update_install_pending)
+        self.assertFalse(logic._closed)
+        self.assertTrue(any(toast["title"] == "Actualización sin aplicar"
+                            for toast in self._toasts(emitted)))
+
+    def test_portable_update_uses_bundled_helper_and_real_exe_path(self):
+        logic, _emitted = self._logic()
+        logic._pending_update = self._release()
+        logic._ready_update = ("C:/temp/Instant.exe", "e" * 64, "0.2.0")
+
+        with tempfile.TemporaryDirectory() as temp:
+            extraction = os.path.join(temp, "_MEI12345")
+            os.makedirs(extraction)
+            bundled = os.path.join(extraction, "instant-update.bat")
+            with open(bundled, "w", encoding="utf-8") as handle:
+                handle.write("@echo off\n")
+            executable = os.path.join(temp, "portable", "Instant.exe")
+            with (
+                patch("instant_app.update.install_mode", return_value="portable"),
+                patch.object(sys, "frozen", True, create=True),
+                patch.object(sys, "_MEIPASS", extraction, create=True),
+                patch.object(sys, "executable", executable),
+                patch("tempfile.gettempdir", return_value=temp),
+                patch("instant_app.gui.subprocess.Popen") as popen,
+            ):
+                logic.handle({"op": "apply_update"})
+
+            helper = os.path.join(
+                temp, f"instant_update_{os.getpid()}", "instant-update.bat")
+            self.assertTrue(os.path.isfile(helper))
+            args = popen.call_args.args[0]
+            self.assertEqual(args[2], helper)
+            self.assertEqual(args[-1], executable)
+        self.assertTrue(logic._closed)
+
+    def test_portable_helper_copy_failure_is_visible_and_retryable(self):
+        logic, emitted = self._logic()
+        logic._pending_update = self._release()
+        logic._ready_update = ("C:/temp/Instant.exe", "f" * 64, "0.2.0")
+
+        with tempfile.TemporaryDirectory() as temp:
+            bundled = os.path.join(temp, "instant-update.bat")
+            with open(bundled, "w", encoding="utf-8") as handle:
+                handle.write("@echo off\n")
+            with (
+                patch("instant_app.update.install_mode", return_value="portable"),
+                patch.object(sys, "frozen", True, create=True),
+                patch.object(sys, "_MEIPASS", temp, create=True),
+                patch.object(sys, "executable", os.path.join(temp, "Instant.exe")),
+                patch("tempfile.gettempdir", return_value=temp),
+                patch("shutil.copyfile", side_effect=OSError("disco lleno")),
+                patch("instant_app.gui.subprocess.Popen") as popen,
+            ):
+                logic.handle({"op": "apply_update"})
+
+        self.assertFalse(logic._update_install_pending)
+        self.assertEqual(logic.state_payload()["updates"]["action"], "apply_update")
+        self.assertEqual(popen.call_count, 0)
+        self.assertTrue(any(toast["title"] == "Actualización sin aplicar"
+                            for toast in self._toasts(emitted)))
 
 if __name__ == "__main__":
     unittest.main()
