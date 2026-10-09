@@ -5,6 +5,19 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+## [0.3.3] - 2026-10-09
+
+### Mejorado
+
+- El panel presenta el espectro de voz y alinea navegación, controles, estados
+  deshabilitados y selección de micrófono para que cada sección sea más clara.
+- Los perfiles y el sonido se gestionan con diálogos accesibles y respuesta
+  inmediata; las opciones de solo lectura dejan de mostrar rutas internas.
+- La selección de sección sigue el desplazamiento y la navegación desde la
+  bandeja, con ajustes responsivos para ventanas más estrechas.
+- El README de GitHub queda reducido a instalación rápida, privacidad y enlaces,
+  con capturas actuales del panel y del indicador de voz.
+
 ## [0.3.2] - 2026-10-08
 
 ### Corregido
