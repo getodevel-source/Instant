@@ -37,6 +37,13 @@ PARAKEET_SHA256 = {
 }
 VAD_SHA256 = (643854,
               "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6")
+# TEN-VAD (alternativa a Silero, opt-in por config `vad_model=ten`):
+# build de sherpa-onnx sobre TEN-framework/ten-vad PR #36 (pitch=0).
+# Solo 16 kHz, igual que Silero. Se usa el int8 (126 KB).
+TEN_VAD_URL = ("https://github.com/k2-fsa/sherpa-onnx/releases/download/"
+               "asr-models/ten-vad.int8.onnx")
+TEN_VAD_SHA256 = (129534,
+                  "880c072f188efa169ea028b2159d1b3a438e153d080b87eac31b74ecad511e61")
 
 DOWNLOAD_ATTEMPTS = 3
 # Colchón que se exige libre además de lo que falta bajar: el disco escribe
@@ -104,6 +111,14 @@ def _steps():
         for name in PARAKEET_FILES]
     return (("parakeet", PARAKEET_SUBDIR, parakeet),
             ("vad", VAD_SUBDIR, [(VAD_URL, "silero_vad.onnx", VAD_SHA256)]))
+
+
+def _ten_vad_step():
+    """Paso extra opt-in: TEN-VAD int8 (~126 KB, VAD alternativo)."""
+    from instant_app.paths import VAD_SUBDIR
+
+    return ("ten-vad", VAD_SUBDIR,
+            [(TEN_VAD_URL, "ten_vad.onnx", TEN_VAD_SHA256)])
 
 
 def _space_check(pending_bytes, destination_dir):
@@ -192,10 +207,12 @@ def _fetch(url, destination, expected, report, attempts=None):
         f"{attempts} intentos: {last_error}")
 
 
-def download_models(data_dir, progress=None):
+def download_models(data_dir, progress=None, include_ten_vad=False):
     """Baja Parakeet v3 int8 (~670MB) + Silero VAD (~1MB).
 
-    progress(step, done, total): step = "parakeet"|"vad", done/total en bytes
+    Con `include_ten_vad=True` suma TEN-VAD int8 (~126 KB, VAD alternativo
+    opt-in por config `vad_model=ten`). progress(step, done, total):
+    step = "parakeet"|"vad"|"ten-vad", done/total en bytes
     reales de ese paso (callable solo cuando hay algo que bajar). Sin callback
     usa log + print simple. Reanudable (`.part` + Range) y con espejo
     configurable por `DICTADO_HF_ENDPOINT`/`HF_ENDPOINT`. Un archivo presente
@@ -213,7 +230,10 @@ def download_models(data_dir, progress=None):
 
     steps = []
     pending_bytes = 0
-    for step, subdir, entries in _steps():
+    wanted = list(_steps())
+    if include_ten_vad:
+        wanted.append(_ten_vad_step())
+    for step, subdir, entries in wanted:
         directory = os.path.join(data_dir, subdir)
         os.makedirs(directory, exist_ok=True)
         total = sum(expected[0] for _url, _name, expected in entries)
@@ -269,10 +289,12 @@ def download_models(data_dir, progress=None):
     return data_dir
 
 
-def check(data_dir):
+def check(data_dir, include_ten_vad=False):
     from instant_app.paths import model_paths
 
     p = model_paths(data_dir)
+    if not include_ten_vad:
+        p = {k: v for k, v in p.items() if k != "ten_vad"}
     return {k: os.path.isfile(v) for k, v in p.items()}
 
 

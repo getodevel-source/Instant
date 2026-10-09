@@ -57,4 +57,5 @@ def model_paths(data_dir=None):
         "joiner": os.path.join(mdir, "joiner.int8.onnx"),
         "tokens": os.path.join(mdir, "tokens.txt"),
         "vad": os.path.join(d, VAD_SUBDIR, "silero_vad.onnx"),
+        "ten_vad": os.path.join(d, VAD_SUBDIR, "ten_vad.onnx"),
     }

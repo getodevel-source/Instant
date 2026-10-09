@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 
-from instant_app import audio, hotkey, llm
+from instant_app import audio, bias, hotkey, llm
 from instant_app.engine import Engine, SILENCE_PEAK
 from instant_app.overlay import Overlay
 from instant_app.tray import TrayIcon
@@ -330,6 +330,8 @@ class Daemon:
                              threads=cfg.get("threads", 4),
                              max_seg=cfg.get("max_seg", 20.0),
                              vad_pad=cfg.get("vad_pad", 0.3),
+                             vad_model=cfg.get("vad_model", "silero"),
+                             blank_penalty=cfg.get("blank_penalty", 0.0),
                              save_wavs_dir=os.environ.get("DICTADO_SAVE_WAVS", "") or None)
         self.overlay = Overlay(
             hotkey.key_label(cfg.get("key", "f9")),
@@ -632,7 +634,11 @@ class Daemon:
                 return
             t0 = time.time()
             text = self.engine.transcribe(wav)
-            text = llm.maybe_polish(text, self.cfg)
+            conf = float(getattr(self.engine, "last_conf", 1.0) or 1.0)
+            text = bias.correct_biased(
+                text, conf=conf,
+                word_confs=getattr(self.engine, "last_word_confs", None))
+            text = llm.maybe_polish(text, self.cfg, conf=conf)
             dt = time.time() - t0
             if not text:
                 log.info("vacio tras %.1fs audio (%.2fs), nada que pegar.", dur, dt)
@@ -645,7 +651,11 @@ class Daemon:
                      dur, dt, dt / max(dur, 0.1), len(text))
             import instant_app.paste as _paste_mod
             _paste_mod.paste(text + " ")
-            self.overlay.success_for(sid)
+            if float(getattr(self.engine, "last_clip", 0.0) or 0.0) > 0.02:
+                self.overlay.show_notice_for(
+                    sid, "El micrófono satura: bajá la ganancia o alejate un poco.")
+            else:
+                self.overlay.success_for(sid)
         except Exception:
             log.exception("ERROR transcripcion sesion %d", sid)
             self.overlay.show_error_for(

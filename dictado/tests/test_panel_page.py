@@ -41,20 +41,45 @@ class PanelPageContractTests(unittest.TestCase):
 
     def test_page_keeps_the_user_facing_copy(self):
         source = self._source()
-        for expected in ("Hablá. Soltá. Listo.", "Iniciar dictado", "Detener",
-                         "Guardar ajustes", "Añadir perfil", "Eliminar perfil",
-                         "Añadir término", "Descargar voz", "Elegir tecla",
-                         "Iniciar Instant al iniciar sesión", "Diagnóstico",
-                         "Buscar actualizaciones", "La prueba no guarda audio."):
+        for expected in ("Dictado por voz", "Iniciar Instant", "Detener Instant",
+                         "Guardar cambios", "A&ntilde;adir perfil", "Eliminar perfil",
+                         "A&ntilde;adir t&eacute;rmino", "Descargar modelo", "Elegir tecla",
+                         "Iniciar con el sistema", "Diagnóstico",
+                         "Buscar actualizaciones", "La prueba mide el nivel; no guarda audio."):
             self.assertIn(expected, source)
 
-    def test_redesign_keeps_navigation_progress_and_advanced_settings(self):
+    def test_redesign_uses_single_section_views_and_keeps_advanced_settings(self):
         source = self._source()
         for expected in ("class=\"side-nav\"", "aria-current=\"page\"",
-                         "IntersectionObserver", "updateProgressWrap",
+                         'id="sec-home"', 'id="sec-audio"', 'id="sec-settings"',
+                         'id="sec-vocab"', 'id="modelSetup"',
+                         "section.hidden = name !== page", "updateProgressWrap",
                          "overlayStyleSelect", "threadsSelect", "maxSegmentInput",
                          "soundCheck", "llmUrlInput", "op:\"set_advanced\""):
             self.assertIn(expected, source)
+        self.assertNotIn("IntersectionObserver", source)
+        self.assertIn('if (!vocabBody.contains(active) || active.tagName !== "INPUT")', source)
+        self.assertIn("micCombo.disabled = !hasDevices", source)
+        self.assertIn("option.value === s.mic.unavailable_label", source)
+        self.assertNotIn('data-page="models"', source)
+        self.assertNotIn('id="sec-models"', source)
+        self.assertNotIn("Parakeet", source)
+
+    def test_controls_have_explicit_accessible_status_and_error_text(self):
+        source = self._source()
+        for expected in ('role="status" aria-live="polite"',
+                         'aria-describedby="maxSegmentHelp maxSegmentError"',
+                         'aria-describedby="llmUrlHelp llmUrlError"',
+                         'aria-valuenow', 'prefers-reduced-motion: reduce'):
+            self.assertIn(expected, source)
+
+    def test_javascript_element_references_exist_and_ids_are_unique(self):
+        source = self._source()
+        ids = re.findall(r'\bid="([^"]+)"', source)
+        self.assertEqual(len(ids), len(set(ids)), "panel.html: hay id duplicados")
+        referenced = set(re.findall(r'\$\("([^"]+)"\)', source))
+        self.assertEqual(referenced - set(ids), set(),
+                         "panel.html: JavaScript apunta a ids inexistentes")
 
     def test_no_color_escapes_the_palette(self):
         found = {value.lower() for value in re.findall(r"#[0-9a-fA-F]{6}", self._source())}
@@ -83,6 +108,11 @@ class HostContractTests(unittest.TestCase):
                           "qt.webChannelTransport")
             self.assertIn("registerBridge", source, f"{name}: falta registerBridge")
             self.assertIn('objectName: "view"', source, f"{name}: falta el view")
+            if name == "panel_web_host.qml":
+                self.assertIn("width: 1100", source)
+                self.assertIn("height: 600", source)
+                self.assertIn("minimumWidth: 900", source)
+                self.assertIn("minimumHeight: 520", source)
 
     def test_pages_ship_with_the_package(self):
         self.assertTrue(os.path.isfile(PANEL_PAGE))

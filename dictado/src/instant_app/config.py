@@ -16,6 +16,8 @@ DEFAULTS = {
     "threads": 4,
     "sound": False,
     "max_seg": 20.0,
+    "vad_model": "silero",
+    "blank_penalty": 0.0,
     "llm_url": "",
     "active_context": "General",
     "context_profiles": {"General": []},
@@ -25,7 +27,7 @@ DEFAULTS = {
 }
 
 INT_KEYS = ("threads",)
-FLOAT_KEYS = ("max_seg",)
+FLOAT_KEYS = ("max_seg", "blank_penalty")
 
 
 def _read_json(path):
@@ -103,7 +105,9 @@ def load():
     # Env pisa archivo.
     env_map = {"DICTADO_MIC": "mic_hint", "DICTADO_KEY": "key",
                "DICTADO_THREADS": "threads", "DICTADO_SOUND": "sound",
-               "DICTADO_MAX_SEG": "max_seg", "DICTADO_LLM_URL": "llm_url",
+               "DICTADO_MAX_SEG": "max_seg", "DICTADO_VAD": "vad_model",
+               "DICTADO_BLANK": "blank_penalty",
+               "DICTADO_LLM_URL": "llm_url",
                "DICTADO_CONTEXT": "active_context",
                "DICTADO_AUTOSTART": "autostart",
                "DICTADO_OVERLAY": "overlay_style"}
@@ -134,8 +138,17 @@ def load():
         elif k == "mic_hint" and v.lstrip("-").isdigit():
             cfg["mic_index"] = int(v)
             cfg["mic_hint"] = ""
+        elif k == "vad_model":
+            v = v.strip().lower()
+            cfg[k] = v if v in ("silero", "ten") else "silero"
         else:
             cfg[k] = v.lower() if k == "key" else v
+    if cfg.get("vad_model") not in ("silero", "ten"):
+        cfg["vad_model"] = "silero"
+    try:
+        cfg["blank_penalty"] = max(0.0, min(1.0, float(cfg.get("blank_penalty", 0.0))))
+    except (TypeError, ValueError):
+        cfg["blank_penalty"] = 0.0
     return cfg
 
 

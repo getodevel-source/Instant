@@ -52,11 +52,18 @@ class TEngine(Engine):
     def vad(self):
         import sherpa_onnx
         cfg = sherpa_onnx.VadModelConfig()
-        cfg.silero_vad.model = self.paths["vad"]
-        cfg.silero_vad.threshold = self._thr
-        cfg.silero_vad.min_silence_duration = self.vad_sil
-        cfg.silero_vad.min_speech_duration = self._minsp
-        cfg.silero_vad.window_size = 512
+        if (self.vad_model or "silero") == "ten":
+            cfg.ten_vad.model = self.paths["ten_vad"]
+            cfg.ten_vad.threshold = self._thr
+            cfg.ten_vad.min_silence_duration = self.vad_sil
+            cfg.ten_vad.min_speech_duration = self._minsp
+            cfg.ten_vad.window_size = 256
+        else:
+            cfg.silero_vad.model = self.paths["vad"]
+            cfg.silero_vad.threshold = self._thr
+            cfg.silero_vad.min_silence_duration = self.vad_sil
+            cfg.silero_vad.min_speech_duration = self._minsp
+            cfg.silero_vad.window_size = 512
         cfg.sample_rate = SR
         return sherpa_onnx.VadModel.create(cfg)
 
@@ -116,19 +123,26 @@ def main():
         starts += d + gap
     sig = np.concatenate(parts).astype(np.float32)
 
-    for thr in (0.3, 0.5, 0.7):
-        e = TEngine(data_dir=data, threads=2, thr=thr)
-        e._rec = eng._rec
-        bounds = e.segment(sig)
-        errs = []
-        for gs, ge in gt:
-            det = min(bounds, key=lambda b: abs(b[0] - gs))
-            errs.append((det[0] - gs, det[1] - ge))
-        on = [x * 1000 for x, _ in errs]
-        off = [x * 1000 for _, x in errs]
-        print(f"VAD thr={thr}: nsegs={len(bounds)} "
-              f"onset={st.mean(on):+.0f}ms±{st.pstdev(on):.0f} "
-              f"offset={st.mean(off):+.0f}ms±{st.pstdev(off):.0f}", flush=True)
+    import os as _os
+    for vad_name in ("silero", "ten"):
+        if vad_name == "ten" and not _os.path.isfile(
+                os.path.join(data, "silero-vad", "ten_vad.onnx")):
+            print("VAD ten: SKIP (falta ten_vad.onnx, `instant setup --vad-model ten`)",
+                  flush=True)
+            continue
+        for thr in (0.3, 0.5, 0.7):
+            e = TEngine(data_dir=data, threads=2, thr=thr, vad_model=vad_name)
+            e._rec = eng._rec
+            bounds = e.segment(sig)
+            errs = []
+            for gs, ge in gt:
+                det = min(bounds, key=lambda b: abs(b[0] - gs))
+                errs.append((det[0] - gs, det[1] - ge))
+            on = [x * 1000 for x, _ in errs]
+            off = [x * 1000 for _, x in errs]
+            print(f"VAD {vad_name} thr={thr}: nsegs={len(bounds)} "
+                  f"onset={st.mean(on):+.0f}ms±{st.pstdev(on):.0f} "
+                  f"offset={st.mean(off):+.0f}ms±{st.pstdev(off):.0f}", flush=True)
 
     print("BENCH OK", flush=True)
 

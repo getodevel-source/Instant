@@ -15,15 +15,43 @@ SAMPLE_RATE = 16000
 SILENCE_PEAK = 0.005
 
 
+def _dedup_overlap(left, right, max_words=6):
+    """Quita de `right` el prefijo ya dicho al final de `left`.
+
+    Los chunks se decodifican con overlap de audio real: la zona comun
+    sale en ambos textos. Busca el mayor solape de palabras (hasta
+    `max_words`) entre el final de `left` y el arranque de `right` y lo
+    recorta. Comparacion casefold sin puntuacion; si no hay solape
+    devuelve `right` intacto. Nunca inventa ni reordena.
+    """
+    if not left or not right:
+        return right
+    norm = lambda w: re.sub(r"[^\w]", "", w.casefold())
+    lw = left.split()
+    rw = right.split()
+    ln = [norm(w) for w in lw]
+    rn = [norm(w) for w in rw]
+    best = 0
+    for k in range(1, min(max_words, len(ln), len(rn)) + 1):
+        if ln[-k:] == rn[:k] and all(rn[:k]):
+            best = k
+    return " ".join(rw[best:]) if best else right
+
+
 def join_texts(texts):
-    """Une textos de segmentos: filtra vacios, pega puntuacion, colapsa espacios."""
+    """Une textos de segmentos: filtra vacios, cose overlap, pega
+    puntuacion, colapsa espacios."""
     parts = [t.strip() for t in texts if t and t.strip()]
-    s = " ".join(parts)
+    if not parts:
+        return ""
+    merged = [parts[0]]
+    for nxt in parts[1:]:
+        merged.append(_dedup_overlap(merged[-1], nxt))
+    s = " ".join(p for p in merged if p)
     s = re.sub(r"\s+([,.;:!?%)\]])", r"\1", s)
     s = re.sub(r"([(¿¡])\s+", r"\1", s)
     s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
-
 
 def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0):
     """Une un segmento corto (<min_len) con su vecino si el hueco <= max_gap.
@@ -44,6 +72,103 @@ def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0):
         else:
             out.append((s, e))
     return out
+
+
+def frontend(wav):
+    """Acondiciona audio para Parakeet: DC-remove + high-pass ~80 Hz.
+
+    Quita el offset de continua del ADC y el retumbe grave antes de
+    `_fit_level`: el modelo entrena con voz centrada en cero y ese piso
+    constante cambia la hipotesis aunque al oido suene igual. Sin estado:
+    opera sobre el take completo, nunca por bloques. No toca denoise
+    (un reductor siempre-on degrada WER en audio limpio); solo deja el
+    espectro donde vive la voz. Devuelve (wav, dc, clip_ratio).
+    """
+    w = np.ascontiguousarray(np.asarray(wav).flatten(), dtype=np.float32)
+    if w.size == 0:
+        return w, 0.0, 0.0
+    dc = float(np.mean(w, dtype=np.float64))
+    w = (w - dc).astype(np.float32)
+    # High-pass ~80 Hz via FFT: anula bins bajo 80 Hz y vuelve al tiempo.
+    # O(n log n), exacto, sin loops ni dependencias nuevas. En takes de
+    # 60-120 s tarda ms.
+    x = w.astype(np.float64)
+    spec = np.fft.rfft(x)
+    freqs = np.fft.rfftfreq(x.size, 1.0 / float(SAMPLE_RATE))
+    spec[freqs < 80.0] = 0.0
+    y = np.ascontiguousarray(np.fft.irfft(spec, n=x.size), dtype=np.float32)
+    clip = float(np.mean(np.abs(y) >= 0.999)) if y.size else 0.0
+    return y, dc, clip
+
+
+def _mean_conf(ys_log_probs):
+    """Confianza 0..1 de un decode: exp(media de log-probs por token).
+
+    sherpa-onnx expone `ys_log_probs` en el resultado del transducer.
+    Sin scores (mock/modelo viejo) devuelve 1.0: sin evidencia de duda no
+    se castiga al texto. Un segmento dudoso (media baja) es el que el
+    gate LLM debe pulir; el seguro se pega directo.
+    """
+    try:
+        probs = list(ys_log_probs) if ys_log_probs is not None else []
+    except TypeError:
+        return 1.0
+    if not probs:
+        return 1.0
+    try:
+        mean = float(sum(float(p) for p in probs) / len(probs))
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.0, min(1.0, float(np.exp(mean))))
+
+
+def _word_confs(tokens, ys_log_probs, timestamps):
+    """[(palabra, conf, t0, t1)] alineando tokens BPE a palabras.
+
+    Los tokens que empiezan con ' ' abren palabra (convencion sentencepiece
+    de Parakeet). La confianza de la palabra es exp(min(log-probs)): el
+    eslabon debil manda ("qu"=-0.68 delata "quemita" aunque "em"/"ita"
+    salgan seguras). Sin scores devuelve []: sin evidencia no hay gate fino.
+    """
+    try:
+        toks = [str(t) for t in (tokens or [])]
+        probs = [float(p) for p in (ys_log_probs or [])]
+        times = [float(t) for t in (timestamps or [])]
+    except (TypeError, ValueError):
+        return []
+    if not toks or len(probs) < len(toks):
+        return []
+    if len(times) < len(toks):
+        times = times + [times[-1] if times else 0.0] * (len(toks) - len(times))
+    out, cur, cur_lp, cur_t0 = [], "", [], 0.0
+    for i, tok in enumerate(toks):
+        piece = tok[1:] if tok.startswith(" ") else tok
+        if tok.startswith(" ") and cur:
+            conf = max(0.0, min(1.0, float(np.exp(min(cur_lp)))) if cur_lp else 1.0)
+            out.append((cur, conf, cur_t0, times[i - 1] if i else 0.0))
+            cur, cur_lp = "", []
+        if not cur:
+            cur_t0 = times[i] if i < len(times) else 0.0
+        cur += piece
+        if i < len(probs):
+            cur_lp.append(probs[i])
+    if cur:
+        conf = max(0.0, min(1.0, float(np.exp(min(cur_lp)))) if cur_lp else 1.0)
+        out.append((cur, conf, cur_t0, times[-1]))
+    return [(w, c, a, b) for w, c, a, b in out if w.strip()]
+
+
+def _unpack_one(res):
+    """(idx, text, conf, wconfs) desde `_one`, tolerando mocks viejos.
+
+    Mocks de 2-tupla (idx, text) -> conf 1.0, sin word-confs. De 3-tupla
+    (idx, text, conf) -> sin word-confs. Nunca tumba el decode por un mock.
+    """
+    if len(res) >= 4:
+        return res[0], res[1], res[2], res[3]
+    if len(res) == 3:
+        return res[0], res[1], res[2], []
+    return res[0], res[1], 1.0, []
 
 
 def _fit_level(wav):
@@ -71,12 +196,17 @@ class Engine:
     # Tope del reintento total: decodificar hasta 120s de audio duplicaba
     # el pico de CPU/RAM justo en el peor caso (audio largo/ruidoso).
     FULL_RETRY_MAX_SECONDS = 30.0
+    # Overlap de audio real por borde de chunk (0.5 s por lado): el
+    # transducer colapsa en palabras cortadas sin contexto; con overlap la
+    # zona comun se decodifica dos veces y se cose en `join_texts`.
+    EDGE_OVERLAP = 0.5
     # Limites defensivos de hilos ONNX intra-op.
     MIN_THREADS = 1
     MAX_THREADS = 8
 
     def __init__(self, data_dir=None, threads=4, max_seg=20.0,
-                 vad_sil=0.5, vad_pad=0.3, min_dur=0.4, save_wavs_dir=None):
+                 vad_sil=0.5, vad_pad=0.3, min_dur=0.4, save_wavs_dir=None,
+                 vad_model="silero", blank_penalty=0.0):
         import os as _os
         cpu = _os.cpu_count() or 4
         try:
@@ -90,6 +220,18 @@ class Engine:
         self.vad_sil = vad_sil
         self.vad_pad = vad_pad
         self.min_dur = min_dur
+        # Penalidad al blank en greedy (resta al logit): reduce deletions
+        # (vacios) pero pasada de rosca inventa inserciones. Default 0.0 =
+        # comportamiento actual; solo se mueve con WER medido. Rango 0..1.
+        try:
+            bp = float(blank_penalty)
+        except (TypeError, ValueError):
+            bp = 0.0
+        self.blank_penalty = max(0.0, min(1.0, bp))
+        # VAD en uso: "silero" (default) o "ten" (opt-in, mas preciso).
+        # Si se pide ten y el modelo falta, vad() cae a silero con aviso.
+        self.vad_model = (vad_model or "silero").strip().lower()
+        self._vad_name = self.vad_model
         # Opt-in (DICTADO_SAVE_WAVS): guarda los wavs que el modelo deja
         # vacios, para medir con voz real en vez de suponer.
         self.save_wavs_dir = save_wavs_dir
@@ -100,9 +242,18 @@ class Engine:
         # con decodificaciones concurrentes el transducer colapsaba a blank de
         # forma intermitente (~6% de sesiones). RTF ~0.05x deja margen.
         self._decode_lock = threading.Lock()
+        # Fraccion de muestras saturadas del ultimo take (frontend): el
+        # daemon la usa para avisar "baja la ganancia" en vez de transcribir
+        # distorsion. 0.0 hasta el primer transcribe().
+        self.last_clip = 0.0
+        # Confianza 0..1 del ultimo take (media de log-probs por token).
+        # 1.0 hasta el primer transcribe(): sin evidencia de duda no se pule.
+        self.last_conf = 1.0
+        # [(palabra, conf, t0, t1)] del ultimo take, segundos del take.
+        # [] hasta el primer transcribe con scores.
+        self.last_word_confs = []
 
     def unload(self):
-        """Libera el recognizer (~670MB) y el VAD cacheado si existen."""
         with self._lock:
             self._rec = None
             self._vad = None
@@ -117,12 +268,13 @@ class Engine:
                     if not os.path.isfile(p[k]):
                         raise FileNotFoundError(f"modelo parakeet incompleto, falta: {p[k]} "
                                                 f"(corre `instant setup`)")
-                log.info("cargando parakeet v3 int8 threads=%d ...", self.threads)
+                log.info("cargando parakeet v3 int8 threads=%d blank_penalty=%.2f ...",
+                         self.threads, self.blank_penalty)
                 t0 = time.time()
                 self._rec = sherpa_onnx.OfflineRecognizer.from_transducer(
                     encoder=p["encoder"], decoder=p["decoder"], joiner=p["joiner"],
                     tokens=p["tokens"], num_threads=self.threads,
-                    decoding_method="greedy_search",
+                    decoding_method="greedy_search", blank_penalty=self.blank_penalty,
                     model_type="nemo_transducer", provider="cpu", debug=False)
                 log.info("modelo listo en %.1fs. GPU intacta (provider=cpu).", time.time() - t0)
                 try:
@@ -142,16 +294,33 @@ class Engine:
                 return self._vad
         import sherpa_onnx
 
-        if not os.path.isfile(self.paths["vad"]):
-            raise FileNotFoundError(f"falta VAD: {self.paths['vad']} (corre `instant setup`)")
+        use_ten = (self.vad_model or "silero").strip().lower() in ("ten", "ten-vad")
+        if use_ten and not os.path.isfile(self.paths["ten_vad"]):
+            log.warning("ten-vad pedido pero falta %s; uso silero.",
+                        self.paths["ten_vad"])
+            use_ten = False
         cfg = sherpa_onnx.VadModelConfig()
-        cfg.silero_vad.model = self.paths["vad"]
-        cfg.silero_vad.threshold = 0.5
-        cfg.silero_vad.min_silence_duration = self.vad_sil
-        # 0.20s (antes 0.25s): los ataques suaves de la primera palabra
-        # quedaban marcados como no-voz y el onset se recortaba.
-        cfg.silero_vad.min_speech_duration = 0.2
-        cfg.silero_vad.window_size = 512
+        if use_ten:
+            # TEN-VAD (int8, 126 KB): alternativa medida mas precisa que
+            # Silero con overhead minimo. Ventana 256 (recomendada sherpa).
+            cfg.ten_vad.model = self.paths["ten_vad"]
+            cfg.ten_vad.threshold = 0.5
+            cfg.ten_vad.min_silence_duration = self.vad_sil
+            cfg.ten_vad.min_speech_duration = 0.2
+            cfg.ten_vad.window_size = 256
+            self._vad_name = "ten"
+        else:
+            if not os.path.isfile(self.paths["vad"]):
+                raise FileNotFoundError(
+                    f"falta VAD: {self.paths['vad']} (corre `instant setup`)")
+            cfg.silero_vad.model = self.paths["vad"]
+            cfg.silero_vad.threshold = 0.5
+            cfg.silero_vad.min_silence_duration = self.vad_sil
+            # 0.20s (antes 0.25s): los ataques suaves de la primera palabra
+            # quedaban marcados como no-voz y el onset se recortaba.
+            cfg.silero_vad.min_speech_duration = 0.2
+            cfg.silero_vad.window_size = 512
+            self._vad_name = "silero"
         cfg.sample_rate = SAMPLE_RATE
         inst = sherpa_onnx.VadModel.create(cfg)
         with self._lock:
@@ -226,7 +395,12 @@ class Engine:
             s = rec.create_stream()
             s.accept_waveform(SAMPLE_RATE, np.ascontiguousarray(wav, dtype=np.float32))
             rec.decode_stream(s)
-            return idx, (s.result.text or "").strip()
+            text = (s.result.text or "").strip()
+            conf = _mean_conf(getattr(s.result, "ys_log_probs", None))
+            wconfs = _word_confs(getattr(s.result, "tokens", None),
+                                 getattr(s.result, "ys_log_probs", None),
+                                 getattr(s.result, "timestamps", None))
+            return idx, text, conf, wconfs
 
     def _recover_empties(self, wav, peak, bounds, chunks, texts):
         """Reintento secuencial de segmentos vacios con contexto ampliado.
@@ -250,7 +424,7 @@ class Engine:
             re_ = min(len(wav) / SAMPLE_RATE, e + 1.0)
             rwav, rgain = _fit_level(wav[int(rs * SAMPLE_RATE):int(re_ * SAMPLE_RATE)])
             try:
-                _, retry = self._one((-1, rwav))
+                _, retry, _rc, _rw = _unpack_one(self._one((-1, rwav)))
                 retry = (retry or "").strip()
             except Exception:
                 log.exception("reintento seg %d fail", idx + 1)
@@ -267,7 +441,7 @@ class Engine:
             capped = min(len(wav) / SAMPLE_RATE, self.FULL_RETRY_MAX_SECONDS)
             full = wav[:int(capped) * SAMPLE_RATE]
             try:
-                _, retry = self._one((-1, full))
+                _, retry, _rc, _rw = _unpack_one(self._one((-1, full)))
                 retry = (retry or "").strip()
             except Exception:
                 log.exception("reintento total fail")
@@ -281,18 +455,32 @@ class Engine:
     def transcribe(self, audio):
         """VAD + Parakeet por segmento en serie. Devuelve texto unido."""
         wav = np.ascontiguousarray(np.asarray(audio).flatten(), dtype=np.float32)
+        wav, dc, clip = frontend(wav)
         dur = len(wav) / SAMPLE_RATE
         peak = float(np.max(np.abs(wav))) if wav.size else 0.0
-        log.info("audio %.1fs pico=%.4f, segmentando...", dur, peak)
+        log.info("audio %.1fs pico=%.4f dc=%.5f clip=%.3f, segmentando...",
+                 dur, peak, dc, clip)
         t0 = time.time()
         bounds = merge_short_bounds(self.segment(wav))
         log.info("%d segmentos en %.2fs: %s.", len(bounds), time.time() - t0,
                  ", ".join(f"{s:.2f}-{e:.2f}" for s, e in bounds))
         if not bounds:
+            self.last_clip = clip
+            self.last_conf = 1.0
+            self.last_word_confs = []
             return ""
         chunks = []
+        # Overlap de audio REAL en bordes (EDGE_OVERLAP 0.5 s por lado):
+        # cada chunk ve el arranque/cola del vecino para que el transducer
+        # no decodifique palabras cortadas sin contexto. La zona comun sale
+        # en ambos textos y `join_texts` la cose con `_dedup_overlap`.
+        # Solo en la via con >1 segmento: con 1 chunk no hay borde que coser
+        # y el decode extra seria puro costo.
+        ov = self.EDGE_OVERLAP if len(bounds) > 1 else 0.0
         for i, (s, e) in enumerate(bounds):
-            raw = wav[int(s * SAMPLE_RATE):int(e * SAMPLE_RATE)]
+            rs = max(0.0, s - ov)
+            re_ = min(len(wav) / SAMPLE_RATE, e + ov)
+            raw = wav[int(rs * SAMPLE_RATE):int(re_ * SAMPLE_RATE)]
             normed, gain = _fit_level(raw)
             chunks.append((i, normed, gain))
             del raw
@@ -303,17 +491,35 @@ class Engine:
         # usaba `threads` hilos ONNX -> pico NxM CPU-bound que congelaba el
         # SO. En serie el RTF es el mismo y el pico es 1xM.
         texts = [""] * len(chunks)
+        confs = [1.0] * len(chunks)
+        wconfs = [[] for _ in chunks]
         for i, w, _g in chunks:
-            idx, text = self._one((i, w))
+            idx, text, conf, wc = _unpack_one(self._one((i, w)))
             texts[idx] = (text or "").strip()
+            confs[idx] = conf
+            wconfs[idx] = wc
             cpeak = float(np.max(np.abs(chunks[idx][1]))) if chunks[idx][1].size else 0.0
-            log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f): %d caracteres", idx + 1, len(chunks),
+            log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f conf=%.2f): %d caracteres",
+                     idx + 1, len(chunks),
                      len(chunks[idx][1]) / SAMPLE_RATE, cpeak, chunks[idx][2],
-                     len(texts[idx]))
+                     conf, len(texts[idx]))
         log.info("decode %d segs en %.2fs.", len(chunks), time.time() - t0)
         texts = self._recover_empties(wav, peak, bounds, chunks, texts)
         if self.save_wavs_dir and not any(t.strip() for t in texts):
             self._dump_failure(wav, peak, dur, bounds)
+        self.last_clip = clip
+        # Confianza del take: media ponderada por longitud (segmentos vacios
+        # no aportan). El gate LLM pule solo takes dudosos.
+        weights = [len(t) for t in texts]
+        self.last_conf = (sum(c * w for c, w in zip(confs, weights)) / sum(weights)
+                          if sum(weights) else 1.0)
+        # Confianzas por palabra (con offset temporal del chunk): el bias
+        # abre el gate por palabra aunque el take sea seguro.
+        merged = []
+        for (s, _e), wc in zip(bounds, wconfs):
+            for w, c, a, b in wc:
+                merged.append((w, c, s + a, s + b))
+        self.last_word_confs = merged
         return join_texts(texts)
 
     def _dump_failure(self, wav, peak, dur, bounds):

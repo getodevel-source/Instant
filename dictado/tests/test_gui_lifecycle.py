@@ -91,7 +91,14 @@ def make_logic(emitted=None, tasks=None, schedule=None, **kwargs):
 
 
 class PanelLifecycleTests(unittest.TestCase):
-    def test_home_status_explains_cli_focus_for_both_daemon_states(self):
+    def test_removed_models_page_falls_back_to_home(self):
+        logic, emitted = make_logic()
+        logic.page = "settings"
+        logic.navigate("models")
+        self.assertEqual(logic.page, "home")
+        self.assertIn(("navigate", {"page": "home"}), emitted)
+
+    def test_home_status_explains_where_to_dictate_for_both_daemon_states(self):
         for running in (False, True):
             with self.subTest(running=running):
                 logic, _emitted = make_logic()
@@ -101,9 +108,22 @@ class PanelLifecycleTests(unittest.TestCase):
                 self.assertEqual(state["status"]["state"],
                                  "ok" if running else "down")
                 self.assertEqual(state["status"]["title"],
-                                 "Instant está activo" if running else "Listo para dictar")
-                self.assertIn("mantené F9", state["status"]["detail"])
-                self.assertIn("Ctrl+V", state["status"]["detail"])
+                                 "Instant está activo" if running
+                                 else "Instant está detenido")
+                self.assertEqual(state["status"]["detail"],
+                                 "Enfocá el campo donde querés escribir.")
+
+    def test_running_daemon_can_be_restarted_when_prerequisites_are_ready(self):
+        logic, _emitted = make_logic()
+        logic._microphones_loaded = True
+        logic.mic_selected = "USB Mic"
+        logic.catalog.devices["USB Mic"] = (5, "USB Mic")
+        with patch("instant_app.gui.daemon_is_running", return_value=True):
+            logic.refresh_daemon()
+        status = logic.state_payload()["status"]
+        self.assertFalse(status["can_start"])
+        self.assertTrue(status["can_toggle"])
+        self.assertTrue(status["can_stop"])
 
     def test_closing_drops_late_results_without_touching_daemon(self):
         started, release = threading.Event(), threading.Event()

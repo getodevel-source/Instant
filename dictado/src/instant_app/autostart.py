@@ -229,14 +229,14 @@ def _win_enable():
             _write_win_stub(link, target, args)
             return "Arranque activado: %s" % link
         raise RuntimeError(
-            "sin powershell no puedo crear el acceso. Hacelo a mano con "
-            "install-autostart.bat en la raiz del repo.")
+            "sin powershell no puedo crear el acceso. Hacelo a mano: crea un "
+            "acceso directo a instant-run.bat en la carpeta Startup.")
     if r.returncode != 0 or not os.path.isfile(link):
         err = (r.stderr or "").strip().splitlines()
         hint = err[-1] if err else "powershell devolvio %d" % r.returncode
         raise RuntimeError(
-            "no se pudo crear el acceso en Startup (%s). Alternativa: corre "
-            "install-autostart.bat en la raiz del repo." % hint)
+            "no se pudo crear el acceso en Startup (%s). Alternativa: crea a "
+            "mano un acceso directo a instant-run.bat en Startup." % hint)
     return "Arranque activado: %s -> %s%s" % (
         link, target, (" " + args) if args else "")
 

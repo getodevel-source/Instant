@@ -115,12 +115,13 @@ def with_mics():
 
 
 class LogicSettingsTests(unittest.TestCase):
-    def test_status_hint_tracks_the_selected_hotkey(self):
+    def test_selected_hotkey_is_published_without_repeating_the_hint(self):
         logic, _emitted = make_logic()
         logic._set_key("enter")
-        detail = logic.state_payload()["status"]["detail"]
-        self.assertIn("mantené Enter", detail)
-        self.assertNotIn("mantené F9", detail)
+        state = logic.state_payload()
+        self.assertEqual(state["key_label"], "Enter")
+        self.assertEqual(state["status"]["detail"],
+                         "Enfocá el campo donde querés escribir.")
 
     def test_selected_device_after_refresh(self):
         logic, _emitted = make_logic()
@@ -219,6 +220,8 @@ class LogicSettingsTests(unittest.TestCase):
             logic.refresh_microphones(initial=False)
         self.assertIsNone(logic._selected_device())
         self.assertIn("El micrófono seleccionado no está disponible", logic.mic_labels)
+        self.assertFalse(logic.state_payload()["mic"]["available"])
+        self.assertTrue(logic.state_payload()["mic"]["has_devices"])
         self.assertIn("no está disponible", logic.meter["text"])
 
     def test_empty_device_list_reports_no_microphones(self):
@@ -269,6 +272,7 @@ class LogicSettingsTests(unittest.TestCase):
 
     def test_vocab_flow_round_trips_through_the_editor_format(self):
         logic, _emitted = make_logic()
+        self.assertEqual(logic.state_payload()["vocab"]["rows"], [])
         logic.vocab_add()
         logic.vocab_set(0, "term", "OpenAI")
         logic.vocab_set(0, "heard", "open ai | o pen ai")

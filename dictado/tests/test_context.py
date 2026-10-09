@@ -32,6 +32,28 @@ _check("llm off identico", llm.maybe_polish("hola mundo", {"llm_url": ""}) == "h
 _check("llm sin server identico",
         llm.maybe_polish("hola mundo", {"llm_url": "http://127.0.0.1:9"}) == "hola mundo")
 
+# Gate de confianza: texto seguro no toca la red aunque haya URL.
+with patch("urllib.request.urlopen") as _urlopen:
+    _check("confianza alta no llama LLM",
+           llm.maybe_polish("hola mundo", {"llm_url": "http://local"}, conf=0.95)
+           == "hola mundo" and not _urlopen.called)
+with patch("urllib.request.urlopen", side_effect=OSError("caido")):
+    _check("confianza baja intenta LLM y cae a local",
+           llm.maybe_polish("hola mundo", {"llm_url": "http://local"}, conf=0.5)
+           == "hola mundo")
+
+# restore_openers: ¿ determinista, sin red, sin reescribir palabras.
+_check("opener pregunta que", llm.restore_openers("que hora es?") == "¿que hora es?")
+_check("opener pregunta como", llm.restore_openers("cómo estás?") == "¿cómo estás?")
+_check("opener con apertura intacta",
+        llm.restore_openers("¿qué hora es?") == "¿qué hora es?")
+_check("opener no toca afirmacion", llm.restore_openers("que bueno.") == "que bueno.")
+_check("opener no inventa sin cierre",
+        llm.restore_openers("que hora es") == "que hora es")
+_check("opener no toca exclamacion", llm.restore_openers("qué bueno!") == "qué bueno!")
+_check("opener multi-oracion",
+        llm.restore_openers("hola. dónde estás?") == "hola. ¿dónde estás?")
+
 # Context profiles apply only user-authored whole-word variants, without fuzzy
 # substitutions that could rewrite ordinary words.
 _work_context = {
@@ -154,7 +176,125 @@ _check("editor marks sound terms and round-trips them",
        and context.parse_editor(_editor)[0]["sonido"] is True
        and context.parse_editor(_editor)[1]["sonido"] is False)
 _check("editor keeps a term without aliases",
-       context.parse_editor("~GitHub")[0]
-       == {"term": "GitHub", "aliases": [], "sonido": True})
+        context.parse_editor("~GitHub")[0]
+        == {"term": "GitHub", "aliases": [], "sonido": True})
+
+# Bias general: rescata tecnicos en takes dudosos, intacto en seguros.
+from instant_app import bias as _bias
+_tech = "probando Instant con Parkit. Hice un comic del workflow."
+_fixed = "probando Instant con Parakeet. Hice un commit del workflow."
+_check("bias rescata con duda", _bias.correct_biased(_tech, conf=0.5) == _fixed)
+_check("bias intacto sin duda", _bias.correct_biased(_tech, conf=0.95) == _tech)
+_check("bias no toca sano ni vacio",
+        _bias.correct_biased("hola mundo", conf=0.3) == "hola mundo"
+        and _bias.correct_biased("", conf=0.1) == "")
+_check("bias no reescribe palabras corrientes",
+        _bias.correct_biased("para que funcione quien quiera", conf=0.2)
+        == "para que funcione quien quiera")
+
+# Bias con contexto: la vecina confirma, su ausencia protege.
+_check("bias contexto rescata con vecina",
+        _bias.correct_biased("hice un comic del workflow", conf=0.5)
+        == "hice un commit del workflow")
+_check("bias contexto protege comic sano",
+        _bias.correct_biased("lei un comic de superheroes", conf=0.5)
+        == "lei un comic de superheroes")
+_check("bias contexto protege comer verbo",
+        _bias.correct_biased("voy a comer con el equipo del workflow",
+                             conf=0.5)
+        == "voy a comer con el equipo del workflow")
+_check("bias contexto protege comer tras que",
+        _bias.correct_biased("hay que comer antes del deploy", conf=0.5)
+        == "hay que comer antes del deploy")
+_check("bias contexto rescata wey con vecina",
+        _bias.correct_biased("el wey fallo por el driver", conf=0.5)
+        == "el build fallo por el driver")
+_check("bias contexto protege wey sano",
+        _bias.correct_biased("ese wey es mi amigo", conf=0.5)
+        == "ese wey es mi amigo")
+_check("bias contexto rescata debil con vecina",
+        _bias.correct_biased("subi el quemita hithub y corri el workflow",
+                             conf=0.5)
+        == "subi el commit GitHub y corri el workflow")
+
+# Gate por palabra: take seguro + palabra dudosa con vecina rescata.
+_wc_way = [("El", 0.99, 0, 1), ("Way", 0.55, 1, 2), ("fall", 0.97, 2, 3),
+           ("por", 0.99, 3, 4), ("el", 1.0, 4, 5), ("driver", 0.96, 5, 6)]
+_check("bias palabra rescata en take seguro",
+        _bias.correct_biased("El Way fall por el driver.", conf=0.95,
+                             word_confs=_wc_way)
+        == "El build fall por el driver.")
+_check("bias palabra intacto sin word_confs",
+        _bias.correct_biased("El Way fall por el driver.", conf=0.95)
+        == "El Way fall por el driver.")
+_wc_sano = [("Ese", 0.9, 0, 1), ("wey", 0.6, 1, 2), ("es", 0.99, 2, 3),
+            ("mi", 0.99, 3, 4), ("amigo", 0.97, 4, 5)]
+_check("bias palabra protege sin vecina",
+        _bias.correct_biased("Ese wey es mi amigo.", conf=0.95,
+                             word_confs=_wc_sano)
+        == "Ese wey es mi amigo.")
+
+# Bateria adversaria: español sano sin nada tecnico. El bias NO debe tocar
+# ni una coma, con duda o sin ella. Cada frase es un falso positivo que
+# un corrector agresivo cometeria.
+_ADVERS = [
+    "lei un comic de superheroes en la plaza",
+    "voy a comer una pizza con mis amigos",
+    "hay que comer antes de salir al cine",
+    "ese wey es mi amigo de la infancia",
+    "el instante preciso en que llego el tren",
+    "para que funcione quien quiera venir",
+    "voy a comer un asado el domingo en familia",
+    "compramos comida para el viaje en auto",
+    "el nene juega a la pelota en el parque",
+    "mi mama cocina muy bien los domingos",
+    "el partido estuvo buenisimo hasta el final",
+    "trabajo en una oficina del centro todo el dia",
+    "el perro ladra cuando tocan el timbre",
+    "hicimos una fiesta sorpresa para ana",
+    "el medico dijo que tome agua y descanse",
+    "la pelicula que vimos anoche fue larga",
+    "quiero aprender a tocar la guitarra",
+    "el supermercado cierra a las nueve",
+    "mi hermana estudia medicina en rosario",
+    "el colectivo llego tarde por el trafico",
+    "cosechamos tomates y lechuga en la quinta",
+    "el bebe duerme toda la noche seguida",
+    "fuimos a la playa en enero con calor",
+    "la receta lleva harina huevos y leche",
+    "mi abuelo cuenta historias de la guerra",
+    "el jardin se lleno de flores en primavera",
+    "jugamos al truco hasta la madrugada",
+    "la escuela queda a tres cuadras de casa",
+    "el vecino puso musica fuerte ayer",
+    "compre pan y facturas para el mate",
+]
+_advers_bad = [s for s in _ADVERS
+               if _bias.correct_biased(s, conf=0.3) != s
+               or _bias.correct_biased(s, conf=0.95) != s]
+_check("bias adversaria intacta (30 sanas)", _advers_bad == [])
+
+# Regla C: caso medido en voz real, sin gate de confianza.
+_check("bias strong rescata will con 2 vecinas",
+        _bias.correct_biased("El Will fallo en la manana por el driver.",
+                             conf=0.99)
+        == "El build fallo en la manana por el driver.")
+_check("bias strong protege will sin vecinas",
+        _bias.correct_biased("Will Walchar no molesta.", conf=0.99)
+        == "Will Walchar no molesta.")
+_check("bias strong rescata will con vecina deformada",
+        _bias.correct_biased("El Will fall otra vez por el driver viejo.",
+                             conf=0.99)
+        == "El build fall otra vez por el driver viejo.")
+_check("bias strong protege nombre real",
+        _bias.correct_biased("Voy a hablar del testamento de Will.", conf=0.99)
+        == "Voy a hablar del testamento de Will.")
+_check("bias strong protege wild sano",
+        _bias.correct_biased("El wild anda suelto en el bosque.", conf=0.99)
+        == "El wild anda suelto en el bosque.")
+_check("bias protege dictado en ingles",
+        _bias.correct_biased(
+            "The will to build something and the way it works.", conf=0.3)
+        == "The will to build something and the way it works.")
 
 print("OK: contexto y vocabulario verdes.")

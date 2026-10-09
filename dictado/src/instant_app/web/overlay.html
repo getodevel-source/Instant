@@ -16,8 +16,8 @@
      classic  pastilla de vidrio con 9 barras que siguen su banda real, chip
               de tecla, spinner al transcribir, tilde verde + "Copiado" al
               confirmar.
-     orbital  orbe con halo, anillo reactivo, espectro de 9 arcos y barrido
-              al transcribir; al confirmar solo el tilde.
+     orbital  pastilla compacta con un espectro suave que sigue las bandas
+              reales del microfono y transiciones breves entre estados.
    Protocolo con el daemon (QWebChannel): pushFrame(json) con
    {mode, message, keyLabel, style, level?, pitch?, bands?}. La paleta repite
    instant_app/branding.py (ver tests/test_overlay_palette.py). */
@@ -40,6 +40,8 @@
     level: 0, pitch: 0.5, bands: new Array(9).fill(0)
   };
   let running = false, lastMs = 0, timeS = 0;
+  let entranceStartMs = 0, exitStartMs = 0;
+  let lastVisibleMode = 'idle', lastVisibleMessage = '';
 
   const rgb = (hex) => {
     const v = parseInt(hex.slice(1), 16);
@@ -73,12 +75,28 @@
     if (f.mode !== undefined) state.mode = f.mode;
     if (Array.isArray(f.bands) && f.bands.length === 9)
       state.target.bands = f.bands.map((value) => Math.max(0, Math.min(1, Number(value) || 0)));
-    if (state.mode !== previousMode && state.mode !== 'listening' && state.mode !== 'starting') {
-      state.target.level = 0;
-      state.target.pitch = 0.5;
-      state.target.bands.fill(0);
+    if (state.mode !== previousMode) {
+      const changedAt = performance.now();
+      if (previousMode === 'idle' && state.mode !== 'idle')
+        entranceStartMs = changedAt;
+      if (state.mode === 'idle' && previousMode !== 'idle') {
+        exitStartMs = changedAt;
+        lastVisibleMode = previousMode;
+        lastVisibleMessage = state.message;
+      }
+      if (state.mode !== 'idle')
+        exitStartMs = 0;
+      if (state.mode !== 'listening' && state.mode !== 'starting') {
+        state.target.level = 0;
+        state.target.pitch = 0.5;
+        state.target.bands.fill(0);
+      }
     }
     if (f.message !== undefined) state.message = f.message;
+    if (state.mode !== 'idle') {
+      lastVisibleMode = state.mode;
+      lastVisibleMessage = state.message;
+    }
     if (f.keyLabel) state.keyLabel = f.keyLabel;
     if (f.style) state.style = f.style;
     start();
@@ -136,12 +154,12 @@
     grad.addColorStop(0, rgba(PALETTE.glass, 0.92));
     grad.addColorStop(1, rgba(PALETTE.glass_alt, 0.94));
     C.fillStyle = grad;
-    roundRect(box.x, box.y, box.w, box.h, 18);
+    roundRect(box.x, box.y, box.w, box.h, box.r || 18);
     C.fill();
     C.restore();
     C.strokeStyle = rgba(PALETTE.line, 0.9);
     C.lineWidth = 1;
-    roundRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1, 18);
+    roundRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1, box.r || 18);
     C.stroke();
   }
 
@@ -227,179 +245,167 @@
     C.fillText(label, chipX + chipW / 2, cy + 1);
   }
 
-  function drawOrbital() {
-    const mode = state.mode;
+  function drawOrbital(now, exiting = false) {
+    const mode = exiting ? lastVisibleMode : state.mode;
+    const message = exiting ? lastVisibleMessage : state.message;
     const cx = window.innerWidth / 2;
-    const cy = 91;
+    const card = { x: cx - 168, y: 26, w: 336, h: 102, r: 24 };
+    const centerY = window.innerHeight / 2;
     const voice = mixHex(PALETTE.accent, PALETTE.working, state.pitch);
+    const clamp01 = (value) => Math.max(0, Math.min(1, value));
+    const easeOut = (value) => 1 - Math.pow(1 - clamp01(value), 3);
 
-    if (mode === 'notice' || mode === 'error') {
-      const color = mode === 'error' ? PALETTE.red : PALETTE.amber;
-      C.font = '600 12px "Segoe UI", system-ui, sans-serif';
-      const w = Math.min(424, Math.max(172, C.measureText(state.message).width + 58));
-      const box = { x: cx - w / 2, y: 178, w: w, h: 34, feedback: true };
-      drawGlass(box);
-      C.beginPath();
-      C.arc(box.x + 18, box.y + 17, 8, 0, 2 * PI);
-      C.fillStyle = rgba(color, 0.16);
-      C.fill();
-      C.strokeStyle = color;
-      C.lineWidth = 1.7;
-      C.beginPath();
-      C.arc(box.x + 18, box.y + 17, 5, 0, 2 * PI);
-      C.stroke();
-      C.fillStyle = color;
-      C.textAlign = 'left';
-      C.textBaseline = 'middle';
-      C.fillText(state.message || (mode === 'error' ? 'No se pudo completar' : 'Listo'), box.x + 33, box.y + 17, w - 43);
-      return;
+    let alpha = 1;
+    let scale = 1;
+    let offsetY = 0;
+    if (exiting && exitStartMs) {
+      const progress = easeOut((now - exitStartMs) / 190);
+      alpha = 1 - progress;
+      scale = 1 - progress * 0.04;
+      offsetY = progress * 6;
+    } else if (entranceStartMs) {
+      const progress = easeOut((now - entranceStartMs) / 260);
+      alpha = progress;
+      scale = 0.96 + progress * 0.04;
+      offsetY = (1 - progress) * 6;
+      if (progress >= 1)
+        entranceStartMs = 0;
     }
 
-    if (mode === 'success') {
-      const box = { x: cx - 77, y: 178, w: 154, h: 34, feedback: true };
-      drawGlass(box);
-      drawCheck(cx - 33, box.y + 17, 15, PALETTE.green, 2.6);
-      C.fillStyle = PALETTE.green;
-      C.font = '700 10px "Segoe UI", system-ui, sans-serif';
-      C.textAlign = 'left';
-      C.textBaseline = 'middle';
-      C.fillText('PEGADO', cx - 19, box.y + 17);
-      return;
-    }
-
-    if (mode !== 'starting' && mode !== 'listening' && mode !== 'processing')
-      return;
-
-    const level = state.level;
-    const processing = mode === 'processing';
-    const beat = 0.5 + 0.5 * Math.sin(timeS * (processing ? 5.2 : 2.1));
-    const coreR = processing ? 22 + beat * 2 : 23 + level * 9;
-    const haloR = coreR + 31 + level * 20;
-    const alpha = 0.025 + level * 0.055;
-
-    // Soft light field under the instrument glass.
     C.save();
-    C.globalCompositeOperation = 'lighter';
-    const halo = C.createRadialGradient(cx, cy, 0, cx, cy, haloR);
-    halo.addColorStop(0, rgba(PALETTE.accent, alpha));
-    halo.addColorStop(0.38, rgba(PALETTE.accent, alpha * 0.42));
-    halo.addColorStop(1, rgba(PALETTE.accent, 0));
-    C.fillStyle = halo;
-    C.beginPath();
-    C.arc(cx, cy, haloR, 0, 2 * PI);
-    C.fill();
-    C.restore();
+    C.globalAlpha *= alpha;
+    C.translate(cx, centerY + offsetY);
+    C.scale(scale, scale);
+    C.translate(-cx, -centerY);
 
-    // Orbiting particles move slowly; their light follows the real input level.
-    for (let i = 0; i < 12; i++) {
-      const a = timeS * (0.11 + (i % 3) * 0.018) + i * 2 * PI / 12;
-      const pulse = 0.5 + 0.5 * Math.sin(timeS * 2.4 - i * 0.9);
-      const r = 89 + 4 * pulse + level * 5;
-      const x = cx + Math.cos(a) * r;
-      const y = cy + Math.sin(a) * r * 0.78;
-      C.beginPath();
-      C.arc(x, y, 0.8 + pulse * 1.15 + level * 0.7, 0, 2 * PI);
-      C.fillStyle = rgba(PALETTE.accent, 0.18 + pulse * 0.2 + level * 0.28);
-      C.fill();
-    }
-
-    // A fine outer track with a moving tracer.
-    C.strokeStyle = rgba(PALETTE.working, 0.19 + level * 0.16);
-    C.lineWidth = 1;
-    C.beginPath();
-    C.arc(cx, cy, 77, -0.2 * PI, 1.8 * PI);
-    C.stroke();
-    const tracer = timeS * (processing ? 1.2 : 0.24);
-    C.strokeStyle = rgba(voice, 0.75);
-    C.lineWidth = 2.2;
-    C.lineCap = 'round';
-    C.beginPath();
-    C.arc(cx, cy, 77, tracer, tracer + 0.28 + level * 0.16);
-    C.stroke();
-
-    // Center orb: a luminous core with a glass highlight.
-    C.fillStyle = rgba(PALETTE.accent, 0.1);
-    C.beginPath();
-    C.arc(cx, cy, coreR + 2, 0, 2 * PI);
-    C.fill();
-    C.strokeStyle = rgba(PALETTE.working, 0.46 + level * 0.24);
-    C.lineWidth = 1;
-    C.beginPath();
-    C.arc(cx, cy, coreR + 1, -0.72 * PI, 0.18 * PI);
-    C.stroke();
-    const core = C.createRadialGradient(cx - coreR * 0.38, cy - coreR * 0.42, 1, cx, cy, coreR);
-    core.addColorStop(0, rgba(PALETTE.accent, 0.92));
-    core.addColorStop(0.64, voice);
-    core.addColorStop(1, rgba(PALETTE.accent, 0.68));
-    C.fillStyle = core;
-    C.beginPath();
-    C.arc(cx, cy, coreR, 0, 2 * PI);
-    C.fill();
-
-    // Nine radial capsules are smoothed from the microphone's real spectrum.
-    const rot = timeS * (processing ? 0.78 : 0.12 + level * 0.22);
-    const slot = 2 * PI / 9;
-    for (let i = 0; i < 9; i++) {
-      const band = state.bands[i] || 0;
-      const angle = -PI / 2 + i * slot + rot;
-      const inner = 58 + band * 2;
-      const length = 10 + band * 23;
-      const thickness = 3.2 + band * 3.2;
-      const x = cx + Math.cos(angle) * inner;
-      const y = cy + Math.sin(angle) * inner;
-      C.save();
-      C.translate(x, y);
-      C.rotate(angle);
-      C.fillStyle = mixHex(voice, PALETTE.text, 0.24);
-      C.globalAlpha = 0.76 + band * 0.24;
-      roundRect(0, -thickness / 2, length, thickness, thickness / 2);
-      C.fill();
+    if (!['starting', 'listening', 'processing', 'success', 'notice', 'error'].includes(mode)) {
       C.restore();
+      return;
     }
-    const shine = C.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.36, 0, cx - coreR * 0.18, cy - coreR * 0.2, coreR * 0.9);
-    shine.addColorStop(0, 'rgba(255,255,255,0.3)');
-    shine.addColorStop(1, 'rgba(255,255,255,0)');
-    C.fillStyle = shine;
+
+    drawGlass(card);
+    const headerY = card.y + 23;
+    const signalY = card.y + 74;
+    const processing = mode === 'processing';
+    const feedback = mode === 'notice' || mode === 'error';
+    const success = mode === 'success';
+    const statusColor = mode === 'error' ? PALETTE.red
+      : mode === 'notice' ? PALETTE.amber
+      : success ? PALETTE.green
+      : processing ? PALETTE.working : PALETTE.accent;
+
+    // Un unico encabezado mantiene todos los estados dentro de la misma pieza.
+    const breathe = 0.5 + 0.5 * Math.sin(timeS * 2.6);
     C.beginPath();
-    C.arc(cx, cy, coreR, 0, 2 * PI);
+    C.arc(card.x + 23, headerY, 6.5, 0, 2 * PI);
+    C.fillStyle = rgba(statusColor, 0.12 + breathe * 0.08);
     C.fill();
-
-    if (processing) {
-      const sweep = (timeS * 1.15) % (2 * PI);
-      C.strokeStyle = rgba(PALETTE.working, 0.92);
-      C.lineWidth = 4;
-      C.beginPath();
-      C.arc(cx, cy, 77, sweep, sweep + 0.72);
-      C.stroke();
-    }
-
-    // Status and shortcut stay readable without covering the active spectrum.
-    const box = { x: cx - 91, y: 178, w: 182, h: 34, feedback: false };
-    drawGlass(box);
-    const statusColor = processing ? PALETTE.working : PALETTE.accent;
     C.beginPath();
-    C.arc(box.x + 15, box.y + 17, 4, 0, 2 * PI);
+    C.arc(card.x + 23, headerY, 3.3, 0, 2 * PI);
     C.fillStyle = statusColor;
+    C.globalAlpha *= processing || feedback || success ? 0.9 : 0.7 + breathe * 0.3;
     C.fill();
-    C.font = '700 9px "Segoe UI", system-ui, sans-serif';
+    C.globalAlpha = alpha;
+
+    const labels = {
+      starting: 'PREPARANDO', listening: 'ESCUCHANDO',
+      processing: 'TRANSCRIBIENDO', success: 'COMPLETADO',
+      notice: 'AVISO', error: 'ERROR'
+    };
+    C.font = '700 10px "Segoe UI", system-ui, sans-serif';
     C.fillStyle = PALETTE.text;
     C.textAlign = 'left';
     C.textBaseline = 'middle';
-    const label = processing ? 'TRANSCRIBIENDO' : mode === 'starting' ? 'PREPARANDO' : 'ESCUCHANDO';
-    C.fillText(label, box.x + 26, box.y + 17);
-    const key = state.keyLabel || 'F9';
-    C.font = '600 9px "Segoe UI", system-ui, sans-serif';
-    const chipW = Math.max(25, C.measureText(key).width + 12);
-    const chipX = box.x + box.w - chipW - 6;
-    roundRect(chipX, box.y + 7, chipW, 20, 10);
-    C.fillStyle = rgba(PALETTE.accent, 0.14);
-    C.fill();
-    C.fillStyle = PALETTE.accent;
-    C.textAlign = 'center';
-    C.fillText(key, chipX + chipW / 2, box.y + 17);
+    C.fillText(labels[mode], card.x + 39, headerY);
+
+    if (!feedback && !success) {
+      const key = state.keyLabel || 'F9';
+      C.font = '600 10px "Segoe UI", system-ui, sans-serif';
+      const chipW = Math.max(32, C.measureText(key).width + 16);
+      const chipX = card.x + card.w - chipW - 15;
+      roundRect(chipX, headerY - 11, chipW, 22, 11);
+      C.fillStyle = rgba(PALETTE.line, 0.62);
+      C.fill();
+      C.fillStyle = PALETTE.muted;
+      C.textAlign = 'center';
+      C.fillText(key, chipX + chipW / 2, headerY);
+    }
+
+    C.strokeStyle = rgba(PALETTE.line, 0.46);
+    C.lineWidth = 1;
+    C.beginPath();
+    C.moveTo(card.x + 20, card.y + 45.5);
+    C.lineTo(card.x + card.w - 20, card.y + 45.5);
+    C.stroke();
+
+    if (processing) {
+      // Un arco corto comunica trabajo en curso sin llenar la barra de efectos.
+      C.strokeStyle = rgba(PALETTE.working, 0.16);
+      C.lineWidth = 2;
+      C.beginPath();
+      C.arc(cx, signalY, 15, 0, 2 * PI);
+      C.stroke();
+      C.strokeStyle = PALETTE.working;
+      C.lineWidth = 2.5;
+      C.lineCap = 'round';
+      const sweep = timeS * 1.25;
+      C.beginPath();
+      C.arc(cx, signalY, 15, sweep, sweep + 1.35);
+      C.stroke();
+    } else if (feedback || success) {
+      if (success) {
+        drawCheck(cx - 35, signalY, 17, PALETTE.green, 2.7);
+        C.fillStyle = PALETTE.green;
+        C.font = '700 11px "Segoe UI", system-ui, sans-serif';
+        C.textAlign = 'left';
+        C.fillText('TEXTO PEGADO', cx - 20, signalY, card.w - 90);
+      } else {
+        const detail = message || (mode === 'error' ? 'No se pudo completar' : 'Listo');
+        C.strokeStyle = statusColor;
+        C.lineWidth = 1.7;
+        C.beginPath();
+        C.arc(card.x + 26, signalY, 7, 0, 2 * PI);
+        C.stroke();
+        C.fillStyle = statusColor;
+        C.font = '700 11px "Segoe UI", system-ui, sans-serif';
+        C.textAlign = 'center';
+        C.fillText(mode === 'error' ? '!' : 'i', card.x + 26, signalY + 0.5);
+        C.fillStyle = PALETTE.text;
+        C.font = '600 12px "Segoe UI", system-ui, sans-serif';
+        C.textAlign = 'left';
+        C.fillText(detail, card.x + 43, signalY, card.w - 64);
+      }
+    } else {
+      // Las 9 bandas reales se interpolan en una forma continua; la energia,
+      // y no un giro decorativo, determina el movimiento de cada barra.
+      const barCount = 21;
+      const barW = 3.4;
+      const gap = 6.2;
+      const totalW = barCount * barW + (barCount - 1) * gap;
+      const startX = cx - totalW / 2;
+      const level = clamp01(state.level);
+      for (let i = 0; i < barCount; i++) {
+        const bandPosition = i / (barCount - 1) * (state.bands.length - 1);
+        const lower = Math.floor(bandPosition);
+        const upper = Math.min(state.bands.length - 1, lower + 1);
+        const fraction = bandPosition - lower;
+        const spectrum = state.bands[lower] * (1 - fraction) + state.bands[upper] * fraction;
+        let energy = clamp01(Math.max(spectrum, level * 0.14));
+        if (mode === 'starting')
+          energy = Math.max(energy, 0.035 + 0.025 * Math.sin(timeS * 3.2 - i * 0.38));
+        const height = 2.5 + 28 * energy;
+        const x = startX + i * (barW + gap);
+        const color = mixHex(PALETTE.accent, voice, i / (barCount - 1) * 0.34);
+        C.globalAlpha = alpha * (0.38 + 0.62 * clamp01(energy * 1.8));
+        C.fillStyle = color;
+        roundRect(x, signalY - height / 2, barW, height, barW / 2);
+        C.fill();
+      }
+    }
+    C.restore();
   }
   function frame(now) {
-    const dt = lastMs ? (now - lastMs) / 1000 : 0.016;
+    const dt = lastMs ? Math.min((now - lastMs) / 1000, 0.05) : 0.016;
     lastMs = now;
     timeS += dt;
     state.level += (state.target.level - state.level) * (1 - Math.exp(-dt / 0.090));
@@ -411,10 +417,19 @@
     }
 
     C.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (state.mode !== 'idle')
-      (state.style === 'orbital' ? drawOrbital : drawClassic)();
+    if (state.mode !== 'idle') {
+      if (state.style === 'orbital')
+        drawOrbital(now);
+      else
+        drawClassic();
+    } else if (exitStartMs) {
+      if (now - exitStartMs < 190 && state.style === 'orbital')
+        drawOrbital(now, true);
+      else
+        exitStartMs = 0;
+    }
 
-    if (state.mode === 'idle' && !hasPending()) {
+    if (state.mode === 'idle' && !exitStartMs && !hasPending()) {
       running = false;
       return;
     }

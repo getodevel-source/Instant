@@ -141,12 +141,33 @@ _check("daemon pastes context-corrected transcription",
        _pasted.call_args.args[0] == "Instant ")
 
 
-# join_texts: une, pega puntuacion, colapsa espacios.
+# frontend: DC-remove + high-pass, sin tocar la voz.
+from instant_app.engine import frontend
+import numpy as _np
+_sr = 16000
+_t = _np.arange(2 * _sr) / _sr
+_tono = (_np.sin(2 * _np.pi * 220 * _t) * 0.2).astype(_np.float32)
+_out, _dc, _clip = frontend(_tono + 0.1)
+_check("frontend quita DC", abs(_dc - 0.1) < 1e-6)
+_check("frontend conserva tono 220Hz",
+        abs(float(_np.max(_np.abs(_out))) - 0.2) < 0.02)
+_check("frontend sin clip en voz sana", _clip == 0.0)
+_out, _dc, _clip = frontend((_tono * 10).astype(_np.float32))
+_check("frontend detecta saturacion", _clip > 0.02)
+_out, _dc, _clip = frontend(_np.zeros(100, dtype=_np.float32))
+_check("frontend silencio intacto", _dc == 0.0 and _clip == 0.0)
+
+# join_texts: une, cose overlap, pega puntuacion, colapsa espacios.
 _check("join vacios", join_texts(["", "  ", ""]) == "")
 _check("join puntuacion", join_texts(["hola mundo", ", ¿ como estas ?"]) == "hola mundo, ¿como estas?")
 _check("join espacios", join_texts(["  hola   mundo  "]) == "hola mundo")
+_check("join cose overlap",
+        join_texts(["hola mundo cruel", "mundo cruel adios"]) == "hola mundo cruel adios")
+_check("join sin overlap intacto",
+        join_texts(["hola mundo", "adios planeta"]) == "hola mundo adios planeta")
+_check("join overlap parcial una palabra",
+        join_texts(["que tal", "tal vez"]) == "que tal vez")
 
-# merge_short_bounds: une cortos adyacentes, deja largos solos.
 _check("merge cortos", merge_short_bounds([(0.0, 0.3), (0.5, 2.0)]) == [(0.0, 2.0)])
 _check("merge largos", merge_short_bounds([(0.0, 3.0), (5.0, 8.0)]) == [(0.0, 3.0), (5.0, 8.0)])
 _check("merge gap grande", merge_short_bounds([(0.0, 0.3), (5.0, 5.5)]) == [(0.0, 0.3), (5.0, 5.5)])

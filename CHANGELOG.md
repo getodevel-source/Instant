@@ -3,7 +3,117 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
-## [Sin publicar]
+## [0.4.0] - 2026-10-09
+
+### Mejorado (precisión y rendimiento del dictado)
+
+- Frontend de audio: DC-remove + high-pass ~80 Hz antes del reconocedor;
+  aviso visible si el micrófono satura (>2 % muestras al tope).
+- Overlap de 0,5 s de audio real por borde de segmento + costura de la zona
+  común al unir textos: menos onsets recortados y vacíos en cortes.
+- VAD alternativo TEN-VAD (int8, 126 KB) opt-in: `instant setup --vad-model ten`
+  o `DICTADO_VAD=ten`. Default sigue Silero; si falta el modelo cae a Silero.
+- Confianza por decode (media de log-probs): el LLM opcional solo interviene
+  en takes dudosos (< 0.85); el texto seguro se pega sin red.
+- Restauración local del `¿` en preguntas con palabra interrogativa,
+  determinista y sin red. El `¡` no se toca.
+- Bench `bench_numbers.py`: barrido A/B Silero vs TEN-VAD (thresholds
+  0.3/0.5/0.7, onset/offset vs ground truth).
+- Bench `bench_wer.py` nuevo: WER español con FLEURS es_419 (60 clips,
+  normalización ES, Parakeet v3 int8 CPU). Medido 2026-10-09:
+  baseline 0.050, sin-overlap 0.060, sin-frontend 0.048,
+  blank 0.2/0.5 0.049/0.047, TEN-VAD 0.047, RTF ~0.04x, 0 vacíos.
+  Test pareado: 54/60 clips iguales; sin overlap empeoran 4 y mejoran 2
+  (efecto concentrado en multi-segmento). Diferencias ±0.003 = ruido
+  con n=60: defaults conservadores (overlap on, blank 0, Silero).
+- `blank_penalty` cableado (config, `DICTADO_BLANK`, `--blank-penalty`;
+  default 0 = comportamiento actual).
+- Diccionario técnico general (`bias.py`): commit/build/deploy/staging/
+  Qwen/GitHub/… con spotter fonético y triple vía. Regla C (siempre):
+  casos medidos en voz real con 2+ vecinas EXACTAS ("Will"+"fallo"+
+  "driver"→build) corrigen sin gate de confianza; sin vecinas no toca
+  ("Will Walchar no molesta" intacto). Niveles take/palabra con gates
+  para el resto; fonético endurecido (dist ≤1); aliases palabra-ES solo
+  con vecina y nunca como verbo. Batería adversaria: 30 sanas intactas.
+  Aliases de voz real: bakken→backend, station→staging (cond.),
+  wild/will/wey/güey→build (cond.), crawlback→rollback, paracid→Parakeet.
+  Bench `bench_bias.py`: 0.254 → 0.206 (−19 %). FLEURS-60: 0.050 = 0.050.
+
+### Quitado (limpieza)
+
+- Código muerto sin importar: `theme.py`, `lmrescore.py` (experimento
+  archivado). Bench UI `bakeoff/` ya decidido, bats de autostart sueltos y
+  spec huérfano. Docs de precisión fusionados en `docs/precision.md`.
+
+### Verificado
+
+- `python -m unittest discover -s dictado/tests`: 114 pruebas, 2 omitidas.
+- `python dictado/bench/bench_numbers.py`: determinismo, RTF y A/B VAD verdes.
+- `python dictado/bench/bench_wer.py --n 60`: tabla de variantes arriba.
+- `python dictado/bench/bench_bias.py`: 0.254 → 0.206 con bias (−19 %).
+- Batería adversaria: 30 frases sanas intactas (test permanente).
+
+## [0.3.5] - 2026-10-09
+
+### Mejorado
+
+- La ventana del panel abre en 1100 × 600 y permite reducirse hasta 900 × 520.
+- Se quita la sección independiente Voz local. La descarga inicial del modelo
+  aparece como un bloque compacto en Inicio y desaparece al quedar listo.
+- Se elimina la mención técnica a Parakeet y CPU de la navegación del panel.
+- Se actualiza la captura de la portada de GitHub con este diseño compacto.
+
+### Verificado
+
+- Pruebas de navegación para la sección retirada y el acceso a la descarga.
+- Smoke visual de las cuatro secciones con el tamaño de ventana predeterminado.
+
+## [0.3.4] - 2026-10-09
+
+### Mejorado
+
+- Rediseño minimalista del panel en vistas independientes de Inicio, Micrófono,
+  Ajustes, Vocabulario y Voz local.
+- El estado de guardado, el arranque y la disponibilidad de voz/micrófono ahora
+  coinciden con las acciones habilitadas. Se aclaran las pruebas, errores y
+  perfiles vacíos, y se corrige el foco de navegación y diálogos.
+- Se simplifica la portada de GitHub y se actualiza la captura principal.
+
+### Verificado
+
+- `python -m unittest discover -s tests`: 112 pruebas, 2 omitidas por plataforma.
+- `python bench/web_panel_smoke.py --page all --width 1000 --height 640`: las cinco
+  vistas cargan al 100 % en la ventana mínima y se recorre ajustes/vocabulario.
+
+## [0.3.3] - 2026-10-09
+
+### Mejorado
+
+- El panel presenta el espectro de voz y alinea navegación, controles, estados
+  deshabilitados y selección de micrófono para que cada sección sea más clara.
+- Los perfiles y el sonido se gestionan con diálogos accesibles y respuesta
+  inmediata; las opciones de solo lectura dejan de mostrar rutas internas.
+- La selección de sección sigue el desplazamiento y la navegación desde la
+  bandeja, con ajustes responsivos para ventanas más estrechas.
+- El README de GitHub queda reducido a instalación rápida, privacidad y enlaces,
+  con capturas actuales del panel y del indicador de voz.
+
+## [0.3.2] - 2026-10-08
+
+### Corregido
+
+- El indicador de voz reemplaza el orbe y los giros decorativos por una onda
+  compacta de 21 barras interpoladas desde las nueve bandas reales; el nivel
+  general deja de aplanar la forma del espectro. Escucha, transcripción,
+  confirmación y avisos comparten la misma cápsula, con entrada y salida breves.
+- La ventana del indicador de voz reduce su altura de 224 a 140 px y el ajuste
+  describe el estilo como espectro reactivo.
+
+### Verificado
+
+- Renderer WebEngine: smoke manual de escucha, transcripción, confirmación y
+  aviso; carga al 100 % y capturas de 480 × 140 px.
+- `python -m unittest tests.test_overlay_web -v`: seis pruebas pasan.
 
 ## [0.3.1] - 2026-10-08
 
