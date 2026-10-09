@@ -492,6 +492,7 @@ class UpdateFlowTests(unittest.TestCase):
             with (
                 patch("instant_app.update.install_mode", return_value="portable"),
                 patch.object(sys, "frozen", True, create=True),
+                patch.object(sys, "platform", "win32"),
                 patch.object(sys, "_MEIPASS", extraction, create=True),
                 patch.object(sys, "executable", executable),
                 patch("tempfile.gettempdir", return_value=temp),
@@ -519,6 +520,7 @@ class UpdateFlowTests(unittest.TestCase):
             with (
                 patch("instant_app.update.install_mode", return_value="portable"),
                 patch.object(sys, "frozen", True, create=True),
+                patch.object(sys, "platform", "win32"),
                 patch.object(sys, "_MEIPASS", temp, create=True),
                 patch.object(sys, "executable", os.path.join(temp, "Instant.exe")),
                 patch("tempfile.gettempdir", return_value=temp),
