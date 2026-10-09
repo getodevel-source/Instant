@@ -91,6 +91,13 @@ def make_logic(emitted=None, tasks=None, schedule=None, **kwargs):
 
 
 class PanelLifecycleTests(unittest.TestCase):
+    def test_removed_models_page_falls_back_to_home(self):
+        logic, emitted = make_logic()
+        logic.page = "settings"
+        logic.navigate("models")
+        self.assertEqual(logic.page, "home")
+        self.assertIn(("navigate", {"page": "home"}), emitted)
+
     def test_home_status_explains_where_to_dictate_for_both_daemon_states(self):
         for running in (False, True):
             with self.subTest(running=running):

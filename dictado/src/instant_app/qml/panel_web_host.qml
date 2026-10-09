@@ -10,10 +10,10 @@ import QtWebEngine
 Window {
     id: host
     title: "Instant"
-    width: 1360
-    height: 760
-    minimumWidth: 1000
-    minimumHeight: 640
+    width: 1100
+    height: 600
+    minimumWidth: 900
+    minimumHeight: 520
     visible: false
 
     property url pageUrl

@@ -9,16 +9,17 @@ import json
 import logging
 import os
 import sys
-import time
 from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "src")))
 
 from PySide6.QtCore import QTimer  # noqa: E402
-from PySide6.QtQuick import QQuickWindow  # noqa: E402,F401  (wrapper de grabWindow)
+from PySide6.QtQuick import QQuickWindow  # noqa: E402
 
 from instant_app import gui  # noqa: E402
+
+assert callable(QQuickWindow.grabWindow)
 
 SMOKE_CONFIG = {
     "mic_hint": "USB Microphone", "mic_index": 5, "key": "f9",
@@ -29,7 +30,7 @@ SMOKE_CONFIG = {
         "term": "Instant", "aliases": ["in stand"], "sonido": True,
     }]},
 }
-PAGES = ("home", "audio", "settings", "vocab", "models")
+PAGES = ("home", "audio", "settings", "vocab")
 
 
 def main():
@@ -41,10 +42,12 @@ def main():
     parser.add_argument("--page", choices=(*PAGES, "all"), default="home")
     parser.add_argument("--mic-state", choices=("available", "empty", "lost"),
                         default="available")
+    parser.add_argument("--model-state", choices=("ready", "missing"),
+                        default="ready")
     parser.add_argument("--daemon-state", choices=("stopped", "active"),
                         default="stopped")
-    parser.add_argument("--width", type=int, default=1360)
-    parser.add_argument("--height", type=int, default=760)
+    parser.add_argument("--width", type=int, default=1100)
+    parser.add_argument("--height", type=int, default=600)
     args = parser.parse_args()
     mic_rows = ([(5, "USB Microphone", 1, 48000)]
                 if args.mic_state != "empty" else [])
@@ -55,7 +58,8 @@ def main():
                side_effect=lambda cfg: "smoke-config.json") as save_cfg, \
             patch("instant_app.gui.config.load", side_effect=lambda: copy.deepcopy(SMOKE_CONFIG)), \
             patch("instant_app.gui.models.check",
-                  return_value={"parakeet": True, "vad": True}), \
+                  return_value={"parakeet": args.model_state == "ready",
+                                "vad": args.model_state == "ready"}), \
             patch("instant_app.gui.audio.input_choices",
                   return_value=mic_rows), \
             patch("instant_app.gui.audio.preferred_input_index",
@@ -142,8 +146,14 @@ def run(args, save_cfg, autostart_enable, autostart_disable):
 
     QTimer.singleShot(int(args.seconds * 1000), capture_requested_page)
 
-    panel.root.setProperty("width", args.width)
-    panel.root.setProperty("height", args.height)
+    if args.width == 1100 and panel.root.property("width") != 1100:
+        raise AssertionError("panel WebEngine: el ancho predeterminado no coincide")
+    if args.height == 600 and panel.root.property("height") != 600:
+        raise AssertionError("panel WebEngine: el alto predeterminado no coincide")
+    if args.width != 1100:
+        panel.root.setProperty("width", args.width)
+    if args.height != 600:
+        panel.root.setProperty("height", args.height)
     panel.show()
     app.exec()
     return 0

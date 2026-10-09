@@ -513,7 +513,7 @@ class PanelLogic:
                 "button": ("Reintentar descarga"
                            if not self.model_ready
                            and self.model_status.startswith("No se pudo")
-                           else "Descargar voz"),
+                           else "Descargar modelo"),
             },
             "vocab": {
                 "profiles": list(configured),
@@ -1308,13 +1308,13 @@ class PanelLogic:
             self.model_status = "Voz lista en este equipo."
             self.model_progress = {"visible": False, "percent": 100}
         else:
-            self.model_status = "Falta descargar la voz (~670 MB)."
+            self.model_status = "Falta descargar el modelo."
             self.model_progress = {"visible": False, "percent": 0}
 
     def download_models(self):
         if self.model_ready:
             return
-        self.model_status = "Descargando la voz…"
+        self.model_status = "Descargando el modelo…"
         self.model_progress = {"visible": True, "percent": 0}
         self.push_state()
 
@@ -1328,7 +1328,7 @@ class PanelLogic:
             step, done, total = event
             if not total:
                 return
-            label = "la voz" if step == "parakeet" else "el detector de voz"
+            label = "el modelo" if step == "parakeet" else "el detector de voz"
             self.model_status = (f"Descargando {label}: {done / total:.0%} "
                                  f"({done / 1e6:.0f}/{total / 1e6:.0f} MB)")
             self.model_progress = {"visible": True,
@@ -1346,7 +1346,7 @@ class PanelLogic:
             if self._closed:
                 return
             self.model_progress = {"visible": False, "percent": 0}
-            self.model_status = "No se pudo descargar la voz."
+            self.model_status = "No se pudo descargar el modelo."
             self.push_state()
             self.toast("Descarga fallida", str(error), level="error")
 
@@ -1722,7 +1722,7 @@ class PanelLogic:
     # ------------------------------------------------------------- navegación
 
     def navigate(self, name):
-        pages = {"home", "audio", "settings", "vocab", "models"}
+        pages = {"home", "audio", "settings", "vocab"}
         self.page = name if isinstance(name, str) and name in pages else "home"
         self.emit("navigate", {"page": self.page})
 

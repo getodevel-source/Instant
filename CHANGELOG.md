@@ -5,6 +5,21 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
+## [0.3.5] - 2026-10-09
+
+### Mejorado
+
+- La ventana del panel abre en 1100 × 600 y permite reducirse hasta 900 × 520.
+- Se quita la sección independiente Voz local. La descarga inicial del modelo
+  aparece como un bloque compacto en Inicio y desaparece al quedar listo.
+- Se elimina la mención técnica a Parakeet y CPU de la navegación del panel.
+- Se actualiza la captura de la portada de GitHub con este diseño compacto.
+
+### Verificado
+
+- Pruebas de navegación para la sección retirada y el acceso a la descarga.
+- Smoke visual de las cuatro secciones con el tamaño de ventana predeterminado.
+
 ## [0.3.4] - 2026-10-09
 
 ### Mejorado
