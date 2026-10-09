@@ -61,6 +61,10 @@ def _parse_args(argv=None):
     ap.add_argument("--context-delete-profile", action="store_true",
                     help="elimina el perfil indicado por --context-profile")
     ap.add_argument("--no-meter", action="store_true", help="salta medidor de nivel")
+    ap.add_argument("--vad-model", default=None, choices=("silero", "ten"),
+                    help="VAD: silero (default) o ten (mas preciso, ~126 KB extra)")
+    ap.add_argument("--blank-penalty", type=float, default=None,
+                    help="penalidad al blank 0..1 (default 0; solo con WER medido)")
     ap.add_argument("--no-probe", action="store_true", help="salta probe final y warmup")
     ap.add_argument("--check-deps", action="store_true",
                     help="muestra tabla de dependencias y sigue")
@@ -261,6 +265,20 @@ def cmd_setup(argv=None):
         cfg["sound"] = False
     if o.llm_url is not None:
         cfg["llm_url"] = o.llm_url
+    if o.vad_model is not None:
+        cfg["vad_model"] = o.vad_model
+        if o.vad_model == "ten":
+            from instant_app import models as _dl2
+            from instant_app.paths import resolve_data_dir as _ddir
+            try:
+                _dl2.download_models(_ddir(), include_ten_vad=True)
+                print("  ten-vad OK.")
+            except Exception:
+                log.exception("no pude bajar ten-vad; sigo con silero.")
+                cfg["vad_model"] = "silero"
+                rc = max(rc, 2)
+    if o.blank_penalty is not None:
+        cfg["blank_penalty"] = max(0.0, min(1.0, o.blank_penalty))
 
     context_requested = (
         o.context_profile is not None or bool(o.context_term)

@@ -65,16 +65,71 @@ def resolve_url(cfg=None, url=None):
     return cfg.get("llm_url", "") or os.environ.get("DICTADO_LLM_URL", "")
 
 
-def maybe_polish(text, cfg=None, url=None):
-    """Apply explicit local glossary replacements and optionally polish text."""
+# Palabras-Q que abren pregunta en español. Conservador a proposito: sin
+# prosodia no se distingue "¡qué bueno!" de "¿qué hora es?", asi que solo
+# se restaura `¿` (nunca `¡`) y solo si la oracion ya cierra con `?`.
+_QUESTION_OPENERS = frozenset(
+    "qué que cómo como cuándo cuando dónde donde cuál cual cuáles cuales "
+    "cuánto cuanto cuánta cuanta cuánto cuanto quién quien quiénes quienes "
+    "por qué porqué adónde adonde".split())
+
+
+def restore_openers(text):
+    """Agrega `¿` faltante en preguntas obvias. Determinista, sin red.
+
+    Si una oracion termina en `?` sin abrir con `¿` y empieza con palabra-Q
+    (o "por que/porque" inicial), antepone `¿`. No toca `¡`: sin prosodia
+    una exclamacion es indistinguible y el falso positivo hace mas daño.
+    Nunca reescribe palabras, solo inserta el signo.
+    """
+    if not text or "?" not in text:
+        return text
+    parts = re.split(r"(?<=[.?!])(\s+)", text)
+    out = []
+    for part in parts:
+        stripped = part.lstrip()
+        if stripped.endswith("?") and not stripped.startswith("¿"):
+            first = re.match(r"([^\W\d_]+)", stripped, flags=re.UNICODE)
+            word = (first.group(1).casefold() if first else "")
+            low = stripped.casefold()
+            is_q = (word in _QUESTION_OPENERS
+                    or low.startswith(("por que ", "porque ")))
+            if is_q:
+                indent = part[:len(part) - len(stripped)]
+                part = indent + "¿" + stripped
+        out.append(part)
+    return "".join(out)
+
+
+def maybe_polish(text, cfg=None, url=None, conf=1.0, min_conf=0.85):
+    """Glosario local siempre; LLM solo en takes dudosos; apertures siempre.
+
+    El LLM suelto suele subir WER en habla espontanea: solo se le consulta
+    cuando la confianza del decode (`conf`) baja de `min_conf`. El texto
+    seguro se pega directo (mas rapido, sin red). `restore_openers` es
+    determinista y corre siempre: es el gap medido (Parakeet pone el `¿`
+    en 4/8 preguntas).
+    """
     from instant_app import context
 
     corrected = context.correct_aliases(text, cfg)
+    corrected = restore_openers(corrected)
     target = resolve_url(cfg, url)
     if not target:
         return corrected
     try:
-        return polish(corrected, target, context_terms=context.prompt_context(cfg))
+        conf = float(conf)
+    except (TypeError, ValueError):
+        conf = 1.0
+    if conf >= min_conf:
+        return corrected
+    try:
+        from instant_app import bias as _bias
+
+        _terms = context.prompt_context(cfg)
+        _gen = _bias.terms_for_prompt()
+        terms = (_terms + "\n" + _gen) if _terms else _gen
+        return polish(corrected, target, context_terms=terms)
     except Exception as e:
         log.warning("LLM off/fail (%s): sigo con texto corregido localmente.", e)
         return corrected

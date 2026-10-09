@@ -108,22 +108,17 @@ Si ya hay una ventana abierta, una segunda apertura le pasa el pedido y sale
 
 El overlay dibuja en web (QtWebEngine) en los tres sistemas, con dos estilos
 (`overlay_style` en la config): `orbital` (orbe con anillos que respiran con la
-voz, por defecto) y `classic` (pastilla con barras y tecla visible). Ambos
-comparten la paleta con la ventana. Si QtWebEngine no puede abrir cae a Tk
-(X11 sin GL, instalación vieja sin webengine): el daemon nunca se queda sin
-overlay. El porque de esta ruta (y sus costos medidos) esta
-en `../docs/bakeoff-ui.md`; el renderer vive en
+voz, por defecto) y `classic` (pastilla con barras y tecla visible). Si
+QtWebEngine no puede abrir cae a Tk (X11 sin GL, instalación vieja sin
+webengine): el daemon nunca se queda sin overlay. El renderer vive en
 [`overlay_web.py`](src/instant_app/overlay_web.py) y la pagina en
-[`web/overlay.html`](src/instant_app/web/overlay.html) (los hosts QML de
-las ventanas web quedan en `qml/`).
+[`web/overlay.html`](src/instant_app/web/overlay.html).
 
 Para retocar la interfaz, los colores están en
 [`branding.py`](src/instant_app/branding.py) (`PALETTE`, única fuente de
-verdad) y las medidas, la tipografía y los tiempos de animación en
-[`theme.py`](src/instant_app/theme.py) (tokens). Las páginas
-[`web/overlay.html`](src/instant_app/web/overlay.html) y
-[`web/panel.html`](src/instant_app/web/panel.html) repiten paleta y
-tokens a mano porque se sirven tal cual, sin motor de plantillas;
+verdad); las páginas [`web/overlay.html`](src/instant_app/web/overlay.html)
+y [`web/panel.html`](src/instant_app/web/panel.html) repiten la paleta a
+mano porque se sirven tal cual, sin motor de plantillas;
 `tests/test_overlay_palette.py` y `tests/test_panel_page.py` fallan si se
 despegan. La ventana del overlay se centra con
 `WINDOW_SIZES`/`_OVERLAY_BOTTOM_GAP` en `overlay_web.py`; el panel vive en
@@ -148,7 +143,11 @@ instant setup --yes --key f9 --threads 4 --no-sound
 
 Flags avanzados (solo flags, el interactivo no los pregunta):
 `--threads` (default 4), `--sound`/`--no-sound` (default off),
-`--llm-url` (default vacío = off), `--context-profile`,
+`--llm-url` (default vacío = off), `--vad-model silero|ten` (default silero;
+`ten` baja TEN-VAD int8 ~126 KB, VAD alternativo más preciso),
+`--blank-penalty 0..1` (default 0; penalidad al blank del decode, solo con
+WER medido — pasada de rosca inventa palabras),
+`--context-profile`,
 `--context-term "grafía=variante1|variante2"`,
 `--context-remove-term "grafía"`, `--context-delete-profile`,
 `--mic`, `--key`, `--no-meter`, `--no-probe`, `--yes`,
@@ -207,7 +206,8 @@ Teclas: Windows `f9 f10 f20 scroll pause`, Linux/macOS `f9 f10 f11 f12`.
 Config en `%APPDATA%/instant` (win), `~/.config/instant` (linux),
 `~/Library/Application Support/instant` (mac). Env `DICTADO_*` pisa config
 (`DICTADO_MIC`, `DICTADO_KEY`, `DICTADO_THREADS`, `DICTADO_SOUND`,
-`DICTADO_MAX_SEG`, `DICTADO_LLM_URL`, `DICTADO_AUTOSTART=1/0`).
+`DICTADO_MAX_SEG`, `DICTADO_VAD=silero|ten`, `DICTADO_BLANK=0..1`,
+`DICTADO_LLM_URL`, `DICTADO_AUTOSTART=1/0`).
 
 PID file: `run` escribe `instant.pid` junto a la config al arrancar y lo
 borra al salir limpio; los lanzadores `.bat` lo usan para stop/status
@@ -294,7 +294,7 @@ En el pipeline actual estas correcciones se aplican al texto **después** del
 reconocimiento; no son pistas acústicas para Parakeet. Se probó el sesgo
 contextual (hotwords) y **no funciona** con este modelo: sherpa-onnx lo
 tokeniza con un `bpe.vocab` de sentencepiece que el paquete de Parakeet v3 no
-trae. Ver [`docs/motores.md`](../docs/motores.md).
+trae. Ver [`docs/precision.md`](../docs/precision.md).
 
 Los perfiles y el vocabulario se guardan localmente en la configuración de
 Instant. En Linux/macOS también se pueden gestionar desde setup:
@@ -322,19 +322,32 @@ instant setup --yes --no-probe --context-profile Trabajo \
 
 El perfil activo se puede elegir mediante `DICTADO_CONTEXT`. El vocabulario
 explícito funciona sin LLM ni internet. Para pulido adicional, el LLM local
-recibe el glosario activo; el audio nunca se envía a la nube.
+recibe el glosario activo y el glosario técnico general; el audio nunca se
+envía a la nube.
+
+Además del perfil personal, Instant trae un **diccionario técnico general**
+(términos ingleses de desarrollo que Parakeet deforma: commit, build,
+deploy, staging, Qwen, GitHub…): solo actúa cuando la confianza del
+reconocimiento es baja, y nunca toca texto seguro ni palabras corrientes.
 
 ## Pulido LLM (opcional, off por defecto)
 
 Si tienes `llama-server` local corriendo, en Windows configura su URL en
 Preferencias; en Linux/macOS usa `--llm-url` al setup (o
 `DICTADO_LLM_URL=http://127.0.0.1:8080`). El LLM recibe la transcripción y el
-glosario activo —no el audio— y corrige ortografía, tildes, puntuación y los
-signos de apertura `¿`/`¡`. No puede aprovechar la entonación del audio ni
-sustituir palabras: se rechaza toda salida que cambie la secuencia de palabras
-(comparando el texto normalizado, sin tildes ni mayúsculas). Si el servidor
-falla, se conserva la transcripción con las sustituciones exactas del
-glosario; Instant nunca manda audio a la nube.
+glosario activo —no el audio— y solo se lo consulta cuando la confianza del
+decode es baja (media de log-probs por token < 0.85): el texto seguro se pega
+directo, sin red ni espera. Corrige ortografía, tildes y puntuación. No puede
+aprovechar la entonación del audio ni sustituir palabras: se rechaza toda
+salida que cambie la secuencia de palabras (comparando el texto normalizado,
+sin tildes ni mayúsculas). Si el servidor falla, se conserva la transcripción
+con las sustituciones exactas del glosario; Instant nunca manda audio a la nube.
+
+El signo `¿` de apertura se restaura localmente y sin red siempre que una
+oración cierre con `?` y empiece con palabra interrogativa
+(qué/cómo/cuándo/dónde/cuál/cuánto/quién/por qué…): es determinista, nunca
+reescribe palabras. El `¡` no se toca sin prosodia (falso positivo peor que
+ausencia).
 
 ## Binarios por SO
 
