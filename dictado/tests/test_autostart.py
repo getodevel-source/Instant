@@ -100,6 +100,12 @@ with tempfile.TemporaryDirectory() as d:
             _check("binario arranca la instancia de bandeja",
                    a._resolve_win_launch() == (frozen_exe, "run", d))
 
+        frozen_posix = os.path.join(d, "instant-linux")
+        with patch.object(a.sys, "frozen", True, create=True), \
+                patch.object(a.sys, "executable", frozen_posix):
+            _check("portable POSIX usa su binario para autostart",
+                   a._resolve_posix_argv() == [frozen_posix, "run"])
+
         # is_enabled nunca crashea con HOME roto.
         os.environ["HOME"] = os.path.join(d, "no-existe-definitivamente")
         os.environ["APPDATA"] = os.path.join(d, "no-existe-definitivamente")

@@ -1,6 +1,5 @@
 """Pruebas de rendimiento/regresion para los fixes de congelamiento."""
 import os
-import queue
 import sys
 import tempfile
 import threading

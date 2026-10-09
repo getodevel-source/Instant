@@ -1,4 +1,4 @@
-"""Pulido local opcional; los reemplazos explícitos del glosario no requieren LLM.
+"""Pulido opcional por endpoint; el vocabulario local no requiere conexión.
 
 Si `llm_url` está vacío, solo se aplican las variantes exactas del vocabulario.
 Si el servidor falla o modifica palabras, se conserva el texto local corregido.
@@ -48,8 +48,9 @@ def polish(text, url, timeout=8.0, system=None, context_terms=""):
         data = json.loads(r.read().decode("utf-8", "replace"))
     try:
         out = data["choices"][0]["message"]["content"]
-    except Exception:
-        raise RuntimeError(f"respuesta LLM inesperada: {str(data)[:120]}")
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(
+            "respuesta LLM inesperada: falta choices[0].message.content") from None
     out = (out or "").strip().strip("\"“”")
     if out and _words(out) != _words(text):
         log.warning("LLM cambió palabras; conservo la transcripción local.")

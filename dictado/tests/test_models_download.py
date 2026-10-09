@@ -168,6 +168,27 @@ class ModelDownloadTests(unittest.TestCase):
             self._target("parakeet-v3-int8", "encoder.int8.onnx")))
         self.assertEqual(self.server.ranges, [])
 
+    def test_space_check_counts_only_bytes_missing_from_resumable_parts(self):
+        from instant_app.paths import PARAKEET_SUBDIR, VAD_SUBDIR
+
+        entries = [(PARAKEET_SUBDIR, name) for name in models.PARAKEET_FILES]
+        entries.append((VAD_SUBDIR, "silero_vad.onnx"))
+        partial = BODY[: len(BODY) // 2]
+        for subdir, name in entries:
+            directory = self._target(subdir)
+            os.makedirs(directory, exist_ok=True)
+            with open(os.path.join(directory, name) + ".part", "wb") as handle:
+                handle.write(partial)
+
+        remaining = len(entries) * (len(BODY) - len(partial))
+
+        class _Usage:
+            free = models.DISK_MARGIN + remaining
+
+        with patch("shutil.disk_usage", return_value=_Usage()):
+            models.download_models(self.data_dir, progress=lambda *a: None)
+        self.assertTrue(all(models.check(self.data_dir).values()))
+
     def test_invalid_content_is_rejected_without_leaving_junk(self):
         encoder = self._target("parakeet-v3-int8", "encoder.int8.onnx")
         os.makedirs(os.path.dirname(encoder))

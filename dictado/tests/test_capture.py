@@ -34,7 +34,8 @@ for _ in range(3):
     keeper._cb(blk, 160, None, None)
 _check("en sesion encola bloques", keeper.q.qsize() == 3)
 got = keeper.snapshot(10.0)
-_check("pre-roll trae 3 y drena cola", len(got) >= 3 and keeper.q.qsize() == 0)
+_check("pre-roll fusiona historial y cola sin repetir", len(got) == 6
+       and keeper.q.qsize() == 0)
 _check("ventana 0 no trae nada", keeper.snapshot(0.0) == [])
 keeper.end_session()
 _check("fin de sesion drena cola", keeper.q.qsize() == 0)

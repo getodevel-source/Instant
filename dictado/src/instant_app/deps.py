@@ -5,7 +5,7 @@ faltantes junto con la app?" Si: `instant setup --check-deps` muestra la
 tabla y `--fix-deps` instala lo que el SO permite sin intervencion.
 
 Matriz auto / no-auto:
-- Windows: Python>=3.10, pip y paquetes por pip (auto=si). Sin
+- Windows: Python>=3.12, pip y paquetes por pip (auto=si). Sin
   dependencias del sistema (entrada "sistema": ok=True con nota).
 - Linux: portaudio (libportaudio2), xclip/xsel y xdotool por apt
   (auto=si solo con sudo sin password o root; nunca pide password).
@@ -23,6 +23,8 @@ import subprocess
 import sys
 
 log = logging.getLogger("instant")
+
+MIN_PYTHON = (3, 12)
 
 _PIP = {
     "numpy": "numpy",
@@ -113,10 +115,10 @@ def check():
 
     ver = sys.version_info
     out["python"] = _entry(
-        ver >= (3, 10),
-        f"Python {sys.version.split()[0]} (>=3.10 OK)."
-        if ver >= (3, 10) else
-        f"Python {sys.version.split()[0]}: necesitas 3.10+ desde python.org.",
+        ver >= MIN_PYTHON,
+        f"Python {sys.version.split()[0]} (>=3.12 OK)."
+        if ver >= MIN_PYTHON else
+        f"Python {sys.version.split()[0]}: necesitas 3.12+ desde python.org.",
         auto=False)
 
     out["pip"] = _entry(
@@ -239,6 +241,11 @@ def ensure(auto=False):
     """
     results = check()
     if not auto:
+        return results
+    if not results["python"]["ok"]:
+        for name, entry in results.items():
+            if name != "python" and not entry["ok"] and entry["auto"]:
+                entry["hint"] += " (no se instala: Instant requiere Python 3.12+)."
         return results
     pending = [n for n, e in results.items() if not e["ok"] and e["auto"]]
     if not pending:

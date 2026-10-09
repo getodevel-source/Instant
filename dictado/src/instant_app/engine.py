@@ -255,8 +255,8 @@ class Engine:
             except Exception:
                 log.exception("reintento seg %d fail", idx + 1)
                 continue
-            log.info("seg %d/%d reintento (%.1f-%.1fs pico=%.4f g=%.1f): %s",
-                     idx + 1, len(chunks), rs, re_, cpeak, rgain, retry[:80])
+            log.info("seg %d/%d reintento (%.1f-%.1fs pico=%.4f g=%.1f): %d caracteres",
+                     idx + 1, len(chunks), rs, re_, cpeak, rgain, len(retry))
             if retry:
                 fixed[idx] = retry
         if any(fixed):
@@ -272,8 +272,8 @@ class Engine:
             except Exception:
                 log.exception("reintento total fail")
                 return fixed
-            log.info("reintento total (%.1fs): %s",
-                     len(full) / SAMPLE_RATE, retry[:80])
+            log.info("reintento total (%.1fs): %d caracteres",
+                     len(full) / SAMPLE_RATE, len(retry))
             if retry:
                 return [retry]
         return fixed
@@ -307,9 +307,9 @@ class Engine:
             idx, text = self._one((i, w))
             texts[idx] = (text or "").strip()
             cpeak = float(np.max(np.abs(chunks[idx][1]))) if chunks[idx][1].size else 0.0
-            log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f): %s", idx + 1, len(chunks),
+            log.info("seg %d/%d (%.1fs pico=%.4f g=%.1f): %d caracteres", idx + 1, len(chunks),
                      len(chunks[idx][1]) / SAMPLE_RATE, cpeak, chunks[idx][2],
-                     texts[idx][:80])
+                     len(texts[idx]))
         log.info("decode %d segs en %.2fs.", len(chunks), time.time() - t0)
         texts = self._recover_empties(wav, peak, bounds, chunks, texts)
         if self.save_wavs_dir and not any(t.strip() for t in texts):

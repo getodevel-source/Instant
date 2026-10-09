@@ -1,12 +1,10 @@
 """Daemon y overlay: progreso por sesion y feedback consumidor-visible."""
 import os
 import sys
-import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from instant_app import config
 from instant_app.engine import join_texts, merge_short_bounds
 
 

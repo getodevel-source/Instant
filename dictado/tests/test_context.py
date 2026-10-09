@@ -22,6 +22,7 @@ _check("default llm_url vacio", c.get("llm_url", "") == "")
 _check("default sound off", c.get("sound") is False)
 _check("default lang es", c.get("lang") == "es")
 _check("default threads 4", c.get("threads") == 4)
+_check("default orbital overlay", config.DEFAULTS.get("overlay_style") == "orbital")
 os.environ["DICTADO_LLM_URL"] = "http://127.0.0.1:8080"
 _check("env llm_url", config.load()["llm_url"] == "http://127.0.0.1:8080")
 del os.environ["DICTADO_LLM_URL"]
@@ -48,6 +49,8 @@ _check("profile replaces explicit aliases only",
            "instante abre el instanteo; in stand y para kit.",
            _work_context)
        == "Instant abre el instanteo; Instant y Parakeet.")
+_check("exact multiword aliases preserve punctuation boundaries",
+       context.correct_aliases("in, stand", _work_context) == "in, stand")
 _check("inactive profile does not bias text",
        context.correct_aliases("instante", {
            **_work_context, "active_context": "General"

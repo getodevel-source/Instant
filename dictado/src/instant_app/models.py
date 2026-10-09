@@ -235,7 +235,10 @@ def download_models(data_dir, progress=None):
             jobs.append((url, target, expected))
         if jobs:
             steps.append((step, total, done, jobs))
-            pending_bytes += sum(expected[0] for _u, _t, expected in jobs)
+            pending_bytes += sum(
+                max(0, expected[0] - (os.path.getsize(target + ".part")
+                                      if os.path.isfile(target + ".part") else 0))
+                for _url, target, expected in jobs)
         elif progress is None:
             print(f"  {step}: ya presente y verificado.")
 

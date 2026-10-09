@@ -333,6 +333,13 @@ def correct_aliases(text, config):
             return None
         # 1) Alias exactos, de mas palabras a menos (incluida una sola).
         for size in range(len(words), 0, -1):
+            positions_used = positions[:size]
+            gaps_ok = all(
+                all(piece.isspace() for piece in
+                    tokens[positions_used[k] + 1:positions_used[k + 1]])
+                for k in range(len(positions_used) - 1))
+            if not gaps_ok:
+                continue
             phrase = " ".join(words[:size])
             term = exact.get(phrase.casefold())
             if term:
@@ -378,7 +385,7 @@ def correct_aliases(text, config):
             index += 1
     result = "".join(out)
     if result != text:
-        log.info("vocab: %r -> %r", text[:120], result[:120])
+        log.debug("vocab: se aplicaron correcciones locales")
     return result
 
 

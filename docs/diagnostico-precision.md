@@ -71,7 +71,7 @@ solo cambiando voz/ritmo (Qwen+hotwords variaba 0.006). La sensibilidad es del m
 ## Fixes aplicados (2026-10-03)
 
 En `dictado/src/instant_app/engine.py` y `daemon.py`, cubiertos por
-`dictado/tests/test_transcribe_fallback.py` (suite verde, 26 tests OK):
+`dictado/tests/test_transcribe_fallback.py` (suite de regresión verde):
 
 - `_decode_lock`: la inferencia sobre el recognizer compartido se serializa.
 - `_recover_empties`: reintento secuencial de cada segmento vacío con audio
@@ -84,8 +84,8 @@ En `dictado/src/instant_app/engine.py` y `daemon.py`, cubiertos por
 - Log: cortes por sesión (`0.00-3.10, 3.60-9.30`), pico/duración por segmento,
   reintentos y latencia de apertura del mic (`mic listo en X.XXs`).
 
-Pendiente a propósito (invasivo, para cuando haya métricas de latencia real):
-pre-roll con stream persistente.
+La captura persistente con pre-roll se implementó en la tercera oleada de abajo.
+Pendiente: medir latencia de inicio con voces y micrófonos reales.
 
 ## Segunda oleada (2026-10-03)
 
@@ -109,9 +109,13 @@ cola y salió en un solo segmento: es el patrón de pérdida parcial ya medido.
   `_record_continuous` (prefijo + `_pump` común + `_LevelTracker` extraído) y
   cae a `_record_oneshot` si el stream murió. El onset ya no depende de la
   latencia de apertura.
+- El borde entre el historial pre-roll y la cola viva comparte el mismo lock
+  que el callback de audio: así un bloque concurrente no puede entrar por los
+  dos caminos y repetirse al principio de la sesión.
 - Guardado opt-in de fallos (`DICTADO_SAVE_WAVS`, tope 50): wav 16-bit + .txt
   con duración/pico/cortes, solo cuando el texto final queda vacío.
-- `context.correct_aliases` loguea cada sustitución (`vocab: ... -> ...`).
+- El corrector de vocabulario solo deja un evento de debug sin contenido; el
+  log de sesión informa duración y longitud de la transcripción, no el texto.
 - Tests: `dictado/tests/test_capture.py` (14 checks: keeper, tracker, pump,
   propagación de stream muerto, dump de fallo). Suite verde.
 

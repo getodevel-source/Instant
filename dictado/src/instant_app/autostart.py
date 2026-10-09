@@ -104,6 +104,8 @@ def _resolve_win_launch():
 
 def _resolve_posix_argv():
     """argv para linux/mac: sh del repo si existe, si no `instant run`, si no python."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "run"]
     sh = _find_repo_file("instant-run.sh")
     if sh:
         return ["sh", sh]

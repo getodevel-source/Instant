@@ -230,25 +230,23 @@ class StreamKeeper:
                 self.pre.popleft()
             while len(self.pre) > self.MAX_PRE_BLOCKS:
                 self.pre.popleft()
-        # Fuera de sesion solo se conserva el pre-roll acotado: encolar
-        # siempre hacia que q creciera sin limite si el usuario no dictaba
-        # en horas (RAM/swap) y obligaba a purgar millones de bloques al
-        # pulsar (freeze al inicio).
-        if not self._recording.is_set():
-            return
-        try:
-            self.q.put_nowait(blk)
-        except queue.Full:
-            pass
-        if self.q.qsize() > self.MAX_QUEUE_BLOCKS:
-            try:
-                while self.q.qsize() > self.MAX_QUEUE_BLOCKS:
-                    self.q.get_nowait()
-            except queue.Empty:
-                pass
+            # El borde entre pre-roll y cola viva debe ser atómico con
+            # snapshot(): si encolamos fuera del lock, un bloque puede caer
+            # en ambas colecciones y repetirse al principio del dictado.
+            # Fuera de sesión solo se conserva el pre-roll acotado.
+            if self._recording.is_set():
+                try:
+                    self.q.put_nowait(blk)
+                except queue.Full:
+                    pass
+                if self.q.qsize() > self.MAX_QUEUE_BLOCKS:
+                    try:
+                        while self.q.qsize() > self.MAX_QUEUE_BLOCKS:
+                            self.q.get_nowait()
+                    except queue.Empty:
+                        pass
 
-    def begin_session(self):
-        """Abre la ventana de grabacion: drena restos y habilita la cola."""
+    def _begin_session_locked(self):
         try:
             while True:
                 self.q.get_nowait()
@@ -256,14 +254,20 @@ class StreamKeeper:
             pass
         self._recording.set()
 
+    def begin_session(self):
+        """Abre la ventana de grabacion: drena restos y habilita la cola."""
+        with self._lock:
+            self._begin_session_locked()
+
     def end_session(self):
         """Cierra la ventana de grabacion y descarta audio tardio."""
-        self._recording.clear()
-        try:
-            while True:
-                self.q.get_nowait()
-        except queue.Empty:
-            pass
+        with self._lock:
+            self._recording.clear()
+            try:
+                while True:
+                    self.q.get_nowait()
+            except queue.Empty:
+                pass
 
     def start(self):
         t0 = time.monotonic()
@@ -298,11 +302,11 @@ class StreamKeeper:
         Abre ademas la ventana de grabacion: desde aqui el callback vuelve
         a encolar hasta end_session().
         """
-        self.begin_session()
-        if seconds <= 0:
-            return []
-        now = time.monotonic()
         with self._lock:
+            self._begin_session_locked()
+            if seconds <= 0:
+                return []
+            now = time.monotonic()
             items = list(self.pre)
         return [blk for t, blk in items if now - t <= seconds]
 
@@ -329,8 +333,8 @@ class Daemon:
                              save_wavs_dir=os.environ.get("DICTADO_SAVE_WAVS", "") or None)
         self.overlay = Overlay(
             hotkey.key_label(cfg.get("key", "f9")),
-            style=cfg.get("overlay_style", "classic")
-            if cfg.get("overlay_style") in ("classic", "orbital") else "classic")
+            style=cfg.get("overlay_style", "orbital")
+            if cfg.get("overlay_style") in ("classic", "orbital") else "orbital")
         self.mic = audio.resolve_mic(
             cfg.get("mic_hint", ""), cfg.get("mic_index"),
             strict_hint=bool(cfg.get("mic_hint")))
@@ -637,8 +641,8 @@ class Daemon:
                     "No pude reconocer el audio. Probá hablar más cerca del micrófono.",
                     milliseconds=2600)
                 return
-            log.info("[%.1fs audio -> %.2fs, RTF=%.2fx] %s",
-                     dur, dt, dt / max(dur, 0.1), text[:200])
+            log.info("[%.1fs audio -> %.2fs, RTF=%.2fx] transcripción: %d caracteres",
+                     dur, dt, dt / max(dur, 0.1), len(text))
             import instant_app.paste as _paste_mod
             _paste_mod.paste(text + " ")
             self.overlay.success_for(sid)
