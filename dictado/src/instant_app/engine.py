@@ -1,4 +1,4 @@
-"""STT: Silero VAD (frases) + Parakeet v3 int8 offline por segmento. CPU-only."""
+"""STT: VAD (frases) + VoxCore int8 offline por segmento. CPU-only."""
 import logging
 import os
 import re
@@ -75,7 +75,7 @@ def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0):
 
 
 def frontend(wav):
-    """Acondiciona audio para Parakeet: DC-remove + high-pass ~80 Hz.
+    """Acondiciona audio para VoxCore: DC-remove + high-pass ~80 Hz.
 
     Quita el offset de continua del ADC y el retumbe grave antes de
     `_fit_level`: el modelo entrena con voz centrada en cero y ese piso
@@ -266,9 +266,9 @@ class Engine:
                 p = self.paths
                 for k in ("encoder", "decoder", "joiner", "tokens"):
                     if not os.path.isfile(p[k]):
-                        raise FileNotFoundError(f"modelo parakeet incompleto, falta: {p[k]} "
+                        raise FileNotFoundError(f"modelo VoxCore incompleto, falta: {p[k]} "
                                                 f"(corre `instant setup`)")
-                log.info("cargando parakeet v3 int8 threads=%d blank_penalty=%.2f ...",
+                log.info("cargando VoxCore int8 threads=%d blank_penalty=%.2f ...",
                          self.threads, self.blank_penalty)
                 t0 = time.time()
                 self._rec = sherpa_onnx.OfflineRecognizer.from_transducer(
@@ -453,7 +453,7 @@ class Engine:
         return fixed
 
     def transcribe(self, audio):
-        """VAD + Parakeet por segmento en serie. Devuelve texto unido."""
+        """VAD + VoxCore por segmento en serie. Devuelve texto unido."""
         wav = np.ascontiguousarray(np.asarray(audio).flatten(), dtype=np.float32)
         wav, dc, clip = frontend(wav)
         dur = len(wav) / SAMPLE_RATE

@@ -103,7 +103,7 @@ def cmd_setup(argv=None):
               "la config se guarda igual.")
         rc = max(rc, 2)
 
-    # 1. Modelos juntos: Parakeet (~670MB) + VAD (~1MB) en un solo paso.
+    # 1. Modelos juntos: VoxCore (~670MB) + VAD (~1MB) en un solo paso.
     data_dir = resolve_data_dir()
     if data_dir == user_data_dir():
         print(f"  modelos en: {data_dir}")
@@ -113,15 +113,15 @@ def cmd_setup(argv=None):
     status = dl.check(data_dir)
     models_ok = all(status.values())
     if models_ok:
-        print("  modelos OK (Parakeet + VAD).")
+        print("  modelos OK (VoxCore + VAD).")
     else:
         missing = sorted(k for k, ok in status.items() if not ok)
         print(f"  faltan: {', '.join(missing)}.")
-        print("  descargando modelos juntos: Parakeet (~670MB) + VAD (~1MB)...")
+        print("  descargando modelos juntos: VoxCore (~670MB) + VAD (~1MB)...")
         try:
             dl.download_models(data_dir)
             models_ok = all(dl.check(data_dir).values())
-            print("  modelos OK (Parakeet + VAD)." if models_ok
+            print("  modelos OK (VoxCore + VAD)." if models_ok
                   else "  descarga incompleta, reintenta luego.")
         except Exception:
             log.exception("SIN MODELOS: sin red o sin espacio; el resto se configura igual. "

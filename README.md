@@ -13,7 +13,7 @@
 | | |
 |---|---|
 | 🔒 **Privado de verdad** | El audio nunca sale de tu equipo. Modelo local, sin telemetría. |
-| ⚡ **Rápido** | Parakeet TDT v3 en CPU: tu voz a texto en una fracción de segundo. |
+| ⚡ **Rápido** | VoxCore en CPU: tu voz a texto en una fracción de segundo. |
 | 🎯 **Preciso en español** | Diccionario técnico, corrección fonética y restauración de `¿?` incluidos. |
 | 🪶 **Liviano** | Sin GPU, ~670 MB de modelo que se descarga una sola vez. |
 

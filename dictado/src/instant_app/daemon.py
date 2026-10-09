@@ -1,4 +1,4 @@
-"""Daemon hold-to-talk: graba en RAM, al soltar VAD+Parakeet y pega. Cross-platform."""
+"""Daemon hold-to-talk: graba en RAM, al soltar reconoce y pega. Cross-platform."""
 import collections
 import logging
 import os
@@ -724,7 +724,7 @@ class Daemon:
         finally:
             # Libera la referencia pesada cuanto antes; _job recibe su copia.
             del frames
-        log.info("soltado tras %.1fs, %d bloques -> VAD+Parakeet.", dur,
+        log.info("soltado tras %.1fs, %d bloques -> VAD+VoxCore.", dur,
                  len(wav) // 160 if wav.size else 0)
         threading.Thread(target=self._job, args=(wav, dur, sid), daemon=True).start()
 

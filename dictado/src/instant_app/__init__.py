@@ -1,2 +1,2 @@
-"""Instant: hold-to-talk ES offline (Parakeet v3 + Silero VAD, CPU-only)."""
+"""Instant: hold-to-talk ES offline (VoxCore + VAD, CPU-only)."""
 __version__ = "0.4.0"

@@ -107,7 +107,7 @@ def maybe_polish(text, cfg=None, url=None, conf=1.0, min_conf=0.85):
     El LLM suelto suele subir WER en habla espontanea: solo se le consulta
     cuando la confianza del decode (`conf`) baja de `min_conf`. El texto
     seguro se pega directo (mas rapido, sin red). `restore_openers` es
-    determinista y corre siempre: es el gap medido (Parakeet pone el `¿`
+    determinista y corre siempre: es el gap medido (VoxCore pone el `¿`
     en 4/8 preguntas).
     """
     from instant_app import context

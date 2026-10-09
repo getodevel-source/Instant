@@ -2,7 +2,7 @@
 
 Hold-to-talk offline en español. Mantén la tecla, habla 60-120s, suelta y pega.
 
-Pipeline: mic 16kHz → Silero VAD (frases) → Parakeet TDT v3 int8 offline
+Pipeline: mic 16kHz → VAD (frases) → VoxCore int8 offline
 (`sherpa-onnx`, CPU) → portapapeles + Ctrl+V. Sin nube, sin GPU.
 Idioma: Español (único). Sin selector: el setup muestra
 "Español (único)" y guarda `lang: "es"` en la config para futuro;
@@ -38,7 +38,7 @@ corre la terminal como administrador.
 
 En Windows, las entradas WASAPI se abren en modo compartido con conversión
 automática a 16 kHz cuando el dispositivo usa otra frecuencia (por ejemplo,
-48 kHz), requerida por VAD y Parakeet. En micrófonos estéreo se capturan
+48 kHz), requerida por VAD y VoxCore. En micrófonos estéreo se capturan
 hasta dos canales y se usa el de mayor energía.
 El selector de configuración consolida alias repetidos entre host APIs y
 prioriza WASAPI; si un backend ofrece varias entradas con el mismo nombre,
@@ -127,7 +127,7 @@ despegan. La ventana del overlay se centra con
 El asistente de terminal (`instant setup --tui`, o con cualquier flag de CLI)
 hace, en orden:
 
-1. **Modelos**: descarga Parakeet (~670 MB) y VAD (~1 MB) si faltan.
+1. **Modelos**: descarga VoxCore (~670 MB) y VAD (~1 MB) si faltan.
 2. **Micrófono**: muestra nombre, backend y canales; permite medir nivel. Guarda nombre e índice como fallback si cambia el orden de dispositivos.
 3. **Idioma**: español fijo.
 4. **Tecla**: captura una tecla individual (Enter conserva la actual).
@@ -291,9 +291,9 @@ listarlas a mano (`commit`, `staging`). Para ver qué cambiaría sin aplicar
 nada, el perfil se puede probar desde Python con `context.correct_aliases`.
 
 En el pipeline actual estas correcciones se aplican al texto **después** del
-reconocimiento; no son pistas acústicas para Parakeet. Se probó el sesgo
+reconocimiento; no son pistas acústicas para VoxCore. Se probó el sesgo
 contextual (hotwords) y **no funciona** con este modelo: sherpa-onnx lo
-tokeniza con un `bpe.vocab` de sentencepiece que el paquete de Parakeet v3 no
+tokeniza con un `bpe.vocab` de sentencepiece que el paquete de VoxCore no
 trae. Ver [`docs/precision.md`](../docs/precision.md).
 
 Los perfiles y el vocabulario se guardan localmente en la configuración de
@@ -326,7 +326,7 @@ recibe el glosario activo y el glosario técnico general; el audio nunca se
 envía a la nube.
 
 Además del perfil personal, Instant trae un **diccionario técnico general**
-(términos ingleses de desarrollo que Parakeet deforma: commit, build,
+(términos ingleses de desarrollo que VoxCore deforma: commit, build,
 deploy, staging, Qwen, GitHub…): solo actúa cuando la confianza del
 reconocimiento es baja, y nunca toca texto seguro ni palabras corrientes.
 
