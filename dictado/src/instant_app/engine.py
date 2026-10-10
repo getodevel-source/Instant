@@ -601,7 +601,8 @@ class Engine:
             import datetime
             import wave
 
-            os.makedirs(self.save_wavs_dir, exist_ok=True)
+            from instant_app.paths import ensure_private_dir, restrict_file
+            ensure_private_dir(self.save_wavs_dir)
             wavs = sorted(
                 (os.path.join(self.save_wavs_dir, f) for f in os.listdir(self.save_wavs_dir)
                  if f.endswith(".wav")),
@@ -619,9 +620,11 @@ class Engine:
                 w.setsampwidth(2)
                 w.setframerate(SAMPLE_RATE)
                 w.writeframes(pcm.tobytes())
+            restrict_file(base + ".wav")
             with open(base + ".txt", "w", encoding="utf-8") as f:
                 f.write(f"dur={dur:.1f}s pico={peak:.4f} "
                         f"bounds={[(round(s, 2), round(e, 2)) for s, e in bounds]}\n")
+            restrict_file(base + ".txt")
             log.info("wav de fallo guardado en %s.", base + ".wav")
         except Exception:
             log.exception("no pude guardar wav de fallo")

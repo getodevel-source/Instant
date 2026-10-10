@@ -100,8 +100,16 @@ if [ "$PURGE" -eq 1 ]; then
       *) echo "  Purga cancelada; config y modelos conservados."; exit 0 ;;
     esac
   fi
-  rm -rf -- "$CONFIG_DIR" && echo "  Config eliminada."
-  rm -rf -- "$DATA_DIR" && echo "  Modelos eliminados."
+  for target in "$CONFIG_DIR" "$DATA_DIR"; do
+    case "$target" in
+      ""|"/"|"$HOME")
+        echo "  Ruta de purga peligrosa, no se toca: $target"; continue ;;
+    esac
+    case "$target" in
+      *instant*) rm -rf -- "$target" && echo "  Eliminado: $target" ;;
+      *) echo "  No parece de Instant, no se toca: $target" ;;
+    esac
+  done
 else
   echo "[3/3] Datos conservados:"
   echo "  config: $CONFIG_DIR"

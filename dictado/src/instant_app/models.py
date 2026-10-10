@@ -235,7 +235,8 @@ def download_models(data_dir, progress=None, include_ten_vad=False):
         wanted.append(_ten_vad_step())
     for step, subdir, entries in wanted:
         directory = os.path.join(data_dir, subdir)
-        os.makedirs(directory, exist_ok=True)
+        from instant_app.paths import ensure_private_dir
+        ensure_private_dir(directory)
         total = sum(expected[0] for _url, _name, expected in entries)
         done = 0
         jobs = []

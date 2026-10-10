@@ -918,16 +918,11 @@ class PanelLogic:
         if key == "llm_url":
             value = str(value or "").strip()
             if value:
-                from urllib.parse import urlsplit
                 try:
-                    parsed = urlsplit(value)
-                except ValueError:
-                    parsed = None
-                if (parsed is None or parsed.scheme not in {"http", "https"}
-                        or not parsed.hostname):
-                    self.toast("Dirección no válida",
-                               "Usá una URL http:// o https://, o dejá el campo vacío.",
-                               level="warn")
+                    from instant_app.llm import check_url
+                    value = check_url(value)
+                except ValueError as exc:
+                    self.toast("Dirección no válida", str(exc), level="warn")
                     return
             self.cfg["llm_url"] = value
         elif key == "threads":

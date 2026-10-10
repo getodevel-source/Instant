@@ -408,6 +408,24 @@ class LogicSettingsTests(unittest.TestCase):
         self.assertIn("Penalidad no válida", titles)
         self.assertIn("Modo de actualización no válido", titles)
 
+    def test_set_advanced_llm_token_never_echoed(self):
+        logic, _emitted = make_logic()
+        logic.handle({"op": "set_advanced", "key": "llm_token", "value": "secreto-123"})
+        self.assertEqual(logic.cfg["llm_token"], "secreto-123")
+        state = logic.state_payload()["advanced"]
+        self.assertTrue(state["llm_token_set"])
+        self.assertNotIn("secreto-123", repr(state))
+
+    def test_set_advanced_llm_url_blocks_plain_http(self):
+        logic, emitted = make_logic()
+        logic.handle({"op": "set_advanced", "key": "llm_url",
+                      "value": "http://192.168.1.10:8080"})
+        self.assertEqual(logic.cfg.get("llm_url", ""), "")
+        titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
+        self.assertIn("Dirección no válida", titles)
+        logic.handle({"op": "set_advanced", "key": "llm_url",
+                      "value": "http://127.0.0.1:8080"})
+        self.assertEqual(logic.cfg["llm_url"], "http://127.0.0.1:8080")
     def test_status_carries_disabled_reason_and_checklist(self):
         logic, _emitted = make_logic()
         logic.model_ready = False

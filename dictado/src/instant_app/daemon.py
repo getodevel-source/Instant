@@ -62,8 +62,10 @@ def write_pid():
     import os
     import tempfile
     try:
+        from instant_app.paths import ensure_private_dir, restrict_file
         p = pid_path()
-        os.makedirs(os.path.dirname(p), exist_ok=True)
+        ensure_private_dir(os.path.dirname(p))
+        restrict_file(p)
         owner = _pidfile_lock_handle()
         if owner is not None:
             try:
@@ -80,6 +82,7 @@ def write_pid():
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(str(os.getpid()))
             os.replace(tmp, p)
+            restrict_file(p)
         except Exception:
             try:
                 os.remove(tmp)
