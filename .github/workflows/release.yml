@@ -224,6 +224,10 @@ jobs:
         run: |
           ./dist/${{ matrix.binary_name }} --version
           export HOME="$(mktemp -d)"
+          # Aislar también XDG: el runner trae XDG_CONFIG_HOME propio y
+          # config_dir() lo prefiere sobre $HOME (el log caía fuera del tmp).
+          export XDG_CONFIG_HOME="$HOME/.config"
+          export XDG_DATA_HOME="$HOME/.local/share"
           export DICTADO_DATA="$HOME/models"
           export QT_QPA_PLATFORM=offscreen
           # run_gui exige un entorno gráfico declarado; la plataforma offscreen
