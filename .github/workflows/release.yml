@@ -296,8 +296,14 @@ jobs:
         with:
           path: ./dictado
           format: spdx-json
-          artifact-name: instant_sbom
-          upload-artifact: true
+          output-file: /tmp/instant-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: instant-sbom
+          path: /tmp/instant-sbom.spdx.json
+          if-no-files-found: error
 
   provenance:
     needs: build
