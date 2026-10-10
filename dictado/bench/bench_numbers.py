@@ -104,7 +104,7 @@ def main():
     old_nonempty = new_nonempty = 0
     orig = eng._recover_empties
     for v in variants:
-        eng._recover_empties = lambda w, p, b, c, t: t
+        eng._recover_empties = lambda w, p, b, c, t, cf=None, wc=None: t
         if eng.transcribe(v).strip():
             old_nonempty += 1
         eng._recover_empties = orig
