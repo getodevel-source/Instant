@@ -57,6 +57,11 @@ def main(argv=None):
     p_setup.add_argument("--sound", action="store_true", default=None)
     p_setup.add_argument("--no-sound", action="store_true")
     p_setup.add_argument("--llm-url", default=None)
+    p_setup.add_argument("--llm-token", default=None,
+                         help="token Bearer del servidor LLM (solo este equipo)")
+    p_setup.add_argument("--update-mode", default=None,
+                         choices=("notify", "auto", "off"),
+                         help="actualizaciones: avisar, auto u off")
     p_setup.add_argument("--context-profile", default=None)
     p_setup.add_argument("--context-term", action="append", default=[])
     p_setup.add_argument("--context-remove-term", action="append", default=[])
@@ -121,7 +126,8 @@ def main(argv=None):
         cli_options = (
             args.tui, args.yes, args.mic is not None, args.key is not None,
             args.threads is not None, args.sound is not None, args.no_sound,
-            args.llm_url is not None, args.context_profile is not None,
+            args.llm_url is not None, args.llm_token is not None,
+            args.update_mode is not None, args.context_profile is not None,
             bool(args.context_term), bool(args.context_remove_term),
             args.context_delete_profile, args.no_meter, args.no_probe,
             args.vad_model is not None, args.blank_penalty is not None,
@@ -134,7 +140,8 @@ def main(argv=None):
             print("Sin entorno gráfico; abro el asistente de terminal (TUI)...")
         from instant_app.setup import cmd_setup
         forward = ["--yes"] if args.yes else []
-        for key in ("mic", "key", "threads", "llm_url", "context_profile",
+        for key in ("mic", "key", "threads", "llm_url", "llm_token",
+                    "update_mode", "context_profile",
                     "vad_model", "blank_penalty"):
             value = getattr(args, key)
             if value is not None:

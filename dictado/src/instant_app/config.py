@@ -128,6 +128,8 @@ def load():
                "DICTADO_MAX_SEG": "max_seg", "DICTADO_VAD": "vad_model",
                "DICTADO_BLANK": "blank_penalty",
                "DICTADO_LLM_URL": "llm_url",
+               "DICTADO_LLM_TOKEN": "llm_token",
+               "DICTADO_UPDATE": "update_mode",
                "DICTADO_CONTEXT": "active_context",
                "DICTADO_AUTOSTART": "autostart",
                "DICTADO_OVERLAY": "overlay_style"}
@@ -169,8 +171,6 @@ def load():
         cfg["update_mode"] = "notify"
     tok = cfg.get("llm_token", "")
     cfg["llm_token"] = tok if isinstance(tok, str) else ""
-    if (os.environ.get("DICTADO_LLM_TOKEN") or "") != "":
-        cfg["llm_token"] = os.environ["DICTADO_LLM_TOKEN"]
     if (os.environ.get("INSTANT_NO_UPDATE") or "").strip().lower() in (
             "1", "true", "yes", "y", "on", "si", "s"):
         cfg["update_mode"] = "off"

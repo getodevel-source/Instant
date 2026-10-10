@@ -52,6 +52,11 @@ def _parse_args(argv=None):
     ap.add_argument("--no-autostart", action="store_true",
                     help="desactiva arranque con el sistema")
     ap.add_argument("--llm-url", default=None, help="llama-server local (vacio=off)")
+    ap.add_argument("--llm-token", default=None,
+                    help="token Bearer del servidor (se guarda solo en este equipo)")
+    ap.add_argument("--update-mode", default=None,
+                    choices=("notify", "auto", "off"),
+                    help="actualizaciones: avisar (default), auto u off")
     ap.add_argument("--context-profile", default=None,
                     help="activa o crea un perfil de vocabulario local")
     ap.add_argument("--context-term", action="append", default=[],
@@ -293,6 +298,10 @@ def cmd_setup(argv=None):
         cfg["sound"] = False
     if o.llm_url is not None:
         cfg["llm_url"] = o.llm_url
+    if o.llm_token is not None:
+        cfg["llm_token"] = o.llm_token
+    if o.update_mode is not None:
+        cfg["update_mode"] = o.update_mode
     if o.vad_model is not None:
         cfg["vad_model"] = o.vad_model
         if o.vad_model == "ten":

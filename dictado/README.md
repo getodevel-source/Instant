@@ -140,7 +140,9 @@ instant setup --yes --key f9 --threads 4 --no-sound
 
 Flags avanzados (solo flags, el interactivo no los pregunta):
 `--threads` (default 4), `--sound`/`--no-sound` (default off),
-`--llm-url` (default vacío = off), `--vad-model silero|ten` (default silero;
+`--llm-url` (default vacío = off), `--llm-token` (token Bearer, solo este
+equipo), `--update-mode notify|auto|off` (default notify),
+`--vad-model silero|ten` (default silero;
 `ten` baja TEN-VAD int8 ~126 KB, VAD alternativo más preciso),
 `--blank-penalty 0..1` (default 0; penalidad al blank del decode, solo con
 WER medido — pasada de rosca inventa palabras),
@@ -204,7 +206,9 @@ Config en `%APPDATA%/instant` (win), `~/.config/instant` (linux),
 `~/Library/Application Support/instant` (mac). Env `DICTADO_*` pisa config
 (`DICTADO_MIC`, `DICTADO_KEY`, `DICTADO_THREADS`, `DICTADO_SOUND`,
 `DICTADO_MAX_SEG`, `DICTADO_VAD=silero|ten`, `DICTADO_BLANK=0..1`,
-`DICTADO_LLM_URL`, `DICTADO_AUTOSTART=1/0`).
+`DICTADO_LLM_URL`, `DICTADO_LLM_TOKEN`, `DICTADO_UPDATE=notify|auto|off`
+(o `INSTANT_NO_UPDATE=1` para apagar el chequeo),
+`DICTADO_AUTOSTART=1/0`).
 
 PID file: `run` escribe `instant.pid` junto a la config al arrancar y lo
 borra al salir limpio; los lanzadores `.bat` lo usan para stop/status
@@ -331,7 +335,11 @@ reconocimiento es baja, y nunca toca texto seguro ni palabras corrientes.
 
 Si tenés `llama-server` local corriendo, en Windows configurá su URL en
 Preferencias; en Linux/macOS usá `--llm-url` al setup (o
-`DICTADO_LLM_URL=http://127.0.0.1:8080`). El LLM recibe la transcripción y el
+`DICTADO_LLM_URL=http://127.0.0.1:8080`). Si el servidor pide
+autenticación, `--llm-token` (o `DICTADO_LLM_TOKEN`): viaja en el encabezado
+`Authorization` y nunca queda en los registros. Solo se permite `http://`
+en claro contra loopback (`localhost`/`127.*`/`::1`); cualquier otro
+`http://` se rechaza (usá `https://`). El LLM recibe la transcripción y el
 glosario activo —no el audio— y solo se lo consulta cuando la confianza del
 decode es baja (media de log-probs por token < 0.85): el texto seguro se pega
 directo, sin red ni espera. Corrige ortografía, tildes y puntuación. No puede

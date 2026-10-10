@@ -78,6 +78,32 @@ class ConfigPersistenceTests(unittest.TestCase):
             self.assertEqual(cfg["max_seg"], config.DEFAULTS["max_seg"])
             self.assertTrue(cfg["sound"])
 
+    def test_llm_token_and_update_mode_env(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({}, handle)
+            with patch("instant_app.config.config_path", return_value=path), \
+                    patch.dict(os.environ, {"DICTADO_LLM_TOKEN": "tok-env",
+                                            "DICTADO_UPDATE": "auto"}, clear=True):
+                cfg = config.load()
+            self.assertEqual(cfg["llm_token"], "tok-env")
+            self.assertEqual(cfg["update_mode"], "auto")
+            with patch("instant_app.config.config_path", return_value=path), \
+                    patch.dict(os.environ, {"DICTADO_UPDATE": "xxx"}, clear=True):
+                cfg = config.load()
+            self.assertEqual(cfg["update_mode"], "notify")
+
+    def test_llm_token_persists_and_stays_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "config.json")
+            with patch("instant_app.config.config_path", return_value=path):
+                saved = config.save({**config.DEFAULTS, "llm_token": "tok-1"})
+            disk = json.load(open(saved, encoding="utf-8"))
+            self.assertEqual(disk["llm_token"], "tok-1")
+            with patch("instant_app.config.config_path", return_value=path):
+                cfg = config.load()
+            self.assertEqual(cfg["llm_token"], "tok-1")
 
 if __name__ == "__main__":
     unittest.main()
