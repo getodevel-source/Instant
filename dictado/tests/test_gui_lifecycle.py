@@ -302,6 +302,34 @@ class PanelLifecycleTests(unittest.TestCase):
         self.assertTrue(logic._start_daemon_on_open)
         self.assertIn(("navigate", {"page": "home"}), emitted)
 
+    def test_daemon_poll_failure_surfaces_in_status_detail(self):
+        logic, _emitted = make_logic()
+        with patch("instant_app.gui.daemon_is_running",
+                   side_effect=RuntimeError("boom")):
+            logic.refresh_daemon()
+        self.assertIn("boom", logic.status_detail)
+        self.assertIn("No se pudo comprobar", logic.status_detail)
+
+    def test_boot_detail_survives_daemon_poll(self):
+        logic, _emitted = make_logic()
+        logic.status_detail = gui.DAEMON_MISSING_DETAIL
+        logic._daemon_start_pending = True
+        with patch("instant_app.gui.daemon_is_running", return_value=False):
+            logic.refresh_daemon()
+        self.assertEqual(logic.status_detail, gui.DAEMON_MISSING_DETAIL)
+
+    def test_diagnostics_done_does_not_reopen_closed_modal(self):
+        logic, emitted = make_logic()
+        logic.show_diagnostics()
+        self.assertTrue(logic._diagnostics_open)
+        logic.handle({"op": "diagnostics_close"})
+        emitted.clear()
+        # El worker tardío no debe reabrir: sin emit de diagnostics.
+        logic._diagnostic_running = False
+        logic._diagnostics_text = "todo ok"
+        logic.push_state()
+        self.assertFalse(any(kind == "diagnostics" for kind, _payload in emitted))
+
 
 if __name__ == "__main__":
     unittest.main()

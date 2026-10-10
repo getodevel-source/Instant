@@ -68,8 +68,8 @@ def _link_path():
 
 def _linux_config_base():
     xdg = os.environ.get("XDG_CONFIG_HOME")
-    if xdg:
-        return xdg
+    if xdg and xdg.strip():
+        return xdg.strip()
     return os.path.join(os.path.expanduser("~"), ".config")
 
 
@@ -181,21 +181,34 @@ def _is_ours_win(link):
         return False
     cur = _read_win_target(link)
     if cur:
+        target, args = cur
         hay = ("%s %s" % cur).lower()
-        # Estricto: solo nuestros targets, no cualquier .lnk ajeno que
-        # mencione "instant" (antes se pisaba/borraba arranques ajenos).
-        return ("instant-run.bat" in hay or "instant.exe" in hay
-                or "instant-update" in hay
-                or (("python.exe" in hay or "pythonw.exe" in hay)
-                    and "instant" in hay))
-    if cur:
+        ours_targets = ("instant-run.bat", "instant.exe", "instant-update")
+        # Match estricto: el nombre del binario/script, no substring "instant"
+        # suelto (antes cualquier .lnk ajeno con "instant" en args pasaba).
+        base = os.path.basename((target or "").replace("\\", "/")).lower()
+        if base in ("instant-run.bat", "instant.exe", "instant-update.bat"):
+            return True
+        if any(t in hay for t in ours_targets):
+            if base.startswith("python"):
+                argv = (args or "").lower().split()
+                if any("instant" in a for a in argv):
+                    return True
+                return False
+            return True
         return False
-    # Binario real pero sin powershell para leerlo: busca la marca en crudo.
+    # cur es None: binario real sin powershell para leerlo -> busca la marca
+    # gestionada en crudo (estricto: "instant-run.bat"/"instant.exe", no
+    # cualquier byte "instant" suelto).
+    if cur is not None:
+        return False
     try:
         with open(link, "rb") as f:
-            return b"instant" in f.read().lower()
+            raw = f.read().lower()
     except OSError:
         return False
+    return (b"instant-run.bat" in raw or b"instant.exe" in raw
+            or b"instant-update" in raw or MARK.encode() in raw)
 
 
 def _win_is_enabled():
@@ -268,16 +281,20 @@ def _win_describe():
 
 def _desktop_content():
     inner = " ".join(shlex.quote(x) for x in _resolve_posix_argv())
+    # Exec con quoting seguro: el inner ya va shlex-citado y la envoltura
+    # sh -c usa comillas simples (las dobles se rompian con espacios/rutas
+    # con comillas).
+    exec_line = "sh -c " + shlex.quote("nohup %s >/dev/null 2>&1 &" % inner)
     return (
         "# %s: gestionado por `instant setup`, no editar a mano.\n"
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=Instant Dictado\n"
         "Comment=%s\n"
-        "Exec=sh -c \"nohup %s >/dev/null 2>&1 &\"\n"
+        "Exec=%s\n"
         "Terminal=false\n"
         "Hidden=false\n"
-        "X-GNOME-Autostart-enabled=true\n" % (MARK, DESC, inner)
+        "X-GNOME-Autostart-enabled=true\n" % (MARK, DESC, exec_line)
     )
 
 
@@ -374,6 +391,18 @@ def _mac_is_enabled():
         return False
 
 
+def _mac_launchctl(*args, timeout=15):
+    """Corre launchctl sin crashear: (rc, stderr) o (None, motivo)."""
+    try:
+        r = subprocess.run(["launchctl"] + list(args), capture_output=True,
+                           text=True, timeout=timeout)
+    except FileNotFoundError:
+        return None, "sin launchctl"
+    except Exception as exc:
+        return None, str(exc)
+    return r.returncode, (r.stderr or "").strip()
+
+
 def _mac_enable():
     path = _plist_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -393,6 +422,16 @@ def _mac_enable():
             plistlib.dump(_plist_dict(), f)
     except OSError as e:
         raise RuntimeError("no pude escribir %s (%s)." % (path, e))
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    if uid is not None:
+        rc, err = _mac_launchctl("bootstrap", f"gui/{uid}", path)
+        if rc not in (0, None):
+            # 5 = ya cargado: idempotente, no es error.
+            already = "already" in err.lower() or "no such" in err.lower()
+            if not already:
+                raise RuntimeError(
+                    "launchctl bootstrap falló (%s: %s); el arranque NO quedó "
+                    "activado: revisá permisos y reintentá." % (rc, err or "sin detalle"))
     return "Arranque activado: %s" % path
 
 
@@ -403,6 +442,11 @@ def _mac_disable():
     data = _read_plist(path)
     if data is None or data.get("Label") != PLIST_LABEL:
         return "No toco %s: no es de Instant." % path
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    if uid is not None:
+        rc, err = _mac_launchctl("bootout", f"gui/{uid}", path)
+        if rc not in (0, None) and "no such" not in (err or "").lower():
+            log.warning("launchctl bootout devolvió %s: %s", rc, err)
     try:
         os.remove(path)
     except OSError as e:

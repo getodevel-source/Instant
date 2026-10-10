@@ -15,17 +15,16 @@ SAMPLE_RATE = 16000
 SILENCE_PEAK = 0.005
 
 
-def _dedup_overlap(left, right, max_words=6):
-    """Quita de `right` el prefijo ya dicho al final de `left`.
+def _overlap_count(left, right, max_words=6):
+    """Nº de palabras del arranque de `right` ya dichas al final de `left`.
 
-    Los chunks se decodifican con overlap de audio real: la zona comun
-    sale en ambos textos. Busca el mayor solape de palabras (hasta
-    `max_words`) entre el final de `left` y el arranque de `right` y lo
-    recorta. Comparacion casefold sin puntuacion; si no hay solape
-    devuelve `right` intacto. Nunca inventa ni reordena.
+    Núcleo compartido con `_dedup_overlap`: mismo criterio (mayor solape
+    de palabras hasta `max_words`, casefold sin puntuación). Separado para
+    que el decode pueda desplazar `last_word_confs` en vez de truncar la
+    cola (ver `transcribe`).
     """
     if not left or not right:
-        return right
+        return 0
     norm = lambda w: re.sub(r"[^\w]", "", w.casefold())
     lw = left.split()
     rw = right.split()
@@ -35,7 +34,20 @@ def _dedup_overlap(left, right, max_words=6):
     for k in range(1, min(max_words, len(ln), len(rn)) + 1):
         if ln[-k:] == rn[:k] and all(rn[:k]):
             best = k
-    return " ".join(rw[best:]) if best else right
+    return best
+
+
+def _dedup_overlap(left, right, max_words=6):
+    """Quita de `right` el prefijo ya dicho al final de `left`.
+
+    Los chunks se decodifican con overlap de audio real: la zona comun
+    sale en ambos textos. Busca el mayor solape de palabras (hasta
+    `max_words`) entre el final de `left` y el arranque de `right` y lo
+    recorta. Comparacion casefold sin puntuacion; si no hay solape
+    devuelve `right` intacto. Nunca inventa ni reordena.
+    """
+    best = _overlap_count(left, right, max_words)
+    return " ".join(right.split()[best:]) if best else right
 
 
 def join_texts(texts):
@@ -53,12 +65,14 @@ def join_texts(texts):
     s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
-def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0):
+def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0, max_seg=20.0):
     """Une un segmento corto (<min_len) con su vecino si el hueco <= max_gap.
 
     Evita decodificar palabras sueltas sin contexto (pierden precision).
     min_len 1.5s (antes 1.0s): los arranques de 1-1.5s sin contexto izquierdo
     son los que mas colapsan a blank en el transducer.
+    Tope max_seg: no fusiona si el tramo unido lo supera (el VAD ya parte
+    por max_seg; re-unirlo reintroduciria el chunk gigante).
     `bounds`: [(t0, t1)] en segundos. Devuelve lista nueva.
     """
     bs = [(float(s), float(e)) for s, e in bounds]
@@ -67,7 +81,7 @@ def merge_short_bounds(bounds, min_len=1.5, max_gap=1.0):
     out = [bs[0]]
     for s, e in bs[1:]:
         ps, pe = out[-1]
-        if (s - pe) <= max_gap and ((pe - ps) < min_len or (e - s) < min_len):
+        if (s - pe) <= max_gap and ((pe - ps) < min_len or (e - s) < min_len) and (e - ps) <= max_seg:
             out[-1] = (ps, e)
         else:
             out.append((s, e))
@@ -327,6 +341,18 @@ class Engine:
             if self._vad is None:
                 self._vad = inst
                 return inst
+            loser = inst
+        # Hubo carrera: otra hebra gano; no dejar la instancia perdedora
+        # colgada (handle nativo sin liberar).
+        try:
+            closer = getattr(loser, "close", None)
+            if closer is not None:
+                closer()
+            else:
+                del loser
+        except Exception:
+            pass
+        with self._lock:
             return self._vad
 
     def segment(self, audio):
@@ -402,14 +428,22 @@ class Engine:
                                  getattr(s.result, "timestamps", None))
             return idx, text, conf, wconfs
 
-    def _recover_empties(self, wav, peak, bounds, chunks, texts):
+    def _recover_empties(self, wav, peak, bounds, chunks, texts, confs=None, wconfs=None):
         """Reintento secuencial de segmentos vacios con contexto ampliado.
 
         El transducer colapsa a blank en chunks cortos o cortados a mitad de
         palabra aunque el pico sea bueno. Solo actua en la via de fallo: sin
         vacios no decodifica nada extra.
+
+        Si se pasan `confs`/`wconfs` se actualizan en el sitio con los del
+        reintento (el `rs` del retry queda en `chunks[i][3]` para el offset
+        temporal): sin esto `last_conf`/`last_word_confs` quedaban rancios
+        del decode fallido mientras el texto era el rescatado. Sin ellos
+        devuelve solo la lista (compat con llamantes viejos).
         """
         fixed = list(texts)
+        fixed_c = list(confs) if confs is not None else None
+        fixed_w = [list(w) for w in wconfs] if wconfs is not None else None
         for idx, text in enumerate(fixed):
             if text:
                 continue
@@ -424,7 +458,7 @@ class Engine:
             re_ = min(len(wav) / SAMPLE_RATE, e + 1.0)
             rwav, rgain = _fit_level(wav[int(rs * SAMPLE_RATE):int(re_ * SAMPLE_RATE)])
             try:
-                _, retry, _rc, _rw = _unpack_one(self._one((-1, rwav)))
+                _, retry, rc, rw = _unpack_one(self._one((-1, rwav)))
                 retry = (retry or "").strip()
             except Exception:
                 log.exception("reintento seg %d fail", idx + 1)
@@ -433,15 +467,26 @@ class Engine:
                      idx + 1, len(chunks), rs, re_, cpeak, rgain, len(retry))
             if retry:
                 fixed[idx] = retry
+                if fixed_c is not None:
+                    fixed_c[idx] = rc
+                if fixed_w is not None:
+                    fixed_w[idx] = list(rw) if rw else []
+                c0 = chunks[idx]
+                if len(c0) >= 4:
+                    chunks[idx] = (c0[0], c0[1], c0[2], rs)
         if any(fixed):
+            if confs is not None:
+                confs[:] = fixed_c
+            if wconfs is not None:
+                wconfs[:] = fixed_w
             return fixed
         # Perdida total con audio fuerte: ultimo intento acotado (antes 120s:
         # duplicaba el pico de CPU/RAM justo en el peor caso).
         if peak >= SILENCE_PEAK and len(wav) / SAMPLE_RATE >= 0.3:
             capped = min(len(wav) / SAMPLE_RATE, self.FULL_RETRY_MAX_SECONDS)
-            full = wav[:int(capped) * SAMPLE_RATE]
+            full = wav[:int(capped * SAMPLE_RATE)]
             try:
-                _, retry, _rc, _rw = _unpack_one(self._one((-1, full)))
+                _, retry, rc, rw = _unpack_one(self._one((-1, full)))
                 retry = (retry or "").strip()
             except Exception:
                 log.exception("reintento total fail")
@@ -449,6 +494,13 @@ class Engine:
             log.info("reintento total (%.1fs): %d caracteres",
                      len(full) / SAMPLE_RATE, len(retry))
             if retry:
+                if confs is not None or wconfs is not None:
+                    if confs is not None:
+                        confs[:] = [rc]
+                    if wconfs is not None:
+                        wconfs[:] = [list(rw) if rw else []]
+                    bounds[:] = [(0.0, capped)]
+                    chunks[:] = [(0, full, 1.0, 0.0)]
                 return [retry]
         return fixed
 
@@ -461,7 +513,7 @@ class Engine:
         log.info("audio %.1fs pico=%.4f dc=%.5f clip=%.3f, segmentando...",
                  dur, peak, dc, clip)
         t0 = time.time()
-        bounds = merge_short_bounds(self.segment(wav))
+        bounds = merge_short_bounds(self.segment(wav), max_seg=getattr(self, "max_seg", 20.0))
         log.info("%d segmentos en %.2fs: %s.", len(bounds), time.time() - t0,
                  ", ".join(f"{s:.2f}-{e:.2f}" for s, e in bounds))
         if not bounds:
@@ -482,7 +534,7 @@ class Engine:
             re_ = min(len(wav) / SAMPLE_RATE, e + ov)
             raw = wav[int(rs * SAMPLE_RATE):int(re_ * SAMPLE_RATE)]
             normed, gain = _fit_level(raw)
-            chunks.append((i, normed, gain))
+            chunks.append((i, normed, gain, rs))
             del raw
         t0 = time.time()
         # Decode SERIADO: el recognizer ya se serializaba con _decode_lock
@@ -493,7 +545,7 @@ class Engine:
         texts = [""] * len(chunks)
         confs = [1.0] * len(chunks)
         wconfs = [[] for _ in chunks]
-        for i, w, _g in chunks:
+        for i, w, _g, _rs in chunks:
             idx, text, conf, wc = _unpack_one(self._one((i, w)))
             texts[idx] = (text or "").strip()
             confs[idx] = conf
@@ -504,7 +556,7 @@ class Engine:
                      len(chunks[idx][1]) / SAMPLE_RATE, cpeak, chunks[idx][2],
                      conf, len(texts[idx]))
         log.info("decode %d segs en %.2fs.", len(chunks), time.time() - t0)
-        texts = self._recover_empties(wav, peak, bounds, chunks, texts)
+        texts = self._recover_empties(wav, peak, bounds, chunks, texts, confs, wconfs)
         if self.save_wavs_dir and not any(t.strip() for t in texts):
             self._dump_failure(wav, peak, dur, bounds)
         self.last_clip = clip
@@ -514,11 +566,32 @@ class Engine:
         self.last_conf = (sum(c * w for c, w in zip(confs, weights)) / sum(weights)
                           if sum(weights) else 1.0)
         # Confianzas por palabra (con offset temporal del chunk): el bias
-        # abre el gate por palabra aunque el take sea seguro.
+        # abre el gate por palabra aunque el take sea seguro. B2: el offset
+        # es rs (arranque REAL del chunk con overlap), no s: con s todo el
+        # take multi-segmento iba +ov desplazado. B3: el dedup recorta el
+        # prefijo duplicado de cada borde, asi que de cada segmento se saltan
+        # `drop` palabras (no se trunca la cola): el gate mira la vecina
+        # correcta. join_texts usa el mismo _overlap_count: mismo recorte.
         merged = []
-        for (s, _e), wc in zip(bounds, wconfs):
-            for w, c, a, b in wc:
-                merged.append((w, c, s + a, s + b))
+        drops = [0] * len(texts)
+        # Igual que join_texts: cada borde se cose contra la pieza ya
+        # unida (merged[-1]), no contra el acumulado plano. Con el
+        # acumulado, una repeticion legitima en un borde tardio podia
+        # confundirse con un duplicado del primer segmento (3+ segs).
+        pieces = []
+        for j, t in enumerate(texts):
+            s = (t or "").strip()
+            if not s:
+                continue
+            if pieces:
+                drops[j] = _overlap_count(pieces[-1], s)
+                pieces.append(" ".join(s.split()[drops[j]:]))
+            else:
+                pieces.append(s)
+        for j, (_s, _e) in enumerate(bounds):
+            rs = chunks[j][3]
+            for w, c, a, b in wconfs[j][drops[j]:]:
+                merged.append((w, c, rs + a, rs + b))
         self.last_word_confs = merged
         return join_texts(texts)
 

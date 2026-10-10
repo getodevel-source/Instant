@@ -76,7 +76,8 @@ def main(argv=None):
                           help="además descarga y verifica el asset en DIR")
     p_update.add_argument("--apply", action="store_true",
                           help="tras descargar, aplica el binario (Linux/macOS)")
-
+    p_update.add_argument("--allow-source-apply", action="store_true",
+                          help="permite --apply aunque no sea binario congelado")
     args, rest = ap.parse_known_args(argv)
     _log_setup()
     if args.cmd is None:
@@ -118,8 +119,10 @@ def main(argv=None):
             args.check_deps, args.fix_deps, bool(rest))
         if not any(cli_options):
             override = False if args.no_autostart else True if args.autostart else None
-            return _run_gui("setup", autostart_override=override)
-
+            rc = _run_gui("setup", autostart_override=override)
+            if rc != 2:
+                return rc
+            print("Sin entorno gráfico; abro el asistente de terminal (TUI)...")
         from instant_app.setup import cmd_setup
         forward = ["--yes"] if args.yes else []
         for key in ("mic", "key", "threads", "llm_url", "context_profile"):
@@ -151,9 +154,10 @@ def main(argv=None):
 
     if args.cmd == "update":
         from instant_app import update as update_module
-        return update_module.cmd_update(getattr(args, "download", None),
-                                        apply=bool(getattr(args, "apply", False)))
-
+        return update_module.cmd_update(
+            getattr(args, "download", None),
+            apply=bool(getattr(args, "apply", False)),
+            allow_source_apply=bool(getattr(args, "allow_source_apply", False)))
     from instant_app.daemon_lifecycle import (
         acquire_daemon_mutex, release_daemon_mutex)
     mutex = acquire_daemon_mutex()

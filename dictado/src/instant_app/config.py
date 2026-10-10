@@ -101,7 +101,25 @@ def load():
                 log.exception("leí el respaldo, pero no pude reparar la config")
     for k in DEFAULTS:
         if k in disk:
-            cfg[k] = disk[k]
+            v = disk[k]
+            if k in INT_KEYS and isinstance(v, bool):
+                continue
+            if k in INT_KEYS and not isinstance(v, int):
+                try:
+                    v = int(v)
+                except (TypeError, ValueError):
+                    log.warning("ignoro %s=%r de la config (no es int)", k, disk[k])
+                    continue
+            if k in FLOAT_KEYS and isinstance(v, bool):
+                continue
+            if k in FLOAT_KEYS and not isinstance(v, (int, float)):
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    log.warning("ignoro %s=%r de la config (no es float)", k, disk[k])
+                    continue
+                v = float(v)
+            cfg[k] = v
     # Env pisa archivo.
     env_map = {"DICTADO_MIC": "mic_hint", "DICTADO_KEY": "key",
                "DICTADO_THREADS": "threads", "DICTADO_SOUND": "sound",
@@ -122,8 +140,10 @@ def load():
                 log.warning("ignoro %s=%r (no es int)", env, v)
                 continue
             if k == "threads":
-                import os as _os
-                cpu = _os.cpu_count() or 4
+                try:
+                    cpu = os.cpu_count() or 4
+                except Exception:
+                    cpu = 4
                 value = max(1, min(8, min(value, cpu)))
             cfg[k] = value
         elif k in FLOAT_KEYS:
@@ -132,7 +152,7 @@ def load():
             except ValueError:
                 log.warning("ignoro %s=%r (no es float)", env, v)
         elif k == "sound":
-            cfg[k] = v == "1"
+            cfg[k] = v.strip().lower() in ("1", "true", "yes", "y", "on", "si", "s")
         elif k == "autostart":
             cfg[k] = v.strip().lower() in ("1", "true", "yes", "y", "s", "si", "on")
         elif k == "mic_hint" and v.lstrip("-").isdigit():
@@ -162,11 +182,21 @@ def save(cfg):
         temp_path = _write_temp_json(path, slim)
 
         # Preserve the last valid config only after the replacement content
-        # has been serialized successfully.
+        # has been serialized successfully. El .bak se escribe atomico con
+        # fsync: un corte a mitad de copia no deja un respaldo trunco.
         if os.path.isfile(path):
             try:
-                import shutil
-                shutil.copyfile(path, path + ".bak")
+                bak_tmp = _write_temp_json(path + ".bak", _read_json(path))
+                os.replace(bak_tmp, path + ".bak")
+                try:
+                    fd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
+                except OSError:
+                    pass
+                else:
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
             except Exception:
                 log.warning("no pude respaldar la config anterior", exc_info=True)
         os.replace(temp_path, path)

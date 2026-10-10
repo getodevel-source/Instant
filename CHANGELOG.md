@@ -3,6 +3,37 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Corregido (auditoría interna, 4 rondas)
+
+- Lanzadores `scripts/` reparados tras la mudanza: `ROOT` en la raíz del
+  repo (venv, paquete, modelos y `dist/` resuelven bien); `update.bat` usa el
+  `instant-stop.bat` vecino; `run`/`status` verifican la línea de comando
+  antes de dar una instancia por viva.
+- Ciclo de dictado: tope de sesión en one-shot, hotkey que sobrevive a
+  errores de callback, releases viejos descartados por `sid`, avisos en el
+  overlay en vías de error, pre-roll rancio nunca transcripto, `mic_index`
+  vencido con error visible, re-pulsación rápida sin perder el onset.
+- Motor: offsets temporales con `rs`, confianzas del retry rescatado,
+  `drops` por pieza, `merge_short_bounds` con tope, instancia VAD perdedora
+  liberada, `vad_sil`/`min_dur`/`vad_model` cableados.
+- Configuración y ciclo de vida: instancia única POSIX con `flock` sobre un
+  solo `instant.pid`, `update --apply` bloqueado en checkout, guardado
+  atómico con `.bak`, autostart macOS con `launchctl`, foco/cierre de panel
+  verificados, `stop` que limpia el pid rancio.
+- Panel y overlay: toasts con `dismiss` notificado (sin fugas, con tope),
+  selects saneados con aviso, `roundRect` con fallback, `key_capture`
+  cableada, diagnóstico que no reabre el modal, `PageUp`/`PageDown` y
+  `CapsLock` configurables.
+- Corrección y pegado: `bias` sin tokens dictados en logs, `por` suelto fuera
+  de interrogativas, vecinas sin cruzar oración, `quemet` solo en commit,
+  clipboard guardado/restaurado, Wayland detectado antes de pisar, regla C
+  siempre aplicada.
+- Suite: 210 pruebas en verde (4 omitidas); 3 ficheros script convertidos a
+  `unittest.TestCase`; `setuptools>=77`; bench de bias ejecutable de una
+  pasada.
+
 ## [0.4.1] - 2026-10-09
 
 ### Mejorado

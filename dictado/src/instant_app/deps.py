@@ -82,10 +82,21 @@ def _lib_present(name):
     try:
         r = subprocess.run(["ldconfig", "-p"], capture_output=True,
                            text=True, timeout=10)
-        if r.returncode == 0 and name in r.stdout:
+        if r.returncode == 0 and name in (r.stdout or ""):
             return True
+    except FileNotFoundError:
+        pass
     except Exception:
         pass
+    # Fallback sin ldconfig: el .so suele estar en las rutas del linker.
+    for directory in ("/lib", "/usr/lib", "/lib64", "/usr/lib64",
+                      "/usr/local/lib"):
+        try:
+            for entry in os.listdir(directory):
+                if entry.startswith("lib%s" % name) and ".so" in entry:
+                    return True
+        except OSError:
+            continue
     return False
 
 
@@ -99,7 +110,8 @@ def _dpkg_ok(pkg):
 
 def _has_net():
     """Hay red para descargar? Via proxy se asume que si (pip lo usa)."""
-    if os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY"):
+    env = {k.lower(): v for k, v in os.environ.items()}
+    if env.get("https_proxy") or env.get("http_proxy"):
         return True
     try:
         socket.create_connection(("pypi.org", 443), timeout=4).close()

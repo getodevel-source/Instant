@@ -298,6 +298,8 @@ class _TkOverlay:
             pass
         self.q.put(event)
 
+    # Sin guarda de sesion a proposito: el wrapper Overlay.set_level ya
+    # rechaza sesiones viejas; aqui solo se coalescea el maximo pendiente.
     def set_level(self, session, value):
         del session
         try:
@@ -305,7 +307,11 @@ class _TkOverlay:
         except (TypeError, ValueError):
             return
         with self._dispatch_lock:
-            self._level = max(self._level, level)
+            # C1: el wrapper pone a cero al entrar en processing/success/
+            # notice/error/idle; antes max() volvia el 0.0 no-op y la pastilla
+            # conservaba una cola que decaia (~0.82 cada 90 ms). Asignar es
+            # trivial y correcto: el max-coalesce solo importa subiendo.
+            self._level = level if level == 0.0 else max(self._level, level)
 
     def set_bands(self, session, values):
         # El fallback Tk mueve sus 5 barras con el nivel global (set_level);

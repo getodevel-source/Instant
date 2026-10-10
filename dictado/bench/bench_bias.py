@@ -91,6 +91,8 @@ def build_cache():
             w.setsampwidth(2)
             w.setframerate(SR)
             w.writeframes(pcm.tobytes())
+        with open(refs_path, "a", encoding="utf-8") as f:
+            f.write(s.replace("\n", " ") + "\n")
 
 
 def main():
@@ -100,8 +102,16 @@ def main():
     from instant_app.engine import Engine
 
     build_cache()
-    with open(os.path.join(CACHE, "refs.txt"), encoding="utf-8") as f:
+    refs_path = os.path.join(CACHE, "refs.txt")
+    if not os.path.isfile(refs_path):
+        print("BIASBENCH sin cache (refs.txt ausente): corre con --regen "
+              "o conexion para TTS; nada que medir.", flush=True)
+        return
+    with open(refs_path, encoding="utf-8") as f:
         refs = [line.strip() for line in f if line.strip()]
+    if not refs:
+        print("BIASBENCH cache vacia (0 refs): nada que medir.", flush=True)
+        return
     wavs = []
     for i in range(len(refs)):
         with wave.open(os.path.join(CACHE, f"tech_{i:02d}.wav"), "rb") as w:
@@ -112,20 +122,21 @@ def main():
     eng = Engine(data_dir=resolve_data_dir(), threads=4)
     eng.recognizer()
     eng.vad()
+    # Una sola pasada de transcribe por wav: baseline guarda el texto y la
+    # confianza; bias reutiliza ese mismo texto (sin doble pasada).
+    base, confs, wconfs = [], [], []
+    for w in wavs:
+        base.append(eng.transcribe(w))
+        confs.append(eng.last_conf)
+        wconfs.append(list(eng.last_word_confs))
     for name in ("baseline", "bias"):
-        hyps = []
-        for w in wavs:
-            h = eng.transcribe(w)
-            if name == "bias":
-                h = _bias.correct_biased(h, conf=eng.last_conf,
-                                          word_confs=eng.last_word_confs)
-            hyps.append(h)
+        if name == "baseline":
+            hyps = list(base)
+        else:
+            hyps = [_bias.correct_biased(h, conf=c, word_confs=wc)
+                    for h, c, wc in zip(base, confs, wconfs)]
         wers = [_wer(_norm_es(r), _norm_es(h))
                 for r, h in zip(refs, hyps)]
-        confs = []
-        for w in wavs:
-            eng.transcribe(w)
-            confs.append(eng.last_conf)
         print(f"BIASBENCH {name}: n={len(wavs)} "
               f"wer={float(np.mean(wers)):.3f} "
               f"conf_media={float(np.mean(confs)):.2f}", flush=True)

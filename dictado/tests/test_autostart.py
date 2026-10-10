@@ -106,7 +106,11 @@ with tempfile.TemporaryDirectory() as d:
             _check("portable POSIX usa su binario para autostart",
                    a._resolve_posix_argv() == [frozen_posix, "run"])
 
-        # is_enabled nunca crashea con HOME roto.
+        # Windows: acceso ajeno que solo contenga "instant" como argumento de otra app no se toma por nuestro
+        alien_lnk_strict = os.path.join(d, "Instant Dictado.lnk")
+        with patch.object(a, "_read_win_target", return_value=("C:\\OtherApp\\other.exe", "--instant-flag")):
+            _check("match estricto no adopta app ajena", a._is_ours_win(alien_lnk_strict) is False)
+
         os.environ["HOME"] = os.path.join(d, "no-existe-definitivamente")
         os.environ["APPDATA"] = os.path.join(d, "no-existe-definitivamente")
         try:

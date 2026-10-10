@@ -4,8 +4,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$SCRIPT_DIR")"
 if [ -z "${DICTADO_DATA:-}" ]; then
-  DICTADO_DATA="$SCRIPT_DIR/models"
+  DICTADO_DATA="$ROOT/models"
   export DICTADO_DATA
 fi
 

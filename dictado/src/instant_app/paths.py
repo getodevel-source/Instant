@@ -14,6 +14,9 @@ def config_dir():
         return os.path.join(base, "instant")
     if sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "instant")
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg and xdg.strip():
+        return os.path.join(xdg.strip(), "instant")
     return os.path.join(os.path.expanduser("~"), ".config", "instant")
 
 
@@ -24,8 +27,10 @@ def user_data_dir():
     if sys.platform == "darwin":
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support",
                             "instant", "models")
-    xdg = os.environ.get("XDG_DATA_HOME", os.path.join(os.path.expanduser("~"), ".local", "share"))
-    return os.path.join(xdg, "instant", "models")
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if not (xdg and xdg.strip()):
+        xdg = os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(xdg.strip(), "instant", "models")
 
 
 def _has_models(d):
@@ -35,8 +40,8 @@ def _has_models(d):
 def resolve_data_dir():
     """DICTADO_DATA > cwd/models > frozen checkout models > user data."""
     env = os.environ.get("DICTADO_DATA")
-    if env:
-        return env
+    if env and env.strip():
+        return os.path.expanduser(os.path.expandvars(env.strip()))
     cwd_models = os.path.join(os.getcwd(), "models")
     if _has_models(cwd_models):
         return cwd_models

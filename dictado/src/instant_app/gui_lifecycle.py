@@ -19,6 +19,15 @@ def _user32():
     dll = ctypes.WinDLL("user32", use_last_error=True)
     dll.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
     dll.FindWindowW.restype = wintypes.HWND
+    dll.EnumWindows.argtypes = (wintypes.WINFUNCTYPE(
+        wintypes.BOOL, wintypes.HWND, wintypes.LPARAM), wintypes.LPARAM)
+    dll.EnumWindows.restype = wintypes.BOOL
+    dll.GetClassNameW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    dll.GetClassNameW.restype = ctypes.c_int
+    dll.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+    dll.GetWindowTextW.restype = ctypes.c_int
+    dll.IsWindow.argtypes = (wintypes.HWND,)
+    dll.IsWindow.restype = wintypes.BOOL
     dll.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
     dll.SetForegroundWindow.argtypes = (wintypes.HWND,)
     dll.SetForegroundWindow.restype = wintypes.BOOL
@@ -31,16 +40,84 @@ def _user32():
     return dll
 
 
+def _is_our_window(user32, hwnd):
+    """True si el hwnd sigue siendo una ventana nuestra de Instant.
+
+    No basta el titulo ("Instant" lo puede tener cualquier app): se exige la
+    clase de ventana Qt registrada por nuestro panel. Sin user32 real (mocks
+    de tests) se acepta el hwnd tal cual.
+    """
+    get_class = getattr(user32, "GetClassNameW", None)
+    if get_class is None:
+        return True
+    try:
+        buf = ctypes.create_unicode_buffer(256)
+        if not get_class(hwnd, buf, 256):
+            return False
+    except Exception:
+        return True
+    return buf.value.startswith("Qt")
+
+
+def _find_our_gui(user32):
+    """Primer hwnd nuestro con titulo Instant, o None.
+
+    El título puede no ser exacto (p. ej. "Instant — Ajustes"): se enumeran
+    las ventanas top-level buscando "instant" en el título + clase Qt*.
+    `FindWindowW(None, "Instant")` queda como atajo rápido antes de enumerar.
+    """
+    hwnd = user32.FindWindowW(None, "Instant")
+    if hwnd and _is_our_window(user32, hwnd):
+        return hwnd
+    enum = getattr(user32, "EnumWindows", None)
+    get_text = getattr(user32, "GetWindowTextW", None)
+    if enum is None or get_text is None:
+        return hwnd if hwnd and _is_our_window(user32, hwnd) else None
+    enum_is_real = getattr(enum, "argtypes", None) is not None
+    if enum_is_real:
+        try:
+            callback_type = ctypes.WINFUNCTYPE(
+                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        except AttributeError:
+            enum_is_real = False
+    found = []
+
+    def _visit(candidate, _param):
+        try:
+            buf = ctypes.create_unicode_buffer(256)
+            if not get_text(candidate, buf, 256):
+                return True
+            if "instant" not in buf.value.casefold():
+                return True
+            if _is_our_window(user32, candidate):
+                found.append(candidate)
+                return False
+        except Exception:
+            return True
+        return True
+
+    try:
+        if enum_is_real:
+            enum(callback_type(_visit), 0)
+        else:
+            # Fake de tests: EnumWindows llama al callback por ventana.
+            enum(_visit, 0)
+    except Exception:
+        return hwnd if hwnd and _is_our_window(user32, hwnd) else None
+    return found[0] if found else None
+
+
 def focus_existing_gui(request_daemon_start=False, page=None):
     """Restore the GUI and optionally request a page or daemon start."""
     if os.name != "nt":
         return False
     user32 = _user32()
-    hwnd = user32.FindWindowW(None, "Instant")
+    hwnd = _find_our_gui(user32)
     if not hwnd:
         return False
     user32.ShowWindow(hwnd, _SW_RESTORE)
-    user32.SetForegroundWindow(hwnd)
+    if not user32.SetForegroundWindow(hwnd):
+        return False
     action = None
     if request_daemon_start:
         action = _ACTION_START_DAEMON
@@ -59,26 +136,27 @@ def terminate_existing_gui(graceful_ms=1500):
     Un WM_CLOSE solo no alcanza para tareas que necesitan la carpeta libre
     (desinstalador, actualización): el panel puede quedar vivo esperando
     workers. Primero se intenta el cierre limpio y, si sigue ahí, se termina
-    el proceso dueño de la ventana, que es siempre nuestro.
+    el proceso dueño de la ventana, previa verificación de que sigue siendo
+    una ventana nuestra (clase Qt + mismo hwnd): nunca se mata por título.
     """
     if os.name != "nt":
         return False
     user32 = _user32()
-    hwnd = user32.FindWindowW(None, "Instant")
+    hwnd = _find_our_gui(user32)
     if not hwnd:
         return False
     close_existing_gui()
     deadline = time.monotonic() + max(0, graceful_ms) / 1000
     while time.monotonic() < deadline:
-        if not user32.FindWindowW(None, "Instant"):
+        if not _find_our_gui(user32):
             return True
         time.sleep(0.1)
-    hwnd = user32.FindWindowW(None, "Instant")
+    hwnd = _find_our_gui(user32)
     if not hwnd:
         return True
     pid = wintypes.DWORD(0)
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    if not pid.value:
+    if not pid.value or pid.value == os.getpid():
         return False
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
@@ -88,6 +166,8 @@ def terminate_existing_gui(graceful_ms=1500):
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.CloseHandle.restype = wintypes.BOOL
     _PROCESS_TERMINATE = 0x0001
+    if not _is_our_window(user32, hwnd):
+        return False
     handle = kernel32.OpenProcess(_PROCESS_TERMINATE, False, pid.value)
     if not handle:
         return False
@@ -102,7 +182,7 @@ def close_existing_gui():
     if os.name != "nt":
         return False
     user32 = _user32()
-    hwnd = user32.FindWindowW(None, "Instant")
+    hwnd = _find_our_gui(user32)
     if not hwnd:
         return False
     return bool(user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0))

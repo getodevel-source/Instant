@@ -39,6 +39,38 @@ DAEMON_MISSING_DETAIL = ("Instant no pudo iniciar. Revisá Diagnóstico.")
 STATUS_DETAIL = "Enfocá el campo donde querés escribir."
 MIC_UNAVAILABLE_LABEL = "El micrófono seleccionado no está disponible"
 
+_OVERLAY_STYLES = ("orbital", "classic")
+_THREAD_OPTIONS = (1, 2, 4, 6, 8)
+_OVERLAY_STYLE_DEFAULT = "orbital"
+_THREADS_DEFAULT = 4
+
+
+def _sanitize_overlay_style(value):
+    """Fallback para configs viejas o editadas a mano: nunca en blanco."""
+    return value if value in _OVERLAY_STYLES else _OVERLAY_STYLE_DEFAULT
+
+
+def _sanitize_threads(value):
+    """Clamp a 1..8 y snap a las opciones reales del select."""
+    if isinstance(value, bool):
+        return _THREADS_DEFAULT
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return _THREADS_DEFAULT
+    count = max(1, min(8, count))
+    return min(_THREAD_OPTIONS, key=lambda option: (abs(option - count), option))
+
+
+def _threads_is_valid(value):
+    """Lo que el select puede mostrar sin quedar en blanco."""
+    if isinstance(value, bool):
+        return False
+    try:
+        return int(value) in _THREAD_OPTIONS and float(value) == int(value)
+    except (TypeError, ValueError):
+        return False
+
 
 def _workdir():
     if getattr(sys, "frozen", False):
@@ -56,6 +88,13 @@ def _pid_value():
 
 
 def daemon_is_running():
+    """True si el PID del pidfile sigue vivo y es Instant (POSIX verifica cmdline).
+
+    POSIX: kill(pid, 0) con EPERM significa proceso vivo sin permiso para
+    señalizar -> True (G4). Tras el kill-0 se verifica la cmdline con
+    `_pid_is_instant` como hacen los .sh (`matches_instant`): un PID
+    reciclado por otro programa no cuenta como vivo (G5).
+    """
     pid = _pid_value()
     if pid is None:
         return False
@@ -74,9 +113,14 @@ def daemon_is_running():
         return False
     try:
         os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError, OSError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        # EPERM: el proceso existe pero no tenemos permiso -> vivo (G4).
+        return True
+    except OSError:
+        return False
+    return _pid_is_instant(pid)
 
 
 def _display_input_name(name):
@@ -94,23 +138,49 @@ def _display_input_name(name):
 def _pid_is_instant(pid):
     """El PID file puede quedar rancio y el SO reciclar el número: antes de
     matar se confirma que la línea de comando sea de Instant."""
-    if os.name != "nt":
-        return True
+    if os.name == "nt":
+        try:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"],
+                capture_output=True, text=True, timeout=10, creationflags=flags)
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        command = (result.stdout or "").casefold()
+        return "instant" in command
+    command = ""
     try:
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine"],
-            capture_output=True, text=True, timeout=10, creationflags=flags)
-    except (OSError, subprocess.TimeoutExpired):
-        return True
-    command = (result.stdout or "").casefold()
-    return "instant" in command
+        with open(f"/proc/{int(pid)}/cmdline", "rb") as handle:
+            command = handle.read().replace(b"\0", b" ").decode(
+                "utf-8", "replace")
+    except (FileNotFoundError, PermissionError, OSError, ValueError):
+        try:
+            result = subprocess.run(
+                ["ps", "-p", str(int(pid)), "-o", "args="],
+                capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return True
+        if result.returncode != 0:
+            return False
+        command = result.stdout or ""
+    return "instant" in command.casefold()
 
 
 def stop_daemon():
+    from instant_app.daemon import clear_pid
     pid = _pid_value()
-    if pid is None or not daemon_is_running():
+    if pid is None:
+        return False
+    if not daemon_is_running():
+        # PID file rancio (proceso muerto o PID reciclado ajeno): se borra
+        # solo si el contenido sigue siendo ese PID muerto (G1+G3). clear_pid
+        # ahora acepta el PID esperado porque no es el getpid() del llamador.
+        try:
+            if _pid_value() == pid:
+                clear_pid(pid)
+        except OSError:
+            pass
         return False
     if not _pid_is_instant(pid):
         log.warning("PID %d reciclado por el SO (no es Instant); no se mata.", pid)
@@ -132,6 +202,38 @@ def stop_daemon():
 
 
 _GUI_SERVER_BASE = "instant-gui"
+_GUI_FRAME_MAX = 65536
+
+
+def _frame_gui_request(page, start_daemon_on_open):
+    """Serializa el pedido con prefijo de longitud (4 bytes big-endian).
+
+    El framing evita que un payload fragmentado en varios readyRead se
+    lea como JSON truncado (G7): el lector acumula hasta completar los N
+    bytes anunciados y descarta lo que exceda _GUI_FRAME_MAX.
+    """
+    payload = json.dumps(
+        {"page": page, "daemon": bool(start_daemon_on_open)}).encode("utf-8")
+    import struct
+    return struct.pack(">I", len(payload)) + payload
+
+
+def _unframe_gui_requests(buffer):
+    """Extrae los payloads completos de un buffer con framing; devuelve
+    (payloads, resto). Los frames que exceden _GUI_FRAME_MAX se descartan
+    (se salta su contenido) en vez de acumularlos sin cota."""
+    import struct
+    payloads, rest = [], bytes(buffer)
+    while len(rest) >= 4:
+        (size,) = struct.unpack(">I", rest[:4])
+        if size > _GUI_FRAME_MAX:
+            rest = rest[4 + size:] if len(rest) >= 4 + size else b""
+            continue
+        if len(rest) < 4 + size:
+            break
+        payloads.append(rest[4:4 + size])
+        rest = rest[4 + size:]
+    return payloads, rest
 
 
 def _gui_server_name():
@@ -146,6 +248,8 @@ def _forward_to_existing_gui(page, start_daemon_on_open):
 
     QLocalSocket/QLocalServer son el mecanismo portable de Qt: en Windows es
     la ruta de la bandeja (mutex + FindWindow), en Linux/macOS este canal.
+    El pedido viaja con framing (prefijo de longitud de 4 bytes): el lector
+    acumula fragmentos hasta completar el frame antes de parsear (G7).
     El panel contesta `ok`; sin esa confirmación este proceso, que sale
     enseguida, podría morir con el pedido todavía en el buffer (en Windows
     cerrar el socket con datos sin leer los descarta).
@@ -157,9 +261,7 @@ def _forward_to_existing_gui(page, start_daemon_on_open):
     socket.connectToServer(_gui_server_name())
     if not socket.waitForConnected(500):
         return False
-    payload = json.dumps(
-        {"page": page, "daemon": bool(start_daemon_on_open)}).encode("utf-8")
-    socket.write(payload)
+    socket.write(_frame_gui_request(page, start_daemon_on_open))
     socket.flush()
     loop = QEventLoop()
     socket.readyRead.connect(loop.quit)
@@ -167,8 +269,9 @@ def _forward_to_existing_gui(page, start_daemon_on_open):
     if not socket.bytesAvailable():
         QTimer.singleShot(1000, loop.quit)
         loop.exec()
+    ack = bytes(socket.readAll().data()) if socket.bytesAvailable() else b""
     socket.disconnectFromServer()
-    return True
+    return ack == b"ok"
 
 
 def _install_gui_server(window):
@@ -193,9 +296,9 @@ def _install_gui_server(window):
         socket = server.nextPendingConnection()
         if socket is None:
             return
+        pending = bytearray()
 
-        def on_ready():
-            raw = bytes(socket.readAll().data())
+        def handle_frame(raw):
             try:
                 payload = json.loads(raw.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
@@ -203,6 +306,34 @@ def _install_gui_server(window):
             if payload:
                 window.apply_gui_action(
                     payload.get("page"), bool(payload.get("daemon")))
+
+        def on_ready():
+            # Compat: los lanzadores viejos escribían el JSON sin framing.
+            # Se espera si el buffer es un frame parcial plausible; si no,
+            # se trata como JSON legacy crudo (y la basura se acusa y
+            # descarta como antes, sin romper el canal).
+            import struct
+            pending.extend(bytes(socket.readAll().data()))
+            payloads, rest = _unframe_gui_requests(bytes(pending))
+            if payloads:
+                del pending[:len(pending) - len(rest)]
+                for raw in payloads:
+                    handle_frame(raw)
+            else:
+                if len(pending) >= 4:
+                    (size,) = struct.unpack(">I", bytes(pending[:4]))
+                    if size <= _GUI_FRAME_MAX and len(pending) < 4 + size:
+                        return
+                elif len(pending) < 4:
+                    return
+                try:
+                    payload = json.loads(bytes(pending).decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    payload = {}
+                del pending[:]
+                if payload:
+                    window.apply_gui_action(
+                        payload.get("page"), bool(payload.get("daemon")))
             # Acuse: el lanzador no sale hasta que el pedido llegó acá.
             socket.write(b"ok")
             socket.flush()
@@ -426,6 +557,8 @@ class PanelLogic:
         self._diagnostics_open = False
         self._diagnostics_text = "Ejecutando comprobaciones…"
         self._toast_callbacks = {}
+        self._advanced_warned = set()
+        self._key_capturing = False
         self.mic_labels = []
         self.mic_selected = None
         self.key_value = hotkey.key_label(self.cfg.get("key", "f9"))
@@ -488,9 +621,10 @@ class PanelLogic:
             "autostart": bool(self._autostart_enabled),
             "advanced": {
                 "llm_url": self.cfg.get("llm_url", ""),
-                "threads": self.cfg.get("threads", 4),
+                "threads": _sanitize_threads(self.cfg.get("threads", _THREADS_DEFAULT)),
                 "sound": bool(self.cfg.get("sound", False)),
-                "overlay_style": self.cfg.get("overlay_style", "orbital"),
+                "overlay_style": _sanitize_overlay_style(
+                    self.cfg.get("overlay_style", _OVERLAY_STYLE_DEFAULT)),
                 "max_seg": self.cfg.get("max_seg", 20),
             },
             "mic": {
@@ -546,13 +680,38 @@ class PanelLogic:
         }
 
     def push_state(self):
+        self._warn_invalid_advanced()
         self.emit("state", self.state_payload())
+
+    def _warn_invalid_advanced(self):
+        """Si el config trae valores que el select no puede mostrar, el payload
+        lleva el fallback y se avisa una vez en la UI (nunca silencio)."""
+        style = self.cfg.get("overlay_style", _OVERLAY_STYLE_DEFAULT)
+        if style not in _OVERLAY_STYLES:
+            marker = ("overlay_style", str(style))
+            if marker not in self._advanced_warned:
+                self._advanced_warned.add(marker)
+                self.toast("Indicador de voz no válido",
+                           "Se muestra el espectro reactivo hasta que elijas "
+                           "una opción válida.",
+                           level="warn")
+        threads = self.cfg.get("threads", _THREADS_DEFAULT)
+        if not _threads_is_valid(threads):
+            marker = ("threads", str(threads))
+            if marker not in self._advanced_warned:
+                self._advanced_warned.add(marker)
+                self.toast("Hilos de CPU no válidos",
+                           "Se usa un valor válido hasta que elijas entre "
+                           "1, 2, 4, 6 u 8.",
+                           level="warn")
 
     def toast(self, title, message="", level="info", actions=(), ms=4500):
         if self._closed:
             return
         toast_id = f"t{time.monotonic_ns()}"
-        self._toast_callbacks[toast_id] = [callback for _label, callback in actions]
+        if actions:
+            self._toast_callbacks[toast_id] = [
+                callback for _label, callback in actions]
         self.emit("toast", {
             "id": toast_id,
             "title": title, "message": message, "level": level,
@@ -576,6 +735,7 @@ class PanelLogic:
             log.exception("op del panel falló: %s", op)
 
     def _op_ready(self, _message):
+        self._toast_callbacks.clear()
         self.push_state()
 
     def _op_navigate(self, message):
@@ -604,7 +764,7 @@ class PanelLogic:
         self.key_captured(message.get("code"), message.get("name"))
 
     def _op_key_cancel(self, _message):
-        pass
+        self._key_capturing = False
 
     def _op_set_autostart(self, message):
         self._autostart_enabled = bool(message.get("value"))
@@ -633,10 +793,19 @@ class PanelLogic:
             try:
                 threads = int(value)
             except (TypeError, ValueError):
-                self.toast("Cantidad de hilos no válida", "Elegí entre 1 y 8.", level="warn")
+                self.toast("Cantidad de hilos no válida",
+                           "Elegí entre 1, 2, 4, 6 u 8.", level="warn")
                 return
             cpu_count = os.cpu_count() or 4
-            self.cfg["threads"] = max(1, min(8, cpu_count, threads))
+            clamped = max(1, min(8, cpu_count, threads))
+            threads = min(_THREAD_OPTIONS,
+                          key=lambda option: (abs(option - clamped), option))
+            if threads != int(value) or clamped != int(value):
+                self.toast("Hilos de CPU ajustados",
+                           f"Se pidieron {value} hilos; se usan {threads} "
+                           f"(límite: {min(8, cpu_count)} por CPU).",
+                           level="warn")
+            self.cfg["threads"] = threads
         elif key == "max_seg":
             try:
                 max_seg = float(value)
@@ -649,7 +818,12 @@ class PanelLogic:
             self.cfg["max_seg"] = max_seg
         elif key == "sound":
             self.cfg["sound"] = value is True or value in (1, "1", "true", "on")
-        elif key == "overlay_style" and value in {"classic", "orbital"}:
+        elif key == "overlay_style":
+            if value not in _OVERLAY_STYLES:
+                self.toast("Indicador de voz no válido",
+                           "Elegí entre el espectro reactivo y las barras clásicas.",
+                           level="warn")
+                return
             self.cfg["overlay_style"] = value
         else:
             return
@@ -704,6 +878,11 @@ class PanelLogic:
             callbacks[int(message.get("action") or 0)]()
         except (IndexError, TypeError, ValueError):
             log.warning("acción de toast inválida: %s", message)
+
+    def _op_toast_dismiss(self, message):
+        """La página avisa al cerrar/expirar un toast: se sueltan sus
+        acciones para no fugar callbacks ni dejar acciones muertas."""
+        self._toast_callbacks.pop(message.get("id"), None)
 
     def _op_diagnostics(self, _message):
         self.show_diagnostics()
@@ -905,9 +1084,12 @@ class PanelLogic:
             if self._closed:
                 return
             self._microphone_test_pending = False
-            self.meter = {"percent": self.meter["percent"],
-                          "text": (f"Señal detectada ({peak:.3f})." if peak > .005
-                                   else "No detecté señal; revisá micrófono/volumen.")}
+            if peak > .005:
+                self.meter = {"percent": self.meter["percent"],
+                              "text": f"Señal detectada ({peak:.3f})."}
+            else:
+                self.meter = {"percent": 0,
+                              "text": "No detecté señal; revisá micrófono/volumen."}
             self.push_state()
 
         def failed(error):
@@ -923,6 +1105,7 @@ class PanelLogic:
     # ------------------------------------------------------------------ tecla
 
     def begin_key_capture(self):
+        self._key_capturing = True
         self.emit("key_capture", {"state": "open"})
 
     def key_captured(self, code, name):
@@ -946,6 +1129,7 @@ class PanelLogic:
             self.emit("key_result", {"ok": False,
                                      "message": "No pude identificar esa tecla; probá otra."})
             return
+        self._key_capturing = False
         self._set_key(value)
         self.emit("key_result", {"ok": True, "message": ""})
 
@@ -1284,6 +1468,8 @@ class PanelLogic:
             if running:
                 self.status_var = "Instant está activo"
                 self.status_detail = STATUS_DETAIL.format(key=self.key_value)
+            elif self._daemon_start_pending or self.status_detail == DAEMON_MISSING_DETAIL:
+                self.status_var = "Listo para dictar"
             else:
                 self.status_var = "Listo para dictar"
                 self.status_detail = STATUS_DETAIL.format(key=self.key_value)
@@ -1291,12 +1477,16 @@ class PanelLogic:
             self._maybe_start_daemon_on_open()
 
         def failed(error):
+            if self._closed:
+                return
             self._daemon_check_pending = False
             log.warning("no se pudo comprobar el daemon desde el panel: %s", error)
             if self._daemon_stop_pending:
                 self._daemon_stop_pending = False
-                self.status_detail = "No se pudo comprobar el estado de Instant."
-                self.push_state()
+            self.status_var = "Listo para dictar"
+            self.status_detail = (f"No se pudo comprobar si Instant está activo: "
+                                  f"{error}")
+            self.push_state()
 
         self.tasks.submit(lambda _emit: daemon_is_running(), result, failed)
 
@@ -1355,11 +1545,16 @@ class PanelLogic:
     # ----------------------------------------------------------- diagnóstico
 
     def show_diagnostics(self):
+        already_open = self._diagnostics_open
         self._diagnostics_open = True
         self._diagnostics_text = ("Ejecutando comprobaciones…"
                                   if not self._diagnostic_running else self._diagnostics_text)
         self.push_state()
-        self.emit("diagnostics", {"state": "running", "text": self._diagnostics_text})
+        # El diagnóstico corre una sola vez: si el usuario cerró el modal, solo
+        # se reabre cuando el pedido viene con la ventana abierta.
+        if not already_open:
+            self.emit("diagnostics", {"state": "running",
+                                      "text": self._diagnostics_text, "open": True})
         if self._diagnostic_running:
             return
         self._diagnostic_running = True
@@ -1380,7 +1575,11 @@ class PanelLogic:
             self._diagnostic_running = False
             self._diagnostics_text = result[1] or "Sin salida de diagnóstico."
             self.push_state()
-            self.emit("diagnostics", {"state": "done", "text": self._diagnostics_text})
+            # Si el usuario ya cerró el modal, el texto queda para la próxima
+            # apertura: no se reabre solo.
+            if self._diagnostics_open:
+                self.emit("diagnostics", {"state": "done", "text": self._diagnostics_text,
+                                          "open": True})
 
         def failed(error):
             if self._closed:
@@ -1388,7 +1587,9 @@ class PanelLogic:
             self._diagnostic_running = False
             self._diagnostics_text = f"Diagnóstico fallido: {error}"
             self.push_state()
-            self.emit("diagnostics", {"state": "done", "text": self._diagnostics_text})
+            if self._diagnostics_open:
+                self.emit("diagnostics", {"state": "done", "text": self._diagnostics_text,
+                                          "open": True})
 
         self.tasks.submit(diagnose, done, failed)
 
@@ -1764,7 +1965,8 @@ def _panel_dir():
 
 def compose_panel_page(html, qwebchannel_js):
     """Inyecta qwebchannel.js en la plantilla (marcador comentado)."""
-    return html.replace("<!--QWEBCHANNEL-->", "<script>\n" + qwebchannel_js + "\n</script>")
+    return html.replace("<!--QWEBCHANNEL-->",
+                        "<script>\n" + qwebchannel_js + "\n</script>", 1)
 
 
 def write_panel_page():
@@ -1788,8 +1990,10 @@ def write_panel_page():
     directory = os.path.join(config_dir(), "webui")
     os.makedirs(directory, exist_ok=True)
     target = os.path.join(directory, "panel.html")
-    with open(target, "w", encoding="utf-8") as destination:
+    tmp = target + f".tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as destination:
         destination.write(compose_panel_page(html, channel_js))
+    os.replace(tmp, target)
     return target
 
 

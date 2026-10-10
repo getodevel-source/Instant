@@ -38,7 +38,9 @@ GENERAL_TERMS = {
     "Python": ["paiton", "piton"],
     "GitHub": ["hit hub", "jit hub", "github"],
     "Parakeet": ["parkit", "para kit", "parakit", "paracid", "paragit"],
-    "Qwen": ["quen", "cuen", "quemet", "cuentres"],
+    # "quemet" es SOLO de "commit": estuvo tambien en "Qwen" y ganaba
+    # "commit" por orden de insercion; Qwen conserva quen/cuen/cuentres.
+    "Qwen": ["quen", "cuen", "cuentres"],
     "OpenAI": ["o en pi", "open ai", "oupen ei ai"],
 }
 
@@ -120,18 +122,40 @@ def _words_with_keys(text):
     return words, [context._sound_key(w) for w in words]
 
 
-def _neighbour_points(keys, idx, neighbours):
-    """Puntos de evidencia contextual en ±WINDOW: 0, 1 o 2+.
+def _sent_ids(toks, widx):
+    """Id de oracion por palabra: sube en cada .?! entre palabras.
+
+    Las vecinas no cruzan frontera de oracion: "lei un comic. Hace push"
+    no rescata (push esta en otra oracion), "comic del workflow" si.
+    """
+    ids = []
+    sent = 0
+    prev = 0
+    for ti in widx:
+        for t in toks[prev:ti]:
+            if t and re.search(r"[.!?]", t):
+                sent += 1
+                break
+        ids.append(sent)
+        prev = ti + 1
+    return ids
+
+
+def _neighbour_points(keys, idx, neighbours, sent=None):
+    """Puntos de evidencia contextual en ±WINDOW sin cruzar oracion.
 
     Match exacto de vecina = 2 puntos (fuerte); fonetico ≤1 = 1 punto
     (debil, la vecina tambien sale deformada). Se exigen ≥2 puntos:
-    una exacta o dos debiles. Las protegidas no cuentan.
+    una exacta o dos debiles. Las protegidas no cuentan. `sent` (de
+    `_sent_ids`): la vecina con otra oracion no suma.
     """
     want = {context._sound_key(n) for n in neighbours}
     lo, hi = max(0, idx - WINDOW), min(len(keys), idx + WINDOW + 1)
     points = 0
     for j in range(lo, hi):
         if j == idx or not keys[j] or keys[j] in context._STOPLIST_KEYS:
+            continue
+        if sent is not None and sent[j] != sent[idx]:
             continue
         if keys[j] in want:
             return 2
@@ -144,9 +168,9 @@ def _neighbour_points(keys, idx, neighbours):
     return points
 
 
-def _has_neighbour(keys, idx, neighbours):
-    """Compat: ¿evidencia suficiente (≥2 puntos)?"""
-    return _neighbour_points(keys, idx, neighbours) >= 2
+def _has_neighbour(keys, idx, neighbours, sent=None):
+    """Compat: ¿evidencia suficiente (≥2 puntos, misma oracion)?"""
+    return _neighbour_points(keys, idx, neighbours, sent) >= 2
 
 
 def _strong_spot(text):
@@ -162,6 +186,7 @@ def _strong_spot(text):
     words = [toks[i] for i in widx]
     if not words:
         return text
+    sent = _sent_ids(toks, widx)
     for pos, word in enumerate(words):
         strong = STRONG_SPOT.get(word.casefold())
         if strong is None:
@@ -171,7 +196,7 @@ def _strong_spot(text):
         lo, hi = max(0, pos - WINDOW), min(len(words), pos + WINDOW + 1)
         points = 0
         for j in range(lo, hi):
-            if j == pos:
+            if j == pos or sent[j] != sent[pos]:
                 continue
             wj = words[j].casefold()
             if wj in want:
@@ -185,8 +210,7 @@ def _strong_spot(text):
                 break
         if points >= 2:
             toks[widx[pos]] = term
-            log.info("bias strong rescato %r->%r (%d puntos).",
-                     word, term, points)
+            log.debug("bias strong rescato %d puntos.", points)
     return "".join(toks)
 
 
@@ -208,6 +232,7 @@ def _weak_spot(text, allow=None):
     keys = [context._sound_key(w) for w in words]
     if not words:
         return text
+    sent = _sent_ids(toks, widx)
     for pos, (word, key) in enumerate(zip(words, keys)):
         if allow is not None and pos not in allow:
             continue
@@ -235,9 +260,9 @@ def _weak_spot(text, allow=None):
                 # La grafia preferida ya presente no se reescribe.
                 if key == tkey and word.casefold() == term.casefold():
                     continue
-            if _has_neighbour(keys, pos, neighbours):
+            if _has_neighbour(keys, pos, neighbours, sent):
                 toks[widx[pos]] = term
-                log.info("bias contexto rescato %r->%r.", word, term)
+                log.debug("bias contexto rescato len=%d.", len(word))
                 keys[pos] = context._sound_key(term)
                 break
     return "".join(toks)
@@ -312,7 +337,9 @@ def correct_biased(text, conf=1.0, threshold=DEFAULT_THRESHOLD,
     try:
         conf = float(conf)
     except (TypeError, ValueError):
-        return text
+        # Como llm.maybe_polish: conf invalida = take seguro (1.0).
+        # La Regla C corre siempre igual (ver docstring).
+        conf = 1.0
     out = _strong_spot(text)
     if conf < threshold:
         cfg = {"active_context": "General",

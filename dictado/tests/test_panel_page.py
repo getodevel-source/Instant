@@ -35,9 +35,17 @@ class PanelPageContractTests(unittest.TestCase):
         for expected in ("<!--QWEBCHANNEL-->", "window.__panelReady",
                          "bridge.call", 'on("state", onState)',
                          'on("toast", onToast)', 'on("key_result", onKeyResult)',
+                         'on("key_capture", onKeyCapture)',
                          'op:"ready"', 'op:"save_config"', 'op:"toggle_daemon"',
-                         'op:"key_captured"', 'op:"diagnostics"'):
+                         'op:"key_captured"', 'op:"toast_dismiss"',
+                         'op:"diagnostics"'):
             self.assertIn(expected, source)
+
+    def test_toasts_are_capped_to_bound_dom_nodes(self):
+        """onToast descarta viejos (max 3): sin cota el DOM crece (G6)."""
+        source = self._source()
+        self.assertIn("MAX_TOASTS", source)
+        self.assertRegex(source, r"while\s*\(toasts\.children\.length\s*>\s*MAX_TOASTS\)")
 
     def test_page_keeps_the_user_facing_copy(self):
         source = self._source()
@@ -91,6 +99,22 @@ class PanelPageContractTests(unittest.TestCase):
         self.assertIn("<script>", out)
         self.assertIn("window.qt=1;", out)
         self.assertNotIn("<!--QWEBCHANNEL-->", out)
+
+    def test_normalize_key_matches_hotkey_contract(self):
+        source = self._source()
+        block = source[source.index("function normalizeKey"):]
+        block = block[:block.index("function onKeyResult")]
+        for expected in ('PageUp:"page_up"', 'PageDown:"page_down"',
+                         'CapsLock:"caps_lock"'):
+            self.assertIn(expected, block,
+                          f"panel.html: normalizeKey debe emitir {expected}")
+        self.assertNotIn('"pageup"', block)
+        self.assertNotIn('"pagedown"', block)
+        with open(os.path.join(PACKAGE, "hotkey.py"), encoding="utf-8") as handle:
+            hotkey_source = handle.read()
+        for key in ("page_up", "page_down", "caps_lock"):
+            self.assertIn(f'"{key}": "{key}"', hotkey_source,
+                         f"hotkey.py: falta el alias POSIX {key}")
 
 
 class HostContractTests(unittest.TestCase):

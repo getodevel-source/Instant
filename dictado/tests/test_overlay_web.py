@@ -53,6 +53,21 @@ class ComposePageTests(unittest.TestCase):
         # El "Copiado" es copy del renderer classic, como en el QML.
         self.assertIn("Copiado", source)
 
+    def test_roundrect_falls_back_without_native_support(self):
+        with open(PAGE_PATH, encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("typeof C.roundRect", source)
+        self.assertIn("arcTo", source)
+
+    def test_draw_loop_never_dies_on_a_bad_frame(self):
+        with open(PAGE_PATH, encoding="utf-8") as handle:
+            source = handle.read()
+        frame = source[source.index("function frame(now)"):]
+        frame = frame[:frame.index("function hasPending")]
+        self.assertIn("try {", frame)
+        self.assertIn("catch", frame)
+        self.assertIn("requestAnimationFrame(frame)", frame)
+
 
 class WindowSizesTests(unittest.TestCase):
     def test_both_styles_have_room_for_wide_feedback_pills(self):

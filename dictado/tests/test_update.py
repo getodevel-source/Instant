@@ -182,6 +182,31 @@ class ApplyUpdateTests(unittest.TestCase):
             with open(target, "rb") as handle:
                 self.assertEqual(handle.read(), b"version nueva")
 
+    def test_apply_binary_update_blocks_source_mode_unless_allowed(self):
+        with patch.object(update_module.sys, "platform", "linux"), \
+                patch("instant_app.update.install_mode", return_value="source"):
+            with self.assertRaisesRegex(RuntimeError, "instalación source"):
+                update_module.apply_binary_update("descarga")
+            # allow_source solo no alcanza: sin target explícito fuera del
+            # intérprete, nunca se sobrescribe sys.executable.
+            with self.assertRaisesRegex(RuntimeError, "instalación source"):
+                update_module.apply_binary_update("descarga", allow_source=True)
+            # Con target explícito fuera del prefijo, pasa el guard
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.object(update_module.sys, "prefix", "/otro/prefix"), \
+                    patch.object(update_module.sys, "executable", "/otro/prefix/bin/python"):
+                downloaded = os.path.join(directory, "instant-linux.download")
+                target = os.path.join(directory, "instant")
+                with open(downloaded, "wb") as handle:
+                    handle.write(b"nuevo")
+                with open(target, "wb") as handle:
+                    handle.write(b"viejo")
+                applied = update_module.apply_binary_update(
+                    downloaded, target, allow_source=True)
+                self.assertEqual(applied, target)
+                with open(target, "rb") as handle:
+                    self.assertEqual(handle.read(), b"nuevo")
+                self.assertFalse(os.path.isfile(downloaded))
 
 class DownloadVerifyTests(unittest.TestCase):
     def _fixture(self, body):

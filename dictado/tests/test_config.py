@@ -66,6 +66,18 @@ class ConfigPersistenceTests(unittest.TestCase):
                 repaired = json.load(handle)
             self.assertEqual(repaired["key"], "f10")
 
+    def test_numeric_types_and_sound_variants_parsed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"threads": "invalid", "max_seg": "bad", "sound": False}, handle)
+            with patch("instant_app.config.config_path", return_value=path), \
+                    patch.dict(os.environ, {"DICTADO_SOUND": "si"}, clear=True):
+                cfg = config.load()
+            self.assertEqual(cfg["threads"], config.DEFAULTS["threads"])
+            self.assertEqual(cfg["max_seg"], config.DEFAULTS["max_seg"])
+            self.assertTrue(cfg["sound"])
+
 
 if __name__ == "__main__":
     unittest.main()

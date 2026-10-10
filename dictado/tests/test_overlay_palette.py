@@ -53,6 +53,10 @@ class WebOverlayPaletteTests(unittest.TestCase):
                          "bridge.frame.connect", "bridge.event", "Copiado"):
             self.assertIn(expected, source)
 
+    def test_roundrect_polyfill_survives(self):
+        source = self._source()
+        self.assertIn("typeof C.roundRect", source)
+
 
 if __name__ == "__main__":
     unittest.main()

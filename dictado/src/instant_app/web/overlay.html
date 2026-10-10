@@ -133,8 +133,24 @@
   }
 
   function roundRect(x, y, w, h, r) {
+    if (typeof C.roundRect === "function") {
+      C.beginPath();
+      C.roundRect(x, y, w, h, r);
+      return;
+    }
+    // QtWebEngine viejo / Chromium sin roundRect: mismo trazado a mano.
+    const radius = Math.max(0, Math.min(r || 0, w / 2, h / 2));
     C.beginPath();
-    C.roundRect(x, y, w, h, r);
+    C.moveTo(x + radius, y);
+    C.lineTo(x + w - radius, y);
+    C.arcTo(x + w, y, x + w, y + radius, radius);
+    C.lineTo(x + w, y + h - radius);
+    C.arcTo(x + w, y + h, x + w - radius, y + h, radius);
+    C.lineTo(x + radius, y + h);
+    C.arcTo(x, y + h, x, y + h - radius, radius);
+    C.lineTo(x, y + radius);
+    C.arcTo(x, y, x + radius, y, radius);
+    C.closePath();
   }
 
   function modeColor() {
@@ -405,28 +421,35 @@
     C.restore();
   }
   function frame(now) {
-    const dt = lastMs ? Math.min((now - lastMs) / 1000, 0.05) : 0.016;
-    lastMs = now;
-    timeS += dt;
-    state.level += (state.target.level - state.level) * (1 - Math.exp(-dt / 0.090));
-    state.pitch += (state.target.pitch - state.pitch) * (1 - Math.exp(-dt / 0.140));
-    for (let i = 0; i < state.bands.length; i++) {
-      const target = state.target.bands[i] || 0;
-      const tau = target > state.bands[i] ? 0.055 : 0.135;
-      state.bands[i] += (target - state.bands[i]) * (1 - Math.exp(-dt / tau));
-    }
+    try {
+      const dt = lastMs ? Math.min((now - lastMs) / 1000, 0.05) : 0.016;
+      lastMs = now;
+      timeS += dt;
+      state.level += (state.target.level - state.level) * (1 - Math.exp(-dt / 0.090));
+      state.pitch += (state.target.pitch - state.pitch) * (1 - Math.exp(-dt / 0.140));
+      for (let i = 0; i < state.bands.length; i++) {
+        const target = state.target.bands[i] || 0;
+        const tau = target > state.bands[i] ? 0.055 : 0.135;
+        state.bands[i] += (target - state.bands[i]) * (1 - Math.exp(-dt / tau));
+      }
 
-    C.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (state.mode !== 'idle') {
-      if (state.style === 'orbital')
-        drawOrbital(now);
-      else
-        drawClassic();
-    } else if (exitStartMs) {
-      if (now - exitStartMs < 190 && state.style === 'orbital')
-        drawOrbital(now, true);
-      else
-        exitStartMs = 0;
+      C.clearRect(0, 0, window.innerWidth, window.innerHeight);
+      if (state.mode !== 'idle') {
+        if (state.style === 'orbital')
+          drawOrbital(now);
+        else
+          drawClassic();
+      } else if (exitStartMs) {
+        if (now - exitStartMs < 190 && state.style === 'orbital')
+          drawOrbital(now, true);
+        else
+          exitStartMs = 0;
+      }
+    } catch (e) {
+      // Un frame corrupto no mata el loop: se vuelve a idle limpio.
+      exitStartMs = 0;
+      state.mode = 'idle';
+      try { C.clearRect(0, 0, window.innerWidth, window.innerHeight); } catch (ignored) {}
     }
 
     if (state.mode === 'idle' && !exitStartMs && !hasPending()) {

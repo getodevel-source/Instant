@@ -44,7 +44,7 @@ def _parse_args(argv=None):
                     help="no interactivo: usa defaults/config actual sin preguntar")
     ap.add_argument("--mic", type=int, default=None, help="indice sounddevice del mic")
     ap.add_argument("--key", default=None, help="tecla hold-to-talk")
-    ap.add_argument("--threads", type=int, default=None, help="hilos CPU")
+    ap.add_argument("--threads", type=int, default=None, help="hilos CPU (tope 8)")
     ap.add_argument("--sound", action="store_true", default=None, help="activa pitidos")
     ap.add_argument("--no-sound", action="store_true", help="apaga pitidos")
     ap.add_argument("--autostart", action="store_true", default=None,
@@ -70,7 +70,10 @@ def _parse_args(argv=None):
                     help="muestra tabla de dependencias y sigue")
     ap.add_argument("--fix-deps", action="store_true",
                     help="autoinstala lo permitido por el SO y re-chequea")
-    return ap.parse_args(argv)
+    known, unknown = ap.parse_known_args(argv)
+    for flag in unknown:
+        print(f"  AVISO: flag desconocido {flag}; se ignora.")
+    return known
 
 
 def _real_inputs():
@@ -110,7 +113,7 @@ def cmd_setup(argv=None):
     else:
         print(f"  modelos en: {data_dir} (dev/DICTADO_DATA)")
     from instant_app import models as dl
-    status = dl.check(data_dir)
+    status = dl.check(data_dir, verify=True)
     models_ok = all(status.values())
     if models_ok:
         print("  modelos OK (VoxCore + VAD).")
@@ -120,7 +123,7 @@ def cmd_setup(argv=None):
         print("  descargando modelos juntos: VoxCore (~670MB) + VAD (~1MB)...")
         try:
             dl.download_models(data_dir)
-            models_ok = all(dl.check(data_dir).values())
+            models_ok = all(dl.check(data_dir, verify=True).values())
             print("  modelos OK (VoxCore + VAD)." if models_ok
                   else "  descarga incompleta, reintenta luego.")
         except Exception:
@@ -256,7 +259,11 @@ def cmd_setup(argv=None):
                       "activado" if real else "desactivado"))
         cfg["autostart"] = real
     import multiprocessing
-    max_t = max(1, multiprocessing.cpu_count())
+    try:
+        cpu = multiprocessing.cpu_count()
+    except Exception:
+        cpu = 4
+    max_t = max(1, min(cpu or 4, 8))
     if o.threads is not None:
         cfg["threads"] = min(max(1, o.threads), max_t)
     if o.sound:
@@ -356,7 +363,8 @@ def cmd_setup(argv=None):
         try:
             from instant_app.engine import Engine
             eng = Engine(data_dir, threads=cfg.get("threads", 4),
-                         max_seg=cfg.get("max_seg", 20.0))
+                         max_seg=cfg.get("max_seg", 20.0),
+                         vad_model=cfg.get("vad_model", "silero"))
             eng.recognizer()
             eng.vad()
             print("  warmup modelos: OK")

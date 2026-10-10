@@ -28,6 +28,10 @@ class DependencyVersionTests(unittest.TestCase):
         install.assert_not_called()
         self.assertIn("requiere Python 3.12+", result["PySide6"]["hint"])
 
+    def test_has_net_recognizes_lowercase_proxy(self):
+        with patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:8080"}, clear=False):
+            self.assertTrue(deps._has_net())
+
 
 if __name__ == "__main__":
     unittest.main()

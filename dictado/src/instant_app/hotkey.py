@@ -234,15 +234,24 @@ class WindowsPolling:
         if self._t is not None and self._t.is_alive():
             log.warning("hotkey polling ya activo; ignoro segundo start.")
             return
+        self._stop.clear()
 
         def _loop():
             was = False
             while not self._stop.is_set():
-                down = bool(self.is_down())
-                if down and not was:
-                    on_press()
-                elif not down and was:
-                    on_release()
+                try:
+                    down = bool(self.is_down())
+                except Exception:
+                    log.exception("hotkey polling fail (is_down)")
+                    time.sleep(interval)
+                    continue
+                try:
+                    if down and not was:
+                        on_press()
+                    elif not down and was:
+                        on_release()
+                except Exception:
+                    log.exception("hotkey callback fail")
                 was = down
                 time.sleep(interval)
 
@@ -298,15 +307,23 @@ class PynputHotkey:
             except Exception:
                 pass
             self._listener = None
+        self._down = False
+
         def _p(key):
-            if not self._down and self._norm(key):
-                self._down = True
-                on_press()
+            try:
+                if not self._down and self._norm(key):
+                    self._down = True
+                    on_press()
+            except Exception:
+                log.exception("hotkey press fail")
 
         def _r(key):
-            if self._down and self._norm(key):
-                self._down = False
-                on_release()
+            try:
+                if self._down and self._norm(key):
+                    self._down = False
+                    on_release()
+            except Exception:
+                log.exception("hotkey release fail")
 
         self._listener = self._pk.Listener(on_press=_p, on_release=_r, suppress=False)
         self._listener.start()

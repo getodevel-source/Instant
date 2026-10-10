@@ -305,6 +305,75 @@ class LogicSettingsTests(unittest.TestCase):
         self.assertEqual(state["active"], "General")
         self.assertFalse(state["removable"])
 
+    def test_toast_without_actions_registers_no_callback(self):
+        logic, _emitted = make_logic()
+        logic.toast("Hola", "mundo")
+        self.assertEqual(logic._toast_callbacks, {})
+
+    def test_toast_dismiss_drops_callbacks(self):
+        logic, emitted = make_logic()
+        logic.toast("Listo", "aplicar", actions=(("Aplicar", lambda: None),))
+        toast_id = next(payload["id"] for kind, payload in emitted if kind == "toast")
+        self.assertIn(toast_id, logic._toast_callbacks)
+        logic.handle({"op": "toast_dismiss", "id": toast_id})
+        self.assertNotIn(toast_id, logic._toast_callbacks)
+        # Doble dismiss o id desconocido: no-ops silenciosos.
+        logic.handle({"op": "toast_dismiss", "id": toast_id})
+        logic.handle({"op": "toast_dismiss", "id": "t-inexistente"})
+        self.assertEqual(logic._toast_callbacks, {})
+
+    def test_toast_action_still_runs_then_clears(self):
+        logic, emitted = make_logic()
+        seen = []
+        logic.toast("Listo", "aplicar", actions=(("Aplicar", lambda: seen.append(1)),))
+        toast_id = next(payload["id"] for kind, payload in emitted if kind == "toast")
+        logic.handle({"op": "toast_action", "id": toast_id, "action": "0"})
+        self.assertEqual(seen, [1])
+        self.assertNotIn(toast_id, logic._toast_callbacks)
+
+    def test_invalid_advanced_config_falls_back_and_warns_once(self):
+        logic, emitted = make_logic()
+        logic.cfg["overlay_style"] = "neon"
+        logic.cfg["threads"] = 3
+        logic.push_state()
+        state = logic.state_payload()["advanced"]
+        self.assertEqual(state["overlay_style"], "orbital")
+        self.assertIn(state["threads"], (1, 2, 4, 6, 8))
+        titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
+        self.assertIn("Indicador de voz no válido", titles)
+        self.assertIn("Hilos de CPU no válidos", titles)
+        warned = len([payload for kind, payload in emitted if kind == "toast"])
+        logic.push_state()
+        self.assertEqual(len([payload for kind, payload in emitted if kind == "toast"]),
+                         warned)
+
+    def test_set_advanced_clamps_threads_and_rejects_bad_style(self):
+        logic, emitted = make_logic()
+        logic.handle({"op": "set_advanced", "key": "threads", "value": "3"})
+        self.assertIn(logic.cfg["threads"], (1, 2, 4, 6, 8))
+        logic.handle({"op": "set_advanced", "key": "overlay_style", "value": "neon"})
+        self.assertEqual(logic.cfg.get("overlay_style", "orbital"), "orbital")
+        titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
+        self.assertIn("Indicador de voz no válido", titles)
+
+    def test_key_cancel_clears_capture_flag(self):
+        logic, _emitted = make_logic()
+        logic.begin_key_capture()
+        self.assertTrue(logic._key_capturing)
+        logic.handle({"op": "key_cancel"})
+        self.assertFalse(logic._key_capturing)
+
+    def test_mic_test_failure_resets_meter(self):
+        logic, _emitted = make_logic()
+        choices, preferred, sounddevice = with_mics()
+        with choices, preferred, sounddevice:
+            logic.refresh_microphones(initial=True)
+        logic.meter = {"percent": 87, "text": "Señal 0.500"}
+        with patch("instant_app.gui.audio.peak_meter", return_value=0.001):
+            logic.test_microphone()
+        self.assertEqual(logic.meter["percent"], 0)
+        self.assertIn("No detecté señal", logic.meter["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,20 +1,21 @@
 @echo off
 REM Abre el asistente de configuración de Instant.
 setlocal
-if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
-pushd "%~dp0"
+set "ROOT=%~dp0.."
+if not defined DICTADO_DATA set "DICTADO_DATA=%ROOT%\models"
+pushd "%ROOT%"
 
 if not "%~1"=="" goto :console
-if exist "dist\Instant.exe" goto :launch_gui_exe
-if exist ".venv\Scripts\pythonw.exe" goto :launch_venv_gui
+if exist "%ROOT%\dist\Instant.exe" goto :launch_gui_exe
+if exist "%ROOT%\.venv\Scripts\pythonw.exe" goto :launch_venv_gui
 goto :path_pythonw
 
 :launch_gui_exe
-start "" "%~dp0dist\Instant.exe" setup
+start "" "%ROOT%\dist\Instant.exe" setup
 goto :done
 
 :launch_venv_gui
-start "" ".venv\Scripts\pythonw.exe" -m instant_app setup
+start "" "%ROOT%\.venv\Scripts\pythonw.exe" -m instant_app setup
 goto :done
 
 :path_pythonw
@@ -30,8 +31,8 @@ start "" "%INSTANT_PYTHONW%" -m instant_app setup
 goto :done
 
 :console
-if exist ".venv\Scripts\python.exe" (
-  call ".venv\Scripts\python.exe" -m instant_app setup %*
+if exist "%ROOT%\.venv\Scripts\python.exe" (
+  call "%ROOT%\.venv\Scripts\python.exe" -m instant_app setup %*
   goto :done
 )
 

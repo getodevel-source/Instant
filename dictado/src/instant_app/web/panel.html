@@ -780,6 +780,7 @@ function renderVocab(rows) {
 }
 
 // --- toasts con acciones ---
+const MAX_TOASTS = 3;
 function onToast(raw) {
   const t = parse(raw);
   if (!t) return;
@@ -791,6 +792,14 @@ function onToast(raw) {
   p.textContent = t.message || "";
   box.appendChild(b);
   box.appendChild(p);
+  let settled = false;
+  const dismiss = (notify) => {
+    if (settled) return;
+    settled = true;
+    box.remove();
+    if (notify !== false && t.id) send({op:"toast_dismiss", id:t.id});
+  };
+  box._dismissToast = () => dismiss(true);
   (t.actions || []).forEach((a) => {
     const row = box.querySelector(".acts") || (() => {
       const d = document.createElement("div");
@@ -803,12 +812,18 @@ function onToast(raw) {
     btn.textContent = a.label;
     btn.addEventListener("click", () => {
       send({op:"toast_action", id:t.id, action:a.id});
-      box.remove();
+      dismiss(false);
     });
     row.appendChild(btn);
   });
   toasts.appendChild(box);
-  window.setTimeout(() => box.remove(), t.ms || 4500);
+  while (toasts.children.length > MAX_TOASTS) {
+    const oldest = toasts.firstElementChild;
+    if (oldest && oldest._dismissToast) oldest._dismissToast();
+    else if (oldest) oldest.remove();
+    else break;
+  }
+  window.setTimeout(() => dismiss(true), t.ms || 4500);
 }
 
 function onMeter(raw) {
@@ -835,6 +850,9 @@ function onProgress(raw) {
 function onDiagnostics(raw) {
   const d = parse(raw);
   if (!d) return;
+  // El estado final puede llegar con el modal ya cerrado: solo se abre si
+  // Python lo pide con el flag (el snapshot de state ya lo abrió antes).
+  if (d.open === false) return;
   openModal(diagModal, $("diagClose"));
   if (d.text !== undefined) diagText.textContent = d.text;
   else if (d.state === "running") diagText.textContent = "Ejecutando comprobaciones…";
@@ -922,7 +940,7 @@ function normalizeKey(e) {
   if (k === " ") return "space";
   const named = {Escape:"escape", Enter:"enter", Tab:"tab", Backspace:"backspace",
     Delete:"delete", Insert:"insert", Home:"home", End:"end",
-    PageUp:"pageup", PageDown:"pagedown",
+    PageUp:"page_up", PageDown:"page_down", CapsLock:"caps_lock",
     ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right"};
   if (named[k]) return named[k];
   if (k.length === 1) return k.toLowerCase();
@@ -933,6 +951,12 @@ function onKeyResult(raw) {
   if (!r) return;
   if (r.ok) closeKeyModal();
   else keyMsg.textContent = r.message || "";
+}
+function onKeyCapture(raw) {
+  // Python avisa el estado de la captura; la página es dueña del modal y
+  // solo reacciona a la apertura remota (el cierre local ya notifica).
+  const message = parse(raw);
+  if (message && message.state === "open" && keyModal.hidden) openKeyModal();
 }
 
 // --- wiring ---
@@ -1049,6 +1073,7 @@ if (typeof qt !== "undefined" && qt.webChannelTransport && typeof QWebChannel !=
     on("progress", onProgress);
     on("diagnostics", onDiagnostics);
     on("key_result", onKeyResult);
+    on("key_capture", onKeyCapture);
     on("navigate", onNavigate);
     flush();
     send({op:"ready"});

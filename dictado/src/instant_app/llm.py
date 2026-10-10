@@ -51,7 +51,7 @@ def polish(text, url, timeout=8.0, system=None, context_terms=""):
     except (KeyError, IndexError, TypeError):
         raise RuntimeError(
             "respuesta LLM inesperada: falta choices[0].message.content") from None
-    out = (out or "").strip().strip("\"“”")
+    out = (out or "").strip().strip("\"'“”‘’")
     if out and _words(out) != _words(text):
         log.warning("LLM cambió palabras; conservo la transcripción local.")
         return text
@@ -71,16 +71,18 @@ def resolve_url(cfg=None, url=None):
 _QUESTION_OPENERS = frozenset(
     "qué que cómo como cuándo cuando dónde donde cuál cual cuáles cuales "
     "cuánto cuanto cuánta cuanta cuánto cuanto quién quien quiénes quienes "
-    "por qué porqué adónde adonde".split())
+    "adónde adonde porqué porque".split())
+_POR_QUE_RE = re.compile(r"por\s+que\s+", flags=re.UNICODE)
 
 
 def restore_openers(text):
     """Agrega `¿` faltante en preguntas obvias. Determinista, sin red.
 
     Si una oracion termina en `?` sin abrir con `¿` y empieza con palabra-Q
-    (o "por que/porque" inicial), antepone `¿`. No toca `¡`: sin prosodia
-    una exclamacion es indistinguible y el falso positivo hace mas daño.
-    Nunca reescribe palabras, solo inserta el signo.
+    (o "por que/porque/por-que" inicial como compuesto), antepone `¿`.
+    "Por" suelto NO abre ("por favor, pasame eso?" queda intacto).
+    No toca `¡`: sin prosodia una exclamacion es indistinguible y el
+    falso positivo hace mas daño. Nunca reescribe palabras.
     """
     if not text or "?" not in text:
         return text
@@ -93,7 +95,8 @@ def restore_openers(text):
             word = (first.group(1).casefold() if first else "")
             low = stripped.casefold()
             is_q = (word in _QUESTION_OPENERS
-                    or low.startswith(("por que ", "porque ")))
+                    or low.startswith(("porque ", "por-que "))
+                    or _POR_QUE_RE.match(low) is not None)
             if is_q:
                 indent = part[:len(part) - len(stripped)]
                 part = indent + "¿" + stripped

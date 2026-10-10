@@ -419,4 +419,122 @@ with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
                {**_work_context, "llm_url": "http://local"})
            == "Instant")
 
+# Bias: la vecina no cruza frontera de oracion (.?!).
+from instant_app import bias as _bias
+_check("bias no cruza punto entre alias y vecina",
+       _bias.correct_biased("lei un comic. Hace push y sigo.", conf=0.5)
+       == "lei un comic. Hace push y sigo.")
+_check("bias rescata en la misma oracion",
+       _bias.correct_biased("hice un comic del workflow", conf=0.5)
+       == "hice un commit del workflow")
+
+# Bias: "quemet" es SOLO de commit (antes duplicado en Qwen).
+_check("bias quemet es commit",
+       _bias.correct_biased("subi el quemet al repo", conf=0.5)
+       == "subi el commit al repo")
+
+# Openers: "por" suelto no abre; compuestos si.
+_check("opener por suelto no abre",
+       llm.restore_openers("por favor, pasame eso?") == "por favor, pasame eso?")
+_check("opener por que compuesto abre",
+       llm.restore_openers("por que no viniste?") == "¿por que no viniste?")
+_check("opener porque abre",
+       llm.restore_openers("porque no viniste?") == "¿porque no viniste?")
+
+# Paste: guard no-op, Wayland no pisa, clipboard se restaura.
+import sys as _sys
+from unittest.mock import MagicMock as _MagicMock
+from instant_app import paste as _paste
+_paste.paste("")
+_check("paste vacio no-op", True)
+_fake_pyper = _MagicMock()
+_fake_pyper.paste.return_value = "previo"
+_fake_kb = _MagicMock()
+with patch.dict(_sys.modules, {"pyperclip": _fake_pyper, "keyboard": _fake_kb}):
+    with patch.object(_sys, "platform", "win32"):
+        _paste.paste("hola")
+_check("paste restaura clipboard previo",
+       _fake_pyper.copy.call_args_list[-1][0][0] == "previo")
+_check("paste pego con ctrl+v", _fake_kb.press_and_release.called)
+import shutil as _shutil
+import subprocess as _subp
+with patch.object(_sys, "platform", "linux"), \
+        patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}, clear=False), \
+        patch.object(_shutil, "which", return_value=None):
+    try:
+        _paste.paste("texto wayland")
+        _check("paste wayland sin tools avisa sin pisar", False)
+    except RuntimeError as _e:
+        _check("paste wayland sin tools avisa sin pisar",
+               "Wayland" in str(_e) or "wayland" in str(_e).lower())
+with patch.object(_sys, "platform", "linux"), \
+        patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}, clear=False), \
+        patch.object(_shutil, "which",
+                     side_effect=lambda n: "/usr/bin/wl-copy" if n == "wl-copy" else None), \
+        patch.object(_subp, "run") as _run:
+    _paste.paste("texto wayland")
+    _check("paste wayland usa wl-copy sin xdotool",
+           _run.called and "wl-copy" in str(_run.call_args_list[0][0]))
+# Paste: XWayland (x11 con WAYLAND_DISPLAY) tambien va por ruta segura.
+with patch.object(_sys, "platform", "linux"), \
+        patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11",
+                                  "WAYLAND_DISPLAY": "wayland-0"}, clear=False), \
+        patch.object(_shutil, "which",
+                     side_effect=lambda n: "/usr/bin/wl-copy" if n == "wl-copy" else None), \
+        patch.object(_subp, "run") as _run:
+    _paste.paste("texto xwayland")
+    _check("paste xwayland usa wl-copy sin xdotool",
+           _run.called and "wl-copy" in str(_run.call_args_list[0][0]))
+with patch.object(_sys, "platform", "linux"), \
+        patch.dict("os.environ", {"XDG_SESSION_TYPE": "",
+                                  "WAYLAND_DISPLAY": "wayland-0"}, clear=False), \
+        patch.object(_shutil, "which",
+                     side_effect=lambda n: "/usr/bin/wl-copy" if n == "wl-copy" else None), \
+        patch.object(_subp, "run") as _run:
+    _paste.paste("texto wayland-display")
+    _check("paste solo WAYLAND_DISPLAY va por ruta segura",
+           _run.called and "wl-copy" in str(_run.call_args_list[0][0]))
+
+# Bias: conf invalida sigue a _strong_spot (Regla C siempre, como docstring)
+# y alinea con llm.maybe_polish (invalida = take seguro 1.0).
+_check("bias conf invalida aplica regla C",
+       _bias.correct_biased("El Will fallo en la manana por el driver.",
+                            conf="mal")
+       == "El build fallo en la manana por el driver.")
+_check("bias conf None aplica regla C",
+       _bias.correct_biased("El Will fallo en la manana por el driver.",
+                            conf=None)
+       == "El build fallo en la manana por el driver.")
+_check("bias conf invalida no abre gate debil sin vecina",
+       _bias.correct_biased("lei un comic. Hace push y sigo.", conf="mal")
+       == "lei un comic. Hace push y sigo.")
+
+# GUI: clamp de CPU avisa (no silencioso) y _op_ready purga toasts viejos.
+import os as _os
+from instant_app import gui as _gui
+def _bare_logic():
+    logic = _gui.PanelLogic.__new__(_gui.PanelLogic)
+    logic.cfg = {}
+    logic._toast_callbacks = {}
+    logic._closed = False
+    logic._toasts = []
+    logic.emit = lambda kind, payload: logic._toasts.append((kind, payload))
+    return logic
+with patch.object(_gui.PanelLogic, "push_state", lambda self: None), \
+        patch.object(_gui.PanelLogic, "_update_settings_status", lambda self: None), \
+        patch.object(_os, "cpu_count", return_value=4):
+    _logic = _bare_logic()
+    _seen = []
+    _logic.toast = lambda title, message="", level="info", **kw: _seen.append(title)
+    _logic.handle({"op": "set_advanced", "key": "threads", "value": "64"})
+    _check("threads clamp avisa", "Hilos de CPU ajustados" in _seen)
+    _check("threads clamp respeta CPU", _logic.cfg["threads"] <= 4)
+    _seen.clear()
+    _logic.handle({"op": "set_advanced", "key": "threads", "value": "2"})
+    _check("threads valido no avisa", _seen == [])
+    _logic2 = _bare_logic()
+    _logic2._toast_callbacks = {"t-viejo": [lambda: None]}
+    _logic2.handle({"op": "ready"})
+    _check("ready purga toast callbacks", _logic2._toast_callbacks == {})
+
 print("OK: regresion minima verde.")

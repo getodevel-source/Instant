@@ -1,14 +1,17 @@
 @echo off
 REM Diagnostico rapido: NO levanta el daemon, solo lo inspecciona.
-REM Modelos: %~dp0models [relativo al repo]. Solo default, respeta DICTADO_DATA previa.
+REM Modelos: %ROOT%\models [relativo a la raiz del repo]. Solo default, respeta DICTADO_DATA previa.
 setlocal
-if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
+set "ROOT=%~dp0.."
+if not defined DICTADO_DATA set "DICTADO_DATA=%ROOT%\models"
 echo == proceso ==
 set "PIDFILE=%APPDATA%\instant\instant.pid"
 if not exist "%PIDFILE%" goto :nopid
 set /p LEPID=<"%PIDFILE%"
 if not defined LEPID goto :emptypid
 tasklist /FI "PID eq %LEPID%" /FO TABLE /NH 2>nul | findstr /I "instant.exe python.exe pythonw.exe" >nul
+if errorlevel 1 goto :stalepid
+powershell -NoProfile -Command "if ((Get-CimInstance Win32_Process -Filter \"ProcessId=%LEPID%\").CommandLine -like '*instant*') { exit 0 } else { exit 1 }" >nul 2>&1
 if errorlevel 1 goto :stalepid
 echo vivo: SI PID %LEPID%
 goto :models

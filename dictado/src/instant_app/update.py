@@ -103,21 +103,34 @@ def apply_hint():
             "(reemplaza el binario en caliente; el próximo arranque ya es el nuevo).")
 
 
-def apply_binary_update(downloaded, target=None):
+def apply_binary_update(downloaded, target=None, allow_source=False):
     """Reemplaza el binario en uso (Linux/macOS). Devuelve la ruta destino.
 
     POSIX permite renombrar sobre un ejecutable en ejecución: el proceso vivo
     sigue con el inodo viejo y el próximo arranque ya usa el nuevo. En Windows
     eso no existe: ahí van instalador (modo instalado) o el .bat (portable).
+    En instalación source no hay binario que reemplazar: aunque se pase
+    `allow_source=True`, se exige `target` explícito fuera del prefijo del
+    intérprete (nunca se sobrescribe `sys.executable`).
     """
     if sys.platform == "win32":
         raise RuntimeError(
             "en Windows no se puede reemplazar el binario en uso; "
             "se actualiza con el instalador o instant-update.bat")
+    if install_mode() == "source":
+        prefix = os.path.abspath(sys.prefix or sys.executable)
+        candidate = os.path.abspath(target) if target else os.path.abspath(sys.executable)
+        if target is None or candidate == os.path.abspath(sys.executable) \
+                or candidate == prefix or candidate.startswith(prefix + os.sep):
+            raise RuntimeError(
+                "update --apply no corre en instalación source (solo frozen/portable); "
+                "bajá con --download y actualizá el checkout a mano "
+                "(o pasá un destino explícito fuera del intérprete).")
     target = target or sys.executable
     directory = os.path.dirname(os.path.abspath(target))
     fd, staged = tempfile.mkstemp(prefix=".instant-update-", suffix=".part",
                                   dir=directory)
+    applied = False
     try:
         with os.fdopen(fd, "wb") as destination, open(downloaded, "rb") as source:
             shutil.copyfileobj(source, destination, length=1024 * 1024)
@@ -125,13 +138,17 @@ def apply_binary_update(downloaded, target=None):
             os.fsync(destination.fileno())
         os.chmod(staged, 0o755)
         os.replace(staged, target)
-    except Exception:
-        try:
-            os.remove(staged)
-        except OSError:
-            pass
-        raise
-    os.remove(downloaded)
+        applied = True
+    finally:
+        if not applied:
+            try:
+                os.remove(staged)
+            except OSError:
+                pass
+    try:
+        os.remove(downloaded)
+    except FileNotFoundError:
+        pass
     return target
 
 
@@ -230,7 +247,7 @@ def clean_notes(notes, max_lines=8, max_chars=600):
     return text[:max_chars]
 
 
-def cmd_update(download_dir=None, apply=False):
+def cmd_update(download_dir=None, apply=False, allow_source_apply=False):
     """CLI `instant update [--download DIR] [--apply]`: informa, baja y aplica."""
     try:
         info = check()
@@ -245,6 +262,10 @@ def cmd_update(download_dir=None, apply=False):
     print(f"Hay versión nueva: {info['latest']} ({info['asset']})")
     for line in notes.splitlines():
         print("  " + line)
+    if install_mode() == "source" and apply and not allow_source_apply:
+        print("update --apply bloqueado en instalación source: usá --download "
+              "y actualizá el checkout a mano (o pasá --allow-source-apply).")
+        return 2
     if not download_dir:
         print("Para bajarla: instant update --download DIR  "
               "(verifica SHA256 solo).")
@@ -260,6 +281,8 @@ def cmd_update(download_dir=None, apply=False):
     def progress(done, total):
         if total:
             print(f"\r  {done / total:.0%} ({done // 1024} KB)", end="")
+        else:
+            print(f"\r  {done // 1024} KB", end="")
 
     try:
         download(info["asset_url"], dest, progress=progress,
@@ -273,7 +296,7 @@ def cmd_update(download_dir=None, apply=False):
         print(apply_hint())
         return 0
     try:
-        target = apply_binary_update(dest)
+        target = apply_binary_update(dest, allow_source=allow_source_apply)
     except Exception as exc:
         print(f"No se pudo aplicar: {exc}")
         return 2

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from instant_app import context, llm
+from instant_app import bias, context, llm
 from instant_app.daemon import Daemon
 from instant_app.engine import Engine, SAMPLE_RATE
 
@@ -24,6 +24,14 @@ class TranscriptLogPrivacyTests(unittest.TestCase):
         info.assert_not_called()
         debug.assert_called_once_with("vocab: se aplicaron correcciones locales")
 
+    def test_bias_correction_does_not_log_dictated_word(self):
+        secret = "quemet confidencial z9x8"
+        text = f"subi el {secret} al repo push"
+        with self.assertLogs("instant", level="DEBUG") as captured:
+            bias.correct_biased(text, conf=0.5)
+        log_text = "\n".join(captured.output)
+        self.assertNotIn(secret, log_text)
+        self.assertNotIn("quemet confidencial", log_text)
     def test_success_log_reports_metrics_without_transcript(self):
         import numpy as np
 

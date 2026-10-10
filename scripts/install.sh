@@ -2,7 +2,8 @@
 # Instala Instant en un entorno virtual del repositorio y abre el asistente.
 set -euo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$SCRIPT_DIR")"
 OS="$(uname -s)"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -57,8 +58,9 @@ fi
 if [ "${INSTANT_AUTOSTART:-0}" = "1" ]; then
   SETUP_ARGS+=(--autostart)
 fi
-# Sin entorno gráfico (SSH, servidor) el panel no puede abrir: asistente de terminal.
-if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+# Sin entorno gráfico en Linux (SSH, servidor) el panel no puede abrir:
+# asistente de terminal. En macOS el panel abre sin DISPLAY, así que se ofrece.
+if [ "$OS" = "Linux" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
   SETUP_ARGS+=(--tui)
 fi
 

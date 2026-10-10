@@ -4,19 +4,21 @@ REM Uso: instant-update.bat <nuevo-Instant.exe> <sha256> [destino-Instant.exe]
 REM Re-verifica el hash, frena Instant, respalda el exe, reemplaza, comprueba
 REM que el daemon nuevo levante (si no, restaura) y abre el panel.
 setlocal
+set "ROOT=%~dp0.."
 if "%~1"=="" goto :usage
 if "%~2"=="" goto :usage
 if not exist "%~1" goto :missing
 if not "%~3"=="" goto :explicit_dest
-if exist "%~dp0dist\Instant.exe" set "DST=%~dp0dist\Instant.exe"
+if exist "%ROOT%\dist\Instant.exe" set "DST=%ROOT%\dist\Instant.exe"
 if defined DST goto :dest_ready
-set "DST=%~dp0Instant.exe"
+set "DST=%ROOT%\Instant.exe"
 goto :dest_ready
 :explicit_dest
 set "DST=%~3"
 :dest_ready
 set "PIDFILE=%APPDATA%\instant\instant.pid"
-if /I "%~f1"=="%DST%" goto :selfcopy
+for %%D in ("%DST%") do set "DSTFULL=%%~fD"
+if /I "%~f1"=="%DSTFULL%" goto :selfcopy
 
 echo [1/6] Verificando SHA256...
 for /f "skip=1 tokens=1" %%H in ('certutil -hashfile "%~1" SHA256 2^>nul') do (

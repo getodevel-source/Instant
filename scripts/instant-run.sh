@@ -5,15 +5,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
-  RUN=("$SCRIPT_DIR/.venv/bin/python" -m instant_app)
+ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -x "$ROOT/.venv/bin/python" ]; then
+  RUN=("$ROOT/.venv/bin/python" -m instant_app)
 elif command -v instant >/dev/null 2>&1; then
   RUN=(instant)
 else
   RUN=(python3 -m instant_app)
 fi
 if [ -z "${DICTADO_DATA:-}" ]; then
-  DICTADO_DATA="$SCRIPT_DIR/models"
+  DICTADO_DATA="$ROOT/models"
   export DICTADO_DATA
 fi
 
@@ -46,7 +47,7 @@ matches_instant() { # matches_instant <pid> -> 0 si su cmdline es instant
 
 if [ $# -gt 0 ]; then
   # Passthrough en consola: instant-run.sh check, run --help, etc.
-  cd "$SCRIPT_DIR"
+  cd "$ROOT"
   exec "${RUN[@]}" "$@"
 fi
 
@@ -64,7 +65,7 @@ if command -v pgrep >/dev/null 2>&1 && pgrep -f "instant_app run|instant run" >/
   exit 0
 fi
 
-cd "$SCRIPT_DIR"
+cd "$ROOT"
 nohup "${RUN[@]}" run >/dev/null 2>&1 &
 disown 2>/dev/null || true
 echo "Daemon lanzado oculto (PID $!). Verifica con instant-status.sh; frena con instant-stop.sh."

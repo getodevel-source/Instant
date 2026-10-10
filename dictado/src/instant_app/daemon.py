@@ -17,19 +17,64 @@ log = logging.getLogger("instant")
 
 
 def pid_path():
-    """Ruta del PID file: %APPDATA%/instant/instant.pid (config_dir)."""
+    """Ruta del PID file: %APPDATA%/instant/instant.pid (config_dir).
+
+    Es el único pidfile del daemon: el lock POSIX de `daemon_lifecycle`
+    escribe en este mismo archivo (`_daemon_pidfile` lo reutiliza), y
+    `release_daemon_mutex` lo borra vía `clear_pid` al liberar.
+    """
     from instant_app.paths import config_dir
     import os
     return os.path.join(config_dir(), "instant.pid")
 
 
+def _pidfile_lock_handle():
+    """Handle del flock POSIX si este proceso es dueño del pidfile, o None.
+
+    daemon_lifecycle._acquire_posix guarda el fd lockeado en _lock_file;
+    escribir sobre ese mismo fd evita el replace que cambiaba el inodo
+    y dejaba al lock apuntando al archivo viejo (G1).
+    """
+    try:
+        from instant_app import daemon_lifecycle
+        handle = daemon_lifecycle._lock_file
+    except Exception:
+        return None
+    if handle in (None, True):
+        return None
+    fileno = getattr(handle, "fileno", None)
+    if not callable(fileno):
+        return None
+    try:
+        fileno()
+    except (OSError, ValueError):
+        return None
+    return handle
+
 def write_pid():
-    """Registra el PID al arrancar para stop/status. Nunca tumba el daemon."""
+    """Registra el PID al arrancar para stop/status. Nunca tumba el daemon.
+
+    Si este proceso ya es dueño del lock POSIX, escribe sobre el mismo
+    fd lockeado (seek+truncate+write) para no cambiar el inodo con un
+    replace: el flock seguiría atado al archivo viejo y una segunda
+    instancia podría tomarlo.
+    """
     import os
     import tempfile
     try:
         p = pid_path()
         os.makedirs(os.path.dirname(p), exist_ok=True)
+        owner = _pidfile_lock_handle()
+        if owner is not None:
+            try:
+                owner.seek(0)
+                owner.truncate()
+                owner.write(str(os.getpid()).encode("ascii"))
+                owner.flush()
+                os.fsync(owner.fileno())
+                return
+            except (OSError, ValueError):
+                pass
         fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p), prefix="instant.pid.")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -45,19 +90,42 @@ def write_pid():
         log.warning("no pude escribir instant.pid", exc_info=True)
 
 
-def clear_pid():
-    """Borra el PID file al salir limpio, solo si es el propio."""
+def _clear_pid_if(expected_pid):
+    """Borra el pidfile solo si su contenido sigue siendo expected_pid.
+
+    A diferencia de clear_pid() (que compara con getpid() del llamador),
+    esto permite que stop_daemon limpie el rancio del daemon muerto: el
+    contenido == PID muerto esperado, no el PID del proceso que limpia.
+    True si el archivo quedó ausente (borrado o ya inexistente).
+    """
     import os
     try:
         p = pid_path()
         with open(p, encoding="utf-8") as f:
-            if f.read().strip() != str(os.getpid()):
-                return
+            if f.read().strip() != str(expected_pid):
+                return False
         os.remove(p)
+        return True
     except FileNotFoundError:
-        pass
+        return True
     except Exception:
         log.warning("no pude borrar instant.pid", exc_info=True)
+        return False
+
+
+def clear_pid(expected_pid=None):
+    """Borra el PID file al salir limpio, solo si es el propio.
+
+    Sin expected_pid compara con getpid() (salida del daemon dueño).
+    Con expected_pid explícito borra si el contenido == ese PID: lo usa
+    stop_daemon para limpiar el rancio del daemon ya muerto (G1).
+    No toca el archivo si contiene otro PID (proceso ajeno o nueva
+    instancia): esa es la guarda que evita borrar el lock de otro dueño.
+    """
+    import os
+    if expected_pid is None:
+        expected_pid = os.getpid()
+    _clear_pid_if(expected_pid)
 
 
 def estimate_pitch_norm(mono, sample_rate=16000.0):
@@ -184,6 +252,14 @@ class _LevelTracker:
             pass
 
 
+class _Snapshot(list):
+    """Lista de pre-roll con la generación de sesión que la abrió."""
+
+    def __init__(self, blocks, generation):
+        super().__init__(blocks)
+        self.generation = generation
+
+
 class StreamKeeper:
     """Captura continua con pre-roll para el daemon.
 
@@ -215,6 +291,10 @@ class StreamKeeper:
         self.mic = None
         self._lock = threading.Lock()
         self._recording = threading.Event()
+        # Generación de sesión: cada snapshot/begin la incrementa. El
+        # _pump viejo y su end_session usan la que capturaron al arrancar;
+        # si ya hay una sesión nueva, el viejo no drena ni consume.
+        self._session = 0
 
     def _cb(self, indata, frames_, t, status):
         if status:
@@ -253,21 +333,36 @@ class StreamKeeper:
         except queue.Empty:
             pass
         self._recording.set()
+        self._session += 1
+        return self._session
 
     def begin_session(self):
         """Abre la ventana de grabacion: drena restos y habilita la cola."""
         with self._lock:
-            self._begin_session_locked()
+            return self._begin_session_locked()
 
-    def end_session(self):
-        """Cierra la ventana de grabacion y descarta audio tardio."""
+    def current_session(self):
+        """Generación vigente (el _pump viejo no pisa a la sesión nueva)."""
         with self._lock:
+            return self._session
+
+    def end_session(self, generation=None):
+        """Cierra la ventana de grabacion y descarta audio tardio.
+
+        Con `generation`: solo drena si sigue vigente; si un re-press ya
+        abrió otra sesión, el _pump viejo no tira el onset de la nueva.
+        Sin `generation` drena siempre (compat con llamadores viejos).
+        """
+        with self._lock:
+            if generation is not None and generation != self._session:
+                return False
             self._recording.clear()
             try:
                 while True:
                     self.q.get_nowait()
             except queue.Empty:
                 pass
+            return True
 
     def start(self):
         t0 = time.monotonic()
@@ -277,6 +372,10 @@ class StreamKeeper:
         if self.cfg.get("mic_hint") and mic is None:
             raise RuntimeError(
                 f"Configured microphone '{self.cfg['mic_hint']}' is no longer available")
+        if self.cfg.get("mic_index") is not None and mic is None:
+            raise RuntimeError(
+                "Configured microphone index "
+                f"'{self.cfg['mic_index']}' is no longer available")
         stream, mic = audio.open_input_stream(mic, callback=self._cb)
         self.stream = stream
         self.mic = mic
@@ -301,17 +400,38 @@ class StreamKeeper:
         resucitaría bloques que ya se drenaron.
         Abre ademas la ventana de grabacion: desde aqui el callback vuelve
         a encolar hasta end_session().
+        Devuelve lista con `.generation`: el _record guarda la generación y
+        su end_session solo drena si sigue vigente (re-press rápido). Sigue
+        siendo lista (len/iter/==[]) para no romper llamadores viejos.
         """
         with self._lock:
-            self._begin_session_locked()
+            generation = self._begin_session_locked()
             if seconds <= 0:
-                return []
+                return _Snapshot([], generation)
             now = time.monotonic()
             items = list(self.pre)
-        return [blk for t, blk in items if now - t <= seconds]
+        return _Snapshot(
+            [blk for t, blk in items if now - t <= seconds], generation)
 
     def take(self, timeout=0.1):
         return self.q.get(timeout=timeout)
+
+    def take_for(self, generation, timeout=0.1):
+        """Take solo para la generación dada: si un re-press ya abrió otra
+        sesión, el bloque (que es de la sesión nueva) se devuelve al FRENTE
+        de la cola y se levanta queue.Empty. Sin esto el _pump viejo roba el
+        onset de la sesión nueva aunque ya estuviera bloqueado en take.
+        """
+        blk = self.q.get(timeout=timeout)
+        if generation == self.current_session():
+            return blk
+        with self.q.mutex:
+            self.q.queue.appendleft(blk)
+        try:
+            self.q.task_done()
+        except ValueError:
+            pass
+        raise queue.Empty()
 
     def stop(self):
         stream, self.stream = self.stream, None
@@ -329,7 +449,9 @@ class Daemon:
         self.engine = Engine(data_dir,
                              threads=cfg.get("threads", 4),
                              max_seg=cfg.get("max_seg", 20.0),
+                             vad_sil=cfg.get("vad_sil", 0.5),
                              vad_pad=cfg.get("vad_pad", 0.3),
+                             min_dur=cfg.get("min_dur", 0.4),
                              vad_model=cfg.get("vad_model", "silero"),
                              blank_penalty=cfg.get("blank_penalty", 0.0),
                              save_wavs_dir=os.environ.get("DICTADO_SAVE_WAVS", "") or None)
@@ -376,6 +498,9 @@ class Daemon:
         next_block(timeout) entrega un bloque o levanta queue.Empty.
         Corta ademas por duracion maxima para que una tecla atascada no
         acumule bloques sin fin.
+        Si al salir la sesión ya fue superada (rec[sid] != sid: re-press
+        rápido abrió otra), salta el flush post-release: la cola del keeper
+        es compartida y el flush viejo robaría el onset de la sesión nueva.
         """
         t_start = time.monotonic()
         try:
@@ -401,11 +526,17 @@ class Daemon:
                 with self.lock:
                     alive = self.rec["grabando"] and self.rec["sid"] == sid
                 if not alive:
+                    with self.lock:
+                        superseded = self.rec["sid"] != sid
+                    if superseded:
+                        break
                     try:
                         t_end = time.monotonic() + 0.3
                         while True:
                             try:
                                 extra = next_block(0.0)
+                            except _StreamDied:
+                                raise
                             except queue.Empty:
                                 if time.monotonic() >= t_end:
                                     break
@@ -413,6 +544,8 @@ class Daemon:
                                 continue
                             frames.append(extra)
                             tracker.add(extra)
+                    except _StreamDied:
+                        raise
                     except Exception:
                         pass
                     break
@@ -424,40 +557,58 @@ class Daemon:
 
     def _record_continuous(self, sid, done, keeper):
         frames = keeper.snapshot(StreamKeeper.PRE_ROLL)
+        generation = getattr(frames, "generation", keeper.current_session())
+        if not keeper.live():
+            log.error("captura continua muerta al grabar sesion %d.", sid)
+            with self.lock:
+                if self.rec["sid"] == sid:
+                    self.rec["grabando"] = False
+            # El pre-roll es audio viejo de antes de que muriera el keeper:
+            # transcribirlo pega texto rancio sin que el usuario hablara.
+            self.overlay.show_error_for(
+                sid,
+                "Se perdió el micrófono. Revisá conexión y que otra app no lo esté usando.",
+                "#f87171", 6000)
+            try:
+                keeper.end_session(generation)
+            except Exception:
+                pass
+            done.set()
+            return
         try:
             tracker = _LevelTracker(sid, self.overlay)
             for blk in frames:
                 tracker.add(blk)
             tracker.tick()
-            if not keeper.live():
-                log.error("captura continua muerta al grabar sesion %d.", sid)
+            log.info("sesion %d con pre-roll %d bloques (captura continua).",
+                     sid, len(frames))
+            try:
+                self.overlay.listening(sid)
+            except Exception:
+                log.exception("overlay listening fail sesion %d", sid)
+                try:
+                    keeper.end_session(generation)
+                except Exception:
+                    pass
                 with self.lock:
                     if self.rec["sid"] == sid:
                         self.rec["grabando"] = False
-                if not frames:
-                    self.overlay.show_error_for(
-                        sid,
-                        "Se perdió el micrófono. Revisá conexión y que otra app no lo esté usando.",
-                        "#f87171", 6000)
-                    done.set()
-                    return
-            else:
-                log.info("sesion %d con pre-roll %d bloques (captura continua).",
-                         sid, len(frames))
-            self.overlay.listening(sid)
-
+                        self.rec["frames"] = []
+                done.set()
+                return
             def next_block(timeout):
                 if not keeper.live():
                     raise _StreamDied()
-                return keeper.take(timeout)
-
+                # El pump viejo no roba el onset de la sesión nueva: take_for
+                # devuelve al frente lo que no sea de su generación (B1).
+                return keeper.take_for(generation, timeout)
             try:
                 self._pump(sid, next_block, frames, tracker)
             except _StreamDied:
                 log.warning("sesion %d: stream muerto, transcribo lo juntado.", sid)
         finally:
             try:
-                keeper.end_session()
+                keeper.end_session(generation)
             except Exception:
                 pass
         with self.lock:
@@ -466,14 +617,29 @@ class Daemon:
         done.set()
 
     def _record_oneshot(self, sid, done):
-
-        q = queue.Queue()
+        # Cola acotada como la del keeper: con la tecla atascada el callback
+        # de PortAudio sigue empujando aunque ya no consumamos.
+        q = queue.Queue(maxsize=StreamKeeper.MAX_QUEUE_BLOCKS)
         frames = []
 
         def cb(indata, frames_, t, status):
             if status:
                 log.warning("audio status: %s", status)
-            q.put(indata.copy())
+            try:
+                blk = indata.copy()
+            except Exception:
+                return
+            try:
+                q.put_nowait(blk)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    q.put_nowait(blk)
+                except queue.Full:
+                    pass
 
         try:
             t_mic = time.monotonic()
@@ -483,6 +649,10 @@ class Daemon:
             if self.cfg.get("mic_hint") and mic is None:
                 raise RuntimeError(
                     f"Configured microphone '{self.cfg['mic_hint']}' is no longer available")
+            if self.cfg.get("mic_index") is not None and mic is None:
+                raise RuntimeError(
+                    "Configured microphone index "
+                    f"'{self.cfg['mic_index']}' is no longer available")
             stream, mic = audio.open_input_stream(mic, callback=cb)
             log.info("mic listo en %.2fs (sesion %d).", time.monotonic() - t_mic, sid)
         except Exception:
@@ -498,111 +668,31 @@ class Daemon:
             done.set()
             return
         log.info("grabando sesion %d...", sid)
-        self.overlay.listening(sid)
-        last_level = 0.0
-        # Espectro en 9 bandas logarítmicas (80 Hz..7.5 kHz): cada barra del
-        # overlay sigue a su banda de verdad. band_max es un techo adaptativo
-        # por banda: se autoajusta a tu mic y tu distancia, así la onda usa
-        # todo el rango 0..1 hables bajito o fuerte.
-        band_edges = np.logspace(np.log10(80.0), np.log10(7500.0), 10)
-        band_max = np.full(9, 1e-3, dtype=np.float64)
-        smooth_level = 0.0
-        pitch_smooth = 0.5
-        # Ventana corrediza de ~60 ms para el espectro: con bloques de 10 ms
-        # la FFT no resuelve graves; acumulando se gana fidelidad real.
-        spec_window = []
+        tracker = _LevelTracker(sid, self.overlay)
         try:
-            while True:
-                try:
-                    blk = q.get(timeout=0.1)
-                except queue.Empty:
-                    blk = None
-                    with self.lock:
-                        alive = self.rec["grabando"] and self.rec["sid"] == sid
-                    if not alive and not frames:
-                        break
-                    if blk is None and frames:
-                        with self.lock:
-                            alive = self.rec["grabando"] and self.rec["sid"] == sid
-                        if not alive:
-                            break
-                        continue
-                    continue
-                frames.append(blk)
-                try:
-                    spec_window.append(np.asarray(
-                        audio.to_mono(blk), dtype=np.float64).reshape(-1))
-                    if len(spec_window) > 6:
-                        del spec_window[0]
-                except Exception:
-                    pass
-                now = time.monotonic()
-                if now - last_level >= 0.05:
-                    last_level = now
-                    try:
-                        window = (np.concatenate(spec_window)
-                                  if spec_window else np.zeros(0))
-                        peak = float(np.max(np.abs(window))) if window.size else 0.0
-                        # Puerta de silencio (piso medido 0.0027): por debajo
-                        # se mandan ceros, nunca bandas normalizadas contra un
-                        # techo colapsado, que era lo que bailaba solo.
-                        if peak > 0.006 and window.size >= 256:
-                            windowed = window * np.hanning(window.size)
-                            spectrum = np.abs(np.fft.rfft(windowed))
-                            freqs = np.fft.rfftfreq(window.size, 1.0 / 16000.0)
-                            vals = np.empty(9)
-                            for i in range(9):
-                                mask = (freqs >= band_edges[i]) & (freqs < band_edges[i + 1])
-                                vals[i] = float(np.mean(spectrum[mask])) if np.any(mask) else 0.0
-                            band_max = np.maximum(band_max * 0.995, vals)
-                            bands = np.clip(vals / np.maximum(band_max, 1e-9), 0.0, 1.0)
-                        else:
-                            bands = np.zeros(9)
-                        raw = float(np.max(bands))
-                        # Ataque rápido, caída suave: orgánico, no nervioso.
-                        if raw > smooth_level:
-                            smooth_level = raw
-                        else:
-                            smooth_level = smooth_level * 0.82 + raw * 0.18
-                        overlay = self.overlay
-                        setter = getattr(overlay, "set_level", None)
-                        if setter is not None:
-                            setter(sid, smooth_level)
-                        bands_setter = getattr(overlay, "set_bands", None)
-                        if bands_setter is not None:
-                            bands_setter(sid, [float(v) for v in bands])
-                        # Tono: solo con voz (puerta de silencio); si no hay
-                        # tono, deriva despacio al neutro.
-                        if raw > 0.05:
-                            heard = estimate_pitch_norm(window)
-                            if heard is not None:
-                                pitch_smooth += (heard - pitch_smooth) * 0.35
-                        else:
-                            pitch_smooth += (0.5 - pitch_smooth) * 0.05
-                        pitch_setter = getattr(overlay, "set_pitch", None)
-                        if pitch_setter is not None:
-                            pitch_setter(sid, pitch_smooth)
-                    except Exception:
-                        pass
-                with self.lock:
-                    alive = self.rec["grabando"] and self.rec["sid"] == sid
-                if not alive:
-                    try:
-                        # Flush de cola: lo que ya esta en los buffers de
-                        # PortAudio/WASAPI tarda ~tens de ms en llegar al
-                        # callback. Sin esta espera la cola del dictado se
-                        # perdia aunque estuviera grabada.
-                        t_end = time.monotonic() + 0.3
-                        while True:
-                            try:
-                                frames.append(q.get_nowait())
-                            except queue.Empty:
-                                if time.monotonic() >= t_end:
-                                    break
-                                time.sleep(0.02)
-                    except Exception:
-                        pass
-                    break
+            self.overlay.listening(sid)
+        except Exception:
+            log.exception("overlay listening fail sesion %d", sid)
+            with self.lock:
+                if self.rec["sid"] == sid:
+                    self.rec["grabando"] = False
+            try:
+                stream.stop()
+            except Exception:
+                log.exception("deteniendo stream audio")
+            try:
+                stream.close()
+            except Exception:
+                log.exception("cerrando stream audio")
+            done.set()
+            return
+        # Mismo bucle acotado que la via continua: corta a
+        # MAX_SESSION_SECONDS aunque se pierda el flanco de release.
+        # OJO: Queue.get(block, timeout): el timeout va por nombre.
+        def next_block(timeout, _q=q):
+            return _q.get(timeout=timeout)
+        try:
+            self._pump(sid, next_block, frames, tracker)
         except Exception:
             log.exception("sesion %d fail en loop", sid)
         finally:
@@ -650,7 +740,18 @@ class Daemon:
             log.info("[%.1fs audio -> %.2fs, RTF=%.2fx] transcripción: %d caracteres",
                      dur, dt, dt / max(dur, 0.1), len(text))
             import instant_app.paste as _paste_mod
-            _paste_mod.paste(text + " ")
+            try:
+                _paste_mod.paste(text + " ")
+            except Exception as e:
+                # C2: el mensaje accionable de paste (Wayland sin teclas,
+                # falta xclip/xdotool...) llegaba tapado por el genérico.
+                # Se surfea tal cual: ya dice qué instalar y qué hacer.
+                detail = str(e).strip()
+                log.exception("ERROR pegando sesion %d", sid)
+                self.overlay.show_error_for(
+                    sid, detail or "No se pudo pegar el texto. Abrí Diagnóstico.",
+                    milliseconds=6000)
+                return
             if float(getattr(self.engine, "last_clip", 0.0) or 0.0) > 0.02:
                 self.overlay.show_notice_for(
                     sid, "El micrófono satura: bajá la ganancia o alejate un poco.")
@@ -702,6 +803,12 @@ class Daemon:
         if done is not None and not done.wait(timeout=10.0):
             log.warning("sesion %d no cerro mic en 10s, transcribo lo que hay.", sid)
         with self.lock:
+            if self.rec["sid"] != sid or self.rec["busy"]:
+                # Release viejo (o solape con un press nuevo): no robar frames
+                # de la sesion vigente ni marcar busy ajeno.
+                log.warning("sesion %d vieja al soltar (actual %d), descarto release.",
+                            sid, self.rec["sid"])
+                return
             frames = self.rec["frames"]
             self.rec["frames"] = []
             self.rec["busy"] = True
@@ -711,6 +818,10 @@ class Daemon:
                     wav = audio.to_mono(np.concatenate(frames, axis=0))
                 except (ValueError, MemoryError):
                     log.exception("sesion %d: audio corrupto o gigante, descarto.", sid)
+                    self.overlay.show_error_for(
+                        sid, "El audio salió corrupto o muy largo; lo descarté. "
+                        "Probá un dictado más corto.",
+                        milliseconds=3000)
                     with self.lock:
                         self.rec["busy"] = False
                     return
@@ -718,6 +829,9 @@ class Daemon:
                 wav = np.zeros(0, dtype=np.float32)
         except Exception:
             log.exception("sesion %d: no pude armar el wav.", sid)
+            self.overlay.show_error_for(
+                sid, "No se pudo completar el dictado. Abrí Diagnóstico.",
+                milliseconds=3000)
             with self.lock:
                 self.rec["busy"] = False
             return
@@ -733,6 +847,9 @@ class Daemon:
         try:
             if self.cfg.get("mic_hint") and self.mic is None:
                 log.error("micrófono configurado no encontrado; no pruebo otro default.")
+            elif self.cfg.get("mic_index") is not None and self.mic is None:
+                log.error("mic_index %r vencido; no caigo al default en silencio.",
+                          self.cfg.get("mic_index"))
             elif not audio.probe(self.mic):
                 log.warning("mic probe FAIL; revisá conexión, permisos y uso por otra app.")
             self.engine.recognizer()

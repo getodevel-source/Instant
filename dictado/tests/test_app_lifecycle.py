@@ -114,7 +114,111 @@ class AppLifecycleTests(unittest.TestCase):
         kernel32.TerminateProcess.assert_called_once_with(handle, 0)
         kernel32.CloseHandle.assert_called_once_with(handle)
 
-    def test_gui_mutex_failure_reports_open_error(self):
+    def test_terminate_existing_gui_refuses_alien_window_class(self):
+        from instant_app import gui_lifecycle
+        hwnd = 0x9999
+        user32 = SimpleNamespace(
+            FindWindowW=Mock(return_value=hwnd),
+            GetClassNameW=Mock(side_effect=lambda h, buf, n: setattr(buf, "value", "Chrome_WidgetWin_1") or 1),
+            ShowWindow=Mock(), SetForegroundWindow=Mock(),
+            PostMessageW=Mock(return_value=1),
+            GetWindowThreadProcessId=Mock(),
+        )
+        with patch("instant_app.gui_lifecycle.os.name", "nt"), \
+                patch("instant_app.gui_lifecycle._user32", return_value=user32):
+            self.assertFalse(gui_lifecycle.terminate_existing_gui())
+        user32.PostMessageW.assert_not_called()
+
+    def test_posix_daemon_mutex_uses_pidfile_and_flock(self):
+        import tempfile
+        from instant_app import daemon_lifecycle
+        with tempfile.TemporaryDirectory() as d:
+            with patch("instant_app.daemon_lifecycle.os.name", "posix"), \
+                    patch("instant_app.paths.config_dir", return_value=d):
+                h1 = daemon_lifecycle.acquire_daemon_mutex()
+                self.assertIsNotNone(h1)
+                self.assertTrue(os.path.isfile(os.path.join(d, "instant.pid")))
+                # Segunda instancia en el mismo proceso/thread con lock ya tomado
+                daemon_lifecycle.release_daemon_mutex(h1)
+                self.assertIsNone(daemon_lifecycle._lock_file)
+    def test_write_pid_keeps_inode_when_lock_is_ours(self):
+        import tempfile
+        from instant_app import daemon, daemon_lifecycle
+        with tempfile.TemporaryDirectory() as d:
+            with patch("instant_app.daemon_lifecycle.os.name", "posix"), \
+                    patch("instant_app.paths.config_dir", return_value=d):
+                if os.name == "nt" or not hasattr(os, "stat"):
+                    self.skipTest("requiere inodos POSIX")
+                try:
+                    import fcntl  # noqa: F401
+                except ImportError:
+                    self.skipTest("requiere flock POSIX")
+                handle = daemon_lifecycle.acquire_daemon_mutex()
+                self.assertIsNotNone(handle)
+                try:
+                    before = os.stat(os.path.join(d, "instant.pid")).st_ino
+                    daemon.write_pid()
+                    after = os.stat(os.path.join(d, "instant.pid")).st_ino
+                    self.assertEqual(before, after)
+                    with open(os.path.join(d, "instant.pid"), encoding="utf-8") as f:
+                        self.assertEqual(f.read().strip(), str(os.getpid()))
+                finally:
+                    daemon_lifecycle.release_daemon_mutex(handle)
+
+    def test_write_pid_after_replace_still_holds_lock(self):
+        """Segunda instancia tras un replace ajeno no evade el flock (G1)."""
+        import tempfile
+        from instant_app import daemon_lifecycle
+        with tempfile.TemporaryDirectory() as d:
+            with patch("instant_app.daemon_lifecycle.os.name", "posix"), \
+                    patch("instant_app.paths.config_dir", return_value=d):
+                try:
+                    import fcntl  # noqa: F401
+                except ImportError:
+                    self.skipTest("requiere flock POSIX")
+                if os.name == "nt":
+                    self.skipTest("requiere flock POSIX")
+                first = daemon_lifecycle.acquire_daemon_mutex()
+                self.assertIsNotNone(first)
+                old_file = daemon_lifecycle._lock_file
+                try:
+                    # Un escritor ajeno reemplaza el path (inodo nuevo).
+                    with open(os.path.join(d, "instant.pid"), "w", encoding="utf-8") as f:
+                        f.write("999999")
+                    # El dueño sigue lockeando el inodo viejo: reabrir el path
+                    # nuevo NO debe poder tomar el lock mientras el dueño vive.
+                    import fcntl
+                    probe = open(os.path.join(d, "instant.pid"), "a+b")
+                    try:
+                        with self.assertRaises(OSError):
+                            fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    finally:
+                        probe.close()
+                    self.assertIs(old_file, daemon_lifecycle._lock_file)
+                finally:
+                    daemon_lifecycle.release_daemon_mutex(first)
+    def test_write_pid_uses_owned_lock_fd_without_replace(self):
+        """Con lock propio, write_pid escribe en el fd (no replace) (G1)."""
+        import tempfile
+        from instant_app import daemon, daemon_lifecycle
+        with tempfile.TemporaryDirectory() as d:
+            pidfile = os.path.join(d, "instant.pid")
+            with open(pidfile, "w", encoding="utf-8") as f:
+                f.write("viejo")
+            fd = open(pidfile, "r+b")
+            try:
+                with patch.object(daemon, "pid_path", return_value=pidfile), \
+                        patch.object(daemon_lifecycle, "_lock_file", fd), \
+                        patch("os.replace", side_effect=AssertionError("hizo replace")):
+                    daemon.write_pid()
+                fd.flush()
+                with open(pidfile, encoding="utf-8") as f:
+                    self.assertEqual(f.read().strip(), str(os.getpid()))
+            finally:
+                fd.close()
+
+
+    def test_gui_mutex_failure_reports_unavailable(self):
         from instant_app import gui
         with patch.object(gui.sys, "platform", "win32"), \
                 patch("instant_app.gui_lifecycle.acquire_gui_mutex",

@@ -1,7 +1,9 @@
 """U-10: precedencia DICTADO_DATA vs cwd ./models (sin mic ni red)."""
 import os
+import shutil
 import sys
 import tempfile
+import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -13,97 +15,102 @@ MARKER = os.path.join(paths.PARAKEET_SUBDIR, "encoder.int8.onnx")
 def _touch(root):
     p = os.path.join(root, MARKER)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    open(p, "wb").close()
+    with open(p, "wb"):
+        pass
     return p
 
 
 def _same_path(got, want):
-    """Compara rutas resolviendo symlinks.
-
-    En macOS `/var` es un symlink a `/private/var`, asi que `os.getcwd()`
-    devuelve una forma y `tempfile` la otra: sin resolver, el chequeo falla por
-    como esta escrito el mismo directorio, no por una diferencia real.
-    """
+    """Compara rutas resolviendo symlinks."""
     if not isinstance(got, str) or not isinstance(want, str):
         return got == want
     return os.path.realpath(got) == os.path.realpath(want)
 
 
-def _check(name, got, want):
-    ok = _same_path(got, want)
-    print(("PASS " if ok else "FAIL ") + name)
-    if not ok:
-        print(f"  got={got!r} want={want!r}")
-        raise SystemExit(1)
+class DataDirPrecedenceTests(unittest.TestCase):
+    def setUp(self):
+        self.old_env = os.environ.get("DICTADO_DATA")
+        self.old_cwd = os.getcwd()
+        self.old_frozen = getattr(sys, "frozen", None)
+        self.old_executable = sys.executable
 
-
-old_env = os.environ.get("DICTADO_DATA")
-old_cwd = os.getcwd()
-old_frozen = getattr(sys, "frozen", None)
-old_executable = sys.executable
-try:
-    # 1. DICTADO_DATA gana sobre todo.
-    with tempfile.TemporaryDirectory() as env_d, tempfile.TemporaryDirectory() as cwd_d:
-        _touch(env_d)
-        _touch(os.path.join(cwd_d, "models"))
-        os.environ["DICTADO_DATA"] = env_d
-        os.chdir(cwd_d)
-        got = paths.resolve_data_dir()
-        os.chdir(old_cwd)
-        _check("env gana", got, env_d)
-
-    # 2. cwd ./models con marcador gana al user dir.
-    os.environ.pop("DICTADO_DATA", None)
-    with tempfile.TemporaryDirectory() as cwd_d:
-        _touch(os.path.join(cwd_d, "models"))
-        os.chdir(cwd_d)
-        got = paths.resolve_data_dir()
-        os.chdir(old_cwd)
-        _check("cwd con marcador", got, os.path.join(cwd_d, "models"))
-
-    # 3. Frozen dist/Instant.exe can use the checkout's sibling models directory.
-    with tempfile.TemporaryDirectory() as checkout:
-        dist = os.path.join(checkout, "dist")
-        os.makedirs(dist)
-        _touch(os.path.join(checkout, "models"))
-        old_frozen = getattr(sys, "frozen", None)
-        old_executable = sys.executable
-        sys.frozen = True
-        sys.executable = os.path.join(dist, "Instant.exe")
-        os.chdir(dist)
-        got = paths.resolve_data_dir()
-        os.chdir(old_cwd)
-        _check("frozen sibling models", got, os.path.join(checkout, "models"))
-        if old_frozen is None:
-            del sys.frozen
+    def tearDown(self):
+        os.chdir(self.old_cwd)
+        if self.old_env is None:
+            os.environ.pop("DICTADO_DATA", None)
         else:
-            sys.frozen = old_frozen
-        sys.executable = old_executable
+            os.environ["DICTADO_DATA"] = self.old_env
+        if self.old_frozen is None:
+            if hasattr(sys, "frozen"):
+                del sys.frozen
+        else:
+            sys.frozen = self.old_frozen
+        sys.executable = self.old_executable
 
-    with tempfile.TemporaryDirectory() as cwd_d:
-        os.chdir(cwd_d)
-        got = paths.resolve_data_dir()
-        os.chdir(old_cwd)
-        _check("cwd sin marcador", got, paths.user_data_dir())
+    def test_env_wins_over_cwd_and_user_dir(self):
+        with tempfile.TemporaryDirectory() as env_d, tempfile.TemporaryDirectory() as cwd_d:
+            _touch(env_d)
+            _touch(os.path.join(cwd_d, "models"))
+            os.environ["DICTADO_DATA"] = env_d
+            os.chdir(cwd_d)
+            try:
+                got = paths.resolve_data_dir()
+            finally:
+                os.chdir(self.old_cwd)
+            self.assertTrue(_same_path(got, env_d))
 
-    # 4. DICTADO_DATA inexistente se respeta tal cual.
-    ghost = os.path.join(tempfile.gettempdir(), "instant-ghost-noexiste")
-    import shutil
-    shutil.rmtree(ghost, ignore_errors=True)
-    os.environ["DICTADO_DATA"] = ghost
-    os.chdir(old_cwd)
-    _check("env inexistente", paths.resolve_data_dir(), ghost)
-finally:
-    os.chdir(old_cwd)
-    if old_env is None:
+    def test_cwd_models_with_marker_wins_over_user_dir(self):
         os.environ.pop("DICTADO_DATA", None)
-    else:
-        os.environ["DICTADO_DATA"] = old_env
-    if old_frozen is None:
-        if hasattr(sys, "frozen"):
-            del sys.frozen
-    else:
-        sys.frozen = old_frozen
-    sys.executable = old_executable
+        with tempfile.TemporaryDirectory() as cwd_d:
+            _touch(os.path.join(cwd_d, "models"))
+            os.chdir(cwd_d)
+            try:
+                got = paths.resolve_data_dir()
+            finally:
+                os.chdir(self.old_cwd)
+            self.assertTrue(_same_path(got, os.path.join(cwd_d, "models")))
 
-print("OK: precedencia DICTADO_DATA verde.")
+    def test_frozen_dist_uses_checkout_sibling_models(self):
+        with tempfile.TemporaryDirectory() as checkout:
+            dist = os.path.join(checkout, "dist")
+            os.makedirs(dist)
+            _touch(os.path.join(checkout, "models"))
+            os.environ.pop("DICTADO_DATA", None)
+            sys.frozen = True
+            sys.executable = os.path.join(dist, "Instant.exe")
+            with tempfile.TemporaryDirectory() as cwd_d:
+                os.chdir(cwd_d)
+                try:
+                    got = paths.resolve_data_dir()
+                finally:
+                    os.chdir(self.old_cwd)
+                self.assertTrue(_same_path(got, os.path.join(checkout, "models")))
+
+    def test_cwd_without_marker_falls_back_to_user_data_dir(self):
+        os.environ.pop("DICTADO_DATA", None)
+        with tempfile.TemporaryDirectory() as cwd_d:
+            os.chdir(cwd_d)
+            try:
+                got = paths.resolve_data_dir()
+            finally:
+                os.chdir(self.old_cwd)
+            self.assertTrue(_same_path(got, paths.user_data_dir()))
+
+    def test_nonexistent_env_is_preserved_literally(self):
+        ghost = os.path.join(tempfile.gettempdir(), "instant-ghost-noexiste")
+        shutil.rmtree(ghost, ignore_errors=True)
+        os.environ["DICTADO_DATA"] = ghost
+        self.assertEqual(paths.resolve_data_dir(), ghost)
+
+    def test_env_with_tilde_and_vars_is_expanded(self):
+        os.environ["FOO_TEST_DATA"] = "models-dir"
+        os.environ["DICTADO_DATA"] = "~/$FOO_TEST_DATA" if os.name != "nt" else "~/%FOO_TEST_DATA%"
+        expanded = paths.resolve_data_dir()
+        self.assertNotIn("~", expanded)
+        self.assertNotIn("%", expanded)
+        self.assertNotIn("$", expanded)
+        os.environ.pop("FOO_TEST_DATA", None)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -289,16 +289,30 @@ def download_models(data_dir, progress=None, include_ten_vad=False):
     return data_dir
 
 
-def check(data_dir, include_ten_vad=False):
+def check(data_dir, include_ten_vad=False, verify=False):
     from instant_app.paths import model_paths
 
     p = model_paths(data_dir)
     if not include_ten_vad:
         p = {k: v for k, v in p.items() if k != "ten_vad"}
-    return {k: os.path.isfile(v) for k, v in p.items()}
+    if not verify:
+        return {k: os.path.isfile(v) for k, v in p.items()}
+    expected = dict(PARAKEET_SHA256)
+    expected["silero_vad.onnx"] = VAD_SHA256
+    if include_ten_vad:
+        expected["ten_vad.onnx"] = TEN_VAD_SHA256
+    out = {}
+    for key, path in p.items():
+        name = os.path.basename(path)
+        exp = expected.get(name)
+        if exp is None:
+            out[key] = os.path.isfile(path)
+            continue
+        ok, _reason = verify_file(path, exp)
+        out[key] = ok
+    return out
 
-
-def check_integrity(data_dir, parakeet=None, vad=None):
+def check_integrity(data_dir, parakeet=None, vad=None, ten_vad=None):
     """Estado por archivo: True si verifica, o el motivo si no.
 
     `check` responde si el archivo existe; esto responde si además sirve. Los
@@ -308,6 +322,7 @@ def check_integrity(data_dir, parakeet=None, vad=None):
 
     parakeet = PARAKEET_SHA256 if parakeet is None else parakeet
     vad = VAD_SHA256 if vad is None else vad
+    ten_vad = TEN_VAD_SHA256 if ten_vad is None else ten_vad
     result = {}
     for name, expected in parakeet.items():
         ok, reason = verify_file(
@@ -316,4 +331,8 @@ def check_integrity(data_dir, parakeet=None, vad=None):
     ok, reason = verify_file(os.path.join(data_dir, VAD_SUBDIR, "silero_vad.onnx"),
                              vad)
     result["silero_vad.onnx"] = True if ok else reason
+    ten_path = os.path.join(data_dir, VAD_SUBDIR, "ten_vad.onnx")
+    if ten_vad is not None and os.path.isfile(ten_path):
+        ok, reason = verify_file(ten_path, ten_vad)
+        result["ten_vad.onnx"] = True if ok else reason
     return result

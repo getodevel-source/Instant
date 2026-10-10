@@ -1,7 +1,8 @@
 ﻿@echo off
 REM Instala Instant en un entorno virtual del repositorio y abre el asistente.
 setlocal
-if not defined DICTADO_DATA set "DICTADO_DATA=%~dp0models"
+set "ROOT=%~dp0.."
+if not defined DICTADO_DATA set "DICTADO_DATA=%ROOT%\models"
 
 where python >nul 2>nul
 if errorlevel 1 (
@@ -15,10 +16,10 @@ if errorlevel 1 (
   exit /b 1
 )
 
-set "VENV_PYTHON=%~dp0.venv\Scripts\python.exe"
+set "VENV_PYTHON=%ROOT%\.venv\Scripts\python.exe"
 if not exist "%VENV_PYTHON%" (
   echo [Instant] Creando entorno virtual...
-  python -m venv "%~dp0.venv"
+  python -m venv "%ROOT%\.venv"
   if errorlevel 1 (
     echo [Instant] No se pudo crear .venv.
     exit /b 1
@@ -26,7 +27,7 @@ if not exist "%VENV_PYTHON%" (
 )
 
 echo [Instant] Instalando Instant y sus dependencias...
-call "%VENV_PYTHON%" -m pip install "%~dp0dictado"
+call "%VENV_PYTHON%" -m pip install "%ROOT%\dictado"
 if errorlevel 1 (
   echo [Instant] Fallo la instalacion del paquete. Revisa tu conexion y reintenta.
   exit /b 1
@@ -37,12 +38,12 @@ if defined INSTANT_UNATTENDED set "SETUP_ARGS=--yes"
 if /i "%INSTANT_AUTOSTART%"=="1" set "SETUP_ARGS=%SETUP_ARGS% --autostart"
 
 echo [Instant] Configurando modelos, microfono y tecla...
-pushd "%~dp0"
+pushd "%ROOT%"
 if defined INSTANT_UNATTENDED (
   call "%VENV_PYTHON%" -m instant_app setup %SETUP_ARGS%
 ) else (
-  if exist "%~dp0.venv\Scripts\pythonw.exe" (
-    call "%~dp0.venv\Scripts\pythonw.exe" -m instant_app setup %SETUP_ARGS%
+  if exist "%ROOT%\.venv\Scripts\pythonw.exe" (
+    call "%ROOT%\.venv\Scripts\pythonw.exe" -m instant_app setup %SETUP_ARGS%
   ) else (
     call "%VENV_PYTHON%" -m instant_app setup %SETUP_ARGS%
   )

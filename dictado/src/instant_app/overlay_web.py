@@ -51,8 +51,9 @@ def frame_payload(mode, message, key_label, style, level=None, pitch=None, bands
 
 
 def compose_page(html, qwebchannel_js):
-    """Inyecta qwebchannel.js en la plantilla (marcador comentado)."""
-    return html.replace(_PAGE_PLACEHOLDER, "<script>\n" + qwebchannel_js + "\n</script>")
+    """Inyecta qwebchannel.js en la plantilla (marcador comentado, una vez)."""
+    return html.replace(
+        _PAGE_PLACEHOLDER, "<script>\n" + qwebchannel_js + "\n</script>", 1)
 
 
 def _read_qwebchannel():
@@ -77,8 +78,10 @@ def write_page(directory=None):
     with open(os.path.join(_PAGE_DIR, "overlay.html"), encoding="utf-8") as handle:
         html = handle.read()
     target = os.path.join(directory, "overlay.html")
-    with open(target, "w", encoding="utf-8") as handle:
+    tmp = target + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
         handle.write(compose_page(html, _read_qwebchannel()))
+    os.replace(tmp, target)
     return target
 
 
@@ -233,6 +236,9 @@ class _WebOverlay:
         except Exception:
             log.debug("frame de nivel descartado", exc_info=True)
 
+    # Sin guarda de sesion a proposito: el wrapper Overlay.set_level/bands/pitch
+    # ya rechaza sesiones viejas bajo lock; el renderer solo coalescea el ultimo
+    # valor pendiente (ver _flush cada 40 ms).
     def set_level(self, session, value):
         del session
         with self._pending_lock:
