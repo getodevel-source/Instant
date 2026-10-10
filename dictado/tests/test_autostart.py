@@ -36,26 +36,30 @@ def _restore(saved):
 
 
 def _cycle(platform, target_fn, alien_fn):
+    import unittest.mock as _mock
     os.environ["INSTANT_AUTOSTART_PLATFORM"] = platform
-    target = target_fn()
-    _check("%s arranca apagado" % platform, a.is_enabled() is False)
-    _check("%s describe una linea" % platform,
-           isinstance(a.describe(), str) and len(a.describe().splitlines()) == 1)
-    msg1 = a.enable()
-    _check("%s enable reporta" % platform, isinstance(msg1, str) and msg1)
-    _check("%s enable->on" % platform, a.is_enabled() is True)
-    msg2 = a.enable()
-    _check("%s enable idempotente" % platform, isinstance(msg2, str) and msg2)
-    _check("%s enable x2 sigue on" % platform, a.is_enabled() is True)
-    _check("%s disable idempotente-1" % platform, isinstance(a.disable(), str))
-    _check("%s disable->off" % platform, a.is_enabled() is False)
-    _check("%s disable idempotente-2" % platform, isinstance(a.disable(), str))
-    # No borra archivo ajeno con mismo nombre pero contenido distinto.
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    alien_fn(target)
-    _check("%s no borra ajeno" % platform, os.path.isfile(target))
-    _check("%s ajeno no es enabled" % platform, a.is_enabled() is False)
-    os.remove(target)
+    # launchctl no existe en runners Linux/Windows ni funciona en el sandbox
+    # de macOS: el ciclo de mac se prueba a nivel plist, sin tocar el SO.
+    with _mock.patch.object(a, "_mac_launchctl", return_value=(0, "")):
+        target = target_fn()
+        _check("%s arranca apagado" % platform, a.is_enabled() is False)
+        _check("%s describe una linea" % platform,
+               isinstance(a.describe(), str) and len(a.describe().splitlines()) == 1)
+        msg1 = a.enable()
+        _check("%s enable reporta" % platform, isinstance(msg1, str) and msg1)
+        _check("%s enable->on" % platform, a.is_enabled() is True)
+        msg2 = a.enable()
+        _check("%s enable idempotente" % platform, isinstance(msg2, str) and msg2)
+        _check("%s enable x2 sigue on" % platform, a.is_enabled() is True)
+        _check("%s disable idempotente-1" % platform, isinstance(a.disable(), str))
+        _check("%s disable->off" % platform, a.is_enabled() is False)
+        _check("%s disable idempotente-2" % platform, isinstance(a.disable(), str))
+        # No borra archivo ajeno con mismo nombre pero contenido distinto.
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        alien_fn(target)
+        _check("%s no borra ajeno" % platform, os.path.isfile(target))
+        _check("%s ajeno no es enabled" % platform, a.is_enabled() is False)
+        os.remove(target)
 
 
 def _plat_paths():

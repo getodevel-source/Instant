@@ -157,7 +157,7 @@ def cmd_setup(argv=None):
             models_ok = False
             rc = 2
     if not models_ok:
-        print("  Configuración incompleta: modelos sin descargar → "
+        print("  Configuración incompleta: modelos sin descargar -> "
               "corre `instant setup` con red y ~1 GB libre.")
 
     # 2. Microfono: lista con backend, medidor y seleccion persistente por nombre.
@@ -384,7 +384,7 @@ def cmd_setup(argv=None):
             return rc
         missing = ("modelos sin descargar" if not models_ok else
                    "mic sin detectar" if not inputs else "revisá avisos")
-        print(f"  Configuración incompleta: {missing} → "
+        print(f"  Configuración incompleta: {missing} -> "
               "corre `instant setup` para completarla.")
         return 2
     mic_ok = True
@@ -421,7 +421,7 @@ def cmd_setup(argv=None):
             part for part, ok in (("modelos sin descargar", models_ok),
                                   ("mic sin detectar", mic_ok and bool(inputs)))
             if not ok) or "revisá avisos"
-        print(f"  Configuración incompleta: {missing} → "
+        print(f"  Configuración incompleta: {missing} -> "
               "corre `instant setup` para completarla.")
         return 2
     print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")

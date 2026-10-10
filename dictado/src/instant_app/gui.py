@@ -1961,6 +1961,8 @@ class PanelLogic:
         import tempfile
         from instant_app import update as update_module
         info = self._pending_update
+        os.makedirs(os.path.join(tempfile.gettempdir(), "instant_update"),
+                    exist_ok=True)
         target = os.path.join(tempfile.gettempdir(), "instant_update", info["asset"])
         expected = update_module.fetch_expected_sha256(info["asset_url"])
         last_report = [0.0]
