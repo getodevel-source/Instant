@@ -83,5 +83,10 @@ La auditoría sigue abierta: estos avances no certifican el audio físico, pegad
 - [x] El overlay expresa inicio, voz, procesamiento, copia y error con datos reales y sin animar en reposo.
 - [ ] Cada control muestra qué está haciendo, qué terminó y qué hacer si falla.
 - [ ] Los recorridos de actualización y configuración inicial se han comprobado más allá de mocks.
+
+> **Nota de producción (docs):** no se marcan estas dos casillas aunque el
+> código de errores accionables y del updater ya esté: falta validación con
+> hardware real (micrófono físico, pegado en apps de terceros, instalación
+> limpia y upgrade instalado por SO). Sin eso, marcarlas sería mentir.
 - [x] Las correcciones respetan el modo local por defecto y no alteran texto por inferencia sin configuración explícita.
 - [x] Suite, smokes de las dos superficies web y build/smoke del portable Windows quedan en verde; build multiplataforma y actualizaciones instaladas siguen pendientes.

@@ -374,6 +374,222 @@ class LogicSettingsTests(unittest.TestCase):
         self.assertEqual(logic.meter["percent"], 0)
         self.assertIn("No detecté señal", logic.meter["text"])
 
+    def test_action_toasts_last_long_enough_to_click(self):
+        logic, emitted = make_logic()
+        logic.toast("A", "sin acciones")
+        logic.toast("B", "con acciones", actions=(("Hacer", lambda: None),))
+        plain = next(payload for kind, payload in emitted
+                     if kind == "toast" and payload["title"] == "A")
+        actioned = next(payload for kind, payload in emitted
+                        if kind == "toast" and payload["title"] == "B")
+        self.assertEqual(plain["ms"], 4500)
+        self.assertGreaterEqual(actioned["ms"], 15000)
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_set_advanced_accepts_vad_blank_and_update_mode(self):
+        logic, emitted = make_logic()
+        logic.handle({"op": "set_advanced", "key": "vad_model", "value": "ten"})
+        logic.handle({"op": "set_advanced", "key": "blank_penalty", "value": "0.5"})
+        logic.handle({"op": "set_advanced", "key": "update_mode", "value": "off"})
+        self.assertEqual(logic.cfg["vad_model"], "ten")
+        self.assertEqual(logic.cfg["blank_penalty"], 0.5)
+        self.assertEqual(logic.cfg["update_mode"], "off")
+        state = logic.state_payload()["advanced"]
+        self.assertEqual(state["vad_model"], "ten")
+        self.assertEqual(state["blank_penalty"], 0.5)
+        self.assertEqual(state["update_mode"], "off")
+        logic.handle({"op": "set_advanced", "key": "vad_model", "value": "xxx"})
+        logic.handle({"op": "set_advanced", "key": "blank_penalty", "value": "9"})
+        logic.handle({"op": "set_advanced", "key": "update_mode", "value": "xxx"})
+        self.assertEqual(logic.cfg["vad_model"], "ten")
+        self.assertEqual(logic.cfg["blank_penalty"], 0.5)
+        self.assertEqual(logic.cfg["update_mode"], "off")
+        titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
+        self.assertIn("Detector de voz no válido", titles)
+        self.assertIn("Penalidad no válida", titles)
+        self.assertIn("Modo de actualización no válido", titles)
+
+    def test_status_carries_disabled_reason_and_checklist(self):
+        logic, _emitted = make_logic()
+        logic.model_ready = False
+        state = logic.state_payload()
+        self.assertTrue(state["status"]["disabled_reason"])
+        self.assertIn("modelo", state["status"]["disabled_reason"].casefold())
+        pages = {item["id"]: item["page"] for item in state["checklist"]}
+        self.assertEqual(pages, {"models": "home", "mic": "audio", "key": "settings"})
+
+    def test_home_without_models_nudges_to_setup_visibly(self):
+        logic, emitted = make_logic()
+        logic.model_ready = False
+        logic.page = "home"
+        logic.handle({"op": "ready"})
+        self.assertEqual(logic.page, "settings")
+        self.assertIn(("navigate", {"page": "settings"}), emitted)
+        titles = [payload["title"] for kind, payload in emitted if kind == "toast"]
+        self.assertIn("Te falta un paso", titles)
+
+    def test_friendly_errors_wrap_raw_detail(self):
+        from instant_app.gui import _friendly_error
+        cause, action = _friendly_error(OSError("sin red"))
+        self.assertTrue(cause and action)
+        logic, emitted = make_logic()
+        with patch("instant_app.gui.subprocess.Popen",
+                   side_effect=OSError("sin red")):
+            logic._daemon_state_ready = True
+            logic._microphones_loaded = True
+            logic.model_ready = True
+            logic._start_daemon(save_settings=False)
+        toast = next(payload for kind, payload in emitted if kind == "toast")
+        self.assertIn("Detalle:", toast["message"])
+        self.assertNotEqual(toast["message"].strip(), "sin red")
+
+
+class SetupConsoleTests(unittest.TestCase):
+    def test_unknown_flag_exits_uncleanly(self):
+        import io
+        from contextlib import redirect_stdout
+        from instant_app import setup as setup_module
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            with self.assertRaises(SystemExit) as caught:
+                setup_module.cmd_setup(["--typo-flag"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("flag desconocido", buffer.getvalue())
+
+    def test_incomplete_setup_names_what_is_missing(self):
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch as _patch
+        from instant_app import setup as setup_module
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), \
+                _patch("instant_app.setup.config.load", return_value=dict(
+                    setup_module.config.DEFAULTS)), \
+                _patch("instant_app.setup.config.save",
+                       return_value="config.json"), \
+                _patch("instant_app.deps.check", return_value={
+                    "sherpa_onnx": {"ok": True}, "sounddevice": {"ok": True}}), \
+                _patch("instant_app.deps.report", return_value=""), \
+                _patch("instant_app.models.check",
+                       return_value={"parakeet": False, "vad": False}), \
+                _patch("instant_app.models.download_models",
+                       side_effect=OSError("sin red")), \
+                _patch("instant_app.setup._real_inputs", return_value=[]), \
+                _patch("instant_app.autostart.is_enabled", return_value=False), \
+                _patch("instant_app.autostart.describe", return_value="off"):
+            rc = setup_module.cmd_setup(["--yes", "--no-probe"])
+        out = buffer.getvalue()
+        self.assertEqual(rc, 2)
+        self.assertNotIn("\nListo.", out)
+        self.assertIn("Configuración incompleta:", out)
+        self.assertIn("instant setup", out)
+
+
+class UpdateConsentTests(unittest.TestCase):
+    def _logic(self, cfg):
+        from types import SimpleNamespace as _NS
+        from unittest.mock import patch as _patch
+        from instant_app import gui as _gui
+        emitted = []
+        with _patch("instant_app.gui.config.load", return_value=dict(cfg)), \
+                _patch("instant_app.gui.models.check",
+                       return_value={"parakeet": True, "vad": True}), \
+                _patch("instant_app.gui.resolve_data_dir",
+                       return_value="models"), \
+                _patch("instant_app.gui.daemon_is_running", return_value=False), \
+                _patch("instant_app.gui.audio.input_choices", return_value=[]), \
+                _patch("instant_app.gui.autostart.is_enabled",
+                       return_value=False), \
+                _patch.dict(sys.modules, {"sounddevice": SimpleNamespace(
+                    default=_NS(device=(-1, -1)))}):
+            logic = _gui.PanelLogic(
+                emit=lambda kind, payload: emitted.append((kind, payload)),
+                tasks=SyncTasks(), schedule=lambda ms, fn: None)
+            logic._update_source_mode = False
+        return logic, emitted
+
+    def _release(self):
+        return {"update": True, "current": "0.1.0", "latest": "0.2.0",
+                "notes": "", "asset": "Instant.exe",
+                "asset_url": "https://x/Instant.exe"}
+
+    def test_off_mode_skips_silent_check_entirely(self):
+        from unittest.mock import patch as _patch
+        logic, _emitted = self._logic({"mic_hint": "", "mic_index": None,
+                                       "key": "f9", "autostart": False,
+                                       "update_mode": "off"})
+        with _patch("instant_app.update.check") as check:
+            logic._silent_update_check()
+        check.assert_not_called()
+
+    def test_env_kill_switch_skips_silent_check(self):
+        from unittest.mock import patch as _patch
+        logic, _emitted = self._logic({"mic_hint": "", "mic_index": None,
+                                       "key": "f9", "autostart": False,
+                                       "update_mode": "auto"})
+        with _patch.dict(os.environ, {"INSTANT_NO_UPDATE": "1"}), \
+                _patch("instant_app.update.check") as check:
+            logic._silent_update_check()
+        check.assert_not_called()
+
+    def test_notify_asks_before_downloading(self):
+        from unittest.mock import patch as _patch
+        logic, emitted = self._logic({"mic_hint": "", "mic_index": None,
+                                      "key": "f9", "autostart": False,
+                                      "update_mode": "notify"})
+        with _patch("instant_app.update.check", return_value=self._release()), \
+                _patch("instant_app.gui.config.save",
+                       return_value="config.json"), \
+                _patch("instant_app.update.download") as download:
+            logic._silent_update_check()
+        download.assert_not_called()
+        self.assertIn("Descargar v0.2.0", logic.update_button)
+        consent = [payload for kind, payload in emitted if kind == "toast"
+                   and payload["title"] == "Hay versión nueva: 0.2.0"]
+        self.assertTrue(consent)
+        self.assertIn("Descargar", [a["label"] for a in consent[-1]["actions"]])
+        with _patch("instant_app.update.fetch_expected_sha256",
+                     return_value="ab" * 32), \
+                _patch("instant_app.update.download") as download2:
+            logic.handle({"op": "download_update"})
+        download2.assert_called_once()
+
+    def test_install_rehashes_before_any_popen(self):
+        import hashlib as _hl
+        import tempfile as _tf
+        from unittest.mock import patch as _patch
+        from instant_app import gui as _gui
+        logic, emitted = self._logic({"mic_hint": "", "mic_index": None,
+                                      "key": "f9", "autostart": False,
+                                      "update_mode": "auto",
+                                      "update_last_check": 0})
+        with _tf.NamedTemporaryFile(delete=False) as handle:
+            handle.write(b"binario-nuevo")
+            target = handle.name
+        try:
+            digest = _hl.sha256(b"binario-nuevo").hexdigest()
+            logic._pending_update = self._release()
+            with _patch("instant_app.update.install_mode",
+                        return_value="portable"), \
+                    _patch("instant_app.gui.os.path.isfile",
+                           return_value=False), \
+                    _patch("instant_app.gui.subprocess.Popen") as popen:
+                logic._install_ready(target, "00" * 32)
+            popen.assert_not_called()
+            failed = [payload for kind, payload in emitted
+                      if kind == "toast"
+                      and payload["title"] == "Actualización sin aplicar"]
+            self.assertTrue(failed)
+            self.assertIn("Detalle:", failed[-1]["message"])
+            with _patch.object(_gui.sys, "frozen", True, create=True), \
+                    _patch.object(_gui.sys, "platform", "linux"), \
+                    _patch("instant_app.update.install_mode",
+                           return_value="portable"), \
+                    _patch("instant_app.update.apply_binary_update",
+                           side_effect=TypeError("viejo")) as apply_update, \
+                    _patch.object(logic, "stop_daemon_flow"):
+                logic._update_install_pending = False
+                logic._install_in_place(target, digest)
+            self.assertEqual(apply_update.call_count, 2)
+            self.assertEqual(apply_update.call_args_list[-1].args, (target,))
+        finally:
+            os.unlink(target)

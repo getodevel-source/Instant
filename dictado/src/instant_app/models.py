@@ -266,8 +266,15 @@ def download_models(data_dir, progress=None, include_ten_vad=False):
         return data_dir
 
     _space_check(pending_bytes, data_dir)
+    # Solo el host del espejo, nunca la URL completa: la URL lleva repo/ruta
+    # y el log no necesita más para diagnosticar.
+    try:
+        from urllib.parse import urlsplit as _urlsplit
+        _host = _urlsplit(_endpoint()).hostname or "huggingface.co"
+    except Exception:
+        _host = "huggingface.co"
     log.info("modelos: %.0f MB pendientes desde %s",
-             pending_bytes / 1e6, _endpoint())
+             pending_bytes / 1e6, _host)
 
     for step, total, done, jobs in steps:
         if progress is None:

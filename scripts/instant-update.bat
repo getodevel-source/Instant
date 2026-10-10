@@ -3,6 +3,8 @@ REM Aplica una version descargada y verificada, desde el repo o el portable.
 REM Uso: instant-update.bat <nuevo-Instant.exe> <sha256> [destino-Instant.exe]
 REM Re-verifica el hash, frena Instant, respalda el exe, reemplaza, comprueba
 REM que el daemon nuevo levante (si no, restaura) y abre el panel.
+REM En exito borra %DST%.bak (no se acumulan respaldos); en rollback se
+REM conserva para vuelta atras manual.
 setlocal
 set "ROOT=%~dp0.."
 if "%~1"=="" goto :usage
@@ -54,8 +56,15 @@ ping -n 9 127.0.0.1 >nul 2>nul
 set "NEWPID="
 if exist "%PIDFILE%" set /p NEWPID=<"%PIDFILE%"
 if not defined NEWPID goto :rollback
+REM Health-check: el PID del pidfile tiene que existir, ser un Instant (o
+REM python corriendo este DST) y su cmdline tiene que apuntar al DST nuevo.
+REM Solo el nombre de imagen no alcanza: otro python/instant viejo daria OK.
 tasklist /FI "PID eq %NEWPID%" /FO TABLE /NH 2>nul | findstr /I "instant.exe python.exe pythonw.exe" >nul
-if not errorlevel 1 goto :healthy
+if errorlevel 1 goto :rollback
+set "DSTCHECK=%DST%"
+powershell -NoProfile -Command "$p=(Get-CimInstance Win32_Process -Filter ('ProcessId='+$env:NEWPID) | Select-Object -First 1); if (-not $p) { exit 1 }; $exe=[IO.Path]::GetFullPath($p.ExecutablePath); $want=[IO.Path]::GetFullPath($env:DSTCHECK); if ($exe -ieq $want) { exit 0 }; if ($p.CommandLine -and $p.CommandLine -like ('*'+$want+'*')) { exit 0 }; exit 1" >nul 2>&1
+if errorlevel 1 goto :rollback
+goto :healthy
 :rollback
 echo ADVERTENCIA: el nuevo exe no levanto; restaurando el anterior...
 del "%DST%" 2>nul
@@ -65,6 +74,8 @@ echo Se restauro la version anterior. Revisa el log en %APPDATA%\instant.
 goto :reopen
 :healthy
 echo Daemon nuevo en marcha.
+REM Exito verificado: el respaldo ya cumplio (rollback disponible hasta aca).
+del "%DST%.bak" 2>nul
 
 :reopen
 echo [6/6] Reabriendo ventana...

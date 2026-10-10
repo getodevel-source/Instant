@@ -259,13 +259,28 @@ class PanelLifecycleTests(unittest.TestCase):
         self.assertEqual(logic.status_detail, gui.DAEMON_MISSING_DETAIL)
 
     def test_update_routes_by_install_mode(self):
+        # `_install_ready` re-hashea el archivo antes de ejecutarlo y
+        # `apply_binary_update` exige `expected_sha256`: por eso se usan
+        # archivos reales en un tempdir.
+        import hashlib as _hashlib
+        import tempfile as _tempfile
+
+        def _verified(_dir, name):
+            _path = os.path.join(_dir, name)
+            with open(_path, "wb") as _handle:
+                _handle.write(b"instalador-verificado-" * 100)
+            with open(_path, "rb") as _handle:
+                return _path, _hashlib.sha256(_handle.read()).hexdigest()
+
         # Instalado (Windows): frena el daemon y lanza el Setup en silencio.
         logic, _emitted = make_logic()
-        with patch("instant_app.update.install_mode", return_value="installed"), \
-                patch("instant_app.gui.stop_daemon") as stop, \
-                patch("instant_app.gui.daemon_is_running", return_value=False), \
-                patch("subprocess.Popen") as popen:
-            logic._install_ready("C:/tmp/Instant-Setup.exe", "ab" * 32)
+        with _tempfile.TemporaryDirectory() as _dir:
+            _setup, _digest = _verified(_dir, "Instant-Setup.exe")
+            with patch("instant_app.update.install_mode", return_value="installed"), \
+                    patch("instant_app.gui.stop_daemon") as stop, \
+                    patch("instant_app.gui.daemon_is_running", return_value=False), \
+                    patch("subprocess.Popen") as popen:
+                logic._install_ready(_setup, _digest)
         stop.assert_called_once()
         popen.assert_called_once()
         self.assertEqual(popen.call_args.args[0][1:],
@@ -274,22 +289,28 @@ class PanelLifecycleTests(unittest.TestCase):
 
         # Unix congelado: reemplazo en caliente + reinicio del dictado.
         logic, emitted = make_logic()
-        with patch.object(sys, "frozen", True, create=True), \
-                patch.object(sys, "platform", "linux"), \
-                patch("instant_app.update.install_mode", return_value="portable"), \
-                patch("instant_app.update.apply_binary_update",
-                      return_value="/usr/local/bin/instant") as apply_update, \
-                patch.object(logic, "stop_daemon_flow") as restart:
-            logic._install_ready("/tmp/instant-linux", "cd" * 32)
-        apply_update.assert_called_once_with("/tmp/instant-linux")
+        with _tempfile.TemporaryDirectory() as _dir:
+            _target, _digest = _verified(_dir, "instant-linux")
+            with patch.object(sys, "frozen", True, create=True), \
+                    patch.object(sys, "platform", "linux"), \
+                    patch("instant_app.update.install_mode", return_value="portable"), \
+                    patch("instant_app.update.apply_binary_update",
+                          return_value="/usr/local/bin/instant") as apply_update, \
+                    patch.object(logic, "stop_daemon_flow") as restart:
+                logic._install_ready(_target, _digest)
+        apply_update.assert_called_once_with(_target, expected_sha256=_digest)
         restart.assert_called_once_with(restart=True)
 
         # Portable sin script: aviso con instrucciones, sin lanzar nada.
         logic, emitted = make_logic()
-        with patch("instant_app.update.install_mode", return_value="portable"), \
-                patch("os.path.isfile", return_value=False), \
-                patch("subprocess.Popen") as popen:
-            logic._install_ready("C:/tmp/instant.exe", "ef" * 32)
+        with _tempfile.TemporaryDirectory() as _dir:
+            _target, _digest = _verified(_dir, "Instant.exe")
+            with patch("instant_app.update.install_mode", return_value="portable"), \
+                    patch("instant_app.gui.os.path.isfile",
+                          side_effect=lambda p: False
+                          if str(p).endswith(".bat") else True), \
+                    patch("instant_app.gui.subprocess.Popen") as popen:
+                logic._install_ready(_target, _digest)
         popen.assert_not_called()
         messages = [payload for kind, payload in emitted if kind == "toast"]
         self.assertTrue(any("instant-update.bat" in item["message"] for item in messages))

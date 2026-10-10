@@ -1,6 +1,6 @@
 # Instant
 
-Hold-to-talk offline en español. Mantén la tecla, habla 60-120s, suelta y pega.
+Hold-to-talk offline en español. Mantené la tecla, hablá 60-120s, soltá y pegá.
 
 Pipeline: mic 16kHz → VAD (frases) → VoxCore int8 offline
 (`sherpa-onnx`, CPU) → portapapeles + Ctrl+V. Sin nube, sin GPU.
@@ -14,11 +14,9 @@ anglicismos se transcriben por fonética. Un perfil de vocabulario permite
 corregir variantes reconocidas explícitamente; el pulido LLM por sí solo
 ayuda con tildes y puntuación, pero no reemplaza el reconocimiento de audio.
 
-## Instalación
+En Windows, la vía recomendada es el instalador de la [última release](https://github.com/getodevel-source/Instant/releases/latest) (`Instant-Setup.exe`): por usuario, sin admin, con desinstalador y actualización in-place. El instalador conserva tu configuración y tus modelos. El `Instant.exe` portable y los binarios de Linux/macOS viven en la misma release.
 
-En Windows, la vía recomendada es el instalador de la [última release](https://github.com/getodevel-source/Instant/releases/latest) (`Instant-Setup.exe`): por usuario, sin admin, con desinstalador y actualización in-place. El `Instant.exe` portable y los binarios de Linux/macOS viven en la misma release.
-
-Desde la raíz del repositorio, `scripts/install.bat` (Windows) o `scripts/install.sh` (Linux/macOS) crea `.venv`, instala Instant y abre el asistente de configuración. `INSTANT_UNATTENDED=1` conserva el modo sin preguntas.
+> Los binarios están **sin firmar** por ahora: Windows SmartScreen muestra «Windows protegió su PC» la primera vez (elegí «Más información» → «Ejecutar de todas formas» solo si el instalador salió del enlace oficial); Gatekeeper en macOS puede pedirte que confirmes la apertura en Ajustes → Privacidad y seguridad. Esto no es un error de Instant.
 
 Para desarrollar el paquete desde `dictado/`:
 
@@ -34,7 +32,7 @@ Los ejemplos de CLI siguientes suponen ese entorno virtual activo. Los instalado
 ### Windows
 
 Sin dependencias del sistema. Si la tecla no responde en apps elevadas,
-corre la terminal como administrador.
+corré la terminal como administrador.
 
 En Windows, las entradas WASAPI se abren en modo compartido con conversión
 automática a 16 kHz cuando el dispositivo usa otra frecuencia (por ejemplo,
@@ -56,7 +54,7 @@ ventana existente o abre una nueva, sin duplicar ventanas. Clic derecho ofrece
 Windows puede ubicar el icono bajo la flecha de iconos ocultos; su visibilidad
 fija se configura en la barra de tareas.
 
-### Linux (X11)
+### Linux (solo X11)
 
 ```bash
 sudo apt install python3-venv libportaudio2 xclip xdotool libxcb-cursor0 libegl1 libgl1 libxkbcommon0
@@ -64,8 +62,7 @@ sudo apt install python3-venv libportaudio2 xclip xdotool libxcb-cursor0 libegl1
 
 El panel web necesita las libs xcb/GL de Qt y el stack de QtWebEngine
 (NSS, GBM, ALSA; el wheel de PySide6 no las trae);
-`install.sh` las intenta instalar solo. Wayland: el pegado con `xdotool` no
-funciona; usa sesión X11 o `wtype` manual. El hotkey con `pynput` requiere X.
+`install.sh` las intenta instalar solo. [Wayland no está soportado](https://github.com/getodevel-source/Instant/issues): el pegado con `xdotool` no funciona y el hotkey con `pynput` requiere X; usá sesión X11 o `wtype` manual.
 
 ### macOS
 
@@ -73,8 +70,8 @@ funciona; usa sesión X11 o `wtype` manual. El hotkey con `pynput` requiere X.
 brew install portaudio
 ```
 
-El panel web abre sin dependencias extra. Autoriza micrófono y accesibilidad
-(pegado por teclado) en Ajustes del Sistema. Teclas F: usa Fn+F9 si tu teclado
+El panel web abre sin dependencias extra. Autorizá micrófono y accesibilidad
+(pegado por teclado) en Ajustes del Sistema. Teclas F: usá Fn+F9 si tu teclado
 las mapea a multimedia.
 
 ## Uso
@@ -82,22 +79,22 @@ las mapea a multimedia.
 Con el entorno virtual activado:
 ```bash
 instant setup   # panel de configuración (los tres sistemas)
-instant run     # daemon: mantén la tecla, suelta para transcribir
+instant run     # daemon: mantené la tecla, soltá para transcribir
 instant stop    # frena el daemon (lo usa también el desinstalador)
 instant check   # boot rapido: tecla + mic probe + warmup (<5s)
 ```
 
-`instant setup` abre el centro gráfico PySide6 en los tres sistemas: una sola
-página con scroll y cuatro bloques. Arriba, la portada con el estado del
-dictado, la tecla y los botones de iniciar/detener; después, micrófono con
-selector y prueba de nivel (3 s), tarjeta General con tecla y arranque con el
-sistema, y **Vocabulario**: tabla por perfil con término, variantes
-(`a | b | c`), pill de sonido (`≈`) y botón de quitar (`✕`). «Añadir término»
-agrega una fila en blanco lista para escribir. El panel indica los cambios
-pendientes de guardar y, después de guardar, avisa si hace falta reiniciar
-Instant. El diagnóstico muestra el informe en una ventana independiente. La
-ventana puede cerrarse sin detener el daemon; en Windows queda el icono de
-bandeja, y en Linux/macOS el daemon sigue vivo hasta `scripts/instant-stop.sh`.
+`instant setup` abre el centro gráfico PySide6 en los tres sistemas: navegación
+lateral con cuatro vistas (Inicio, Micrófono, Ajustes, Vocabulario). Inicio
+muestra el estado del dictado, la tecla y los botones de iniciar/detener;
+Micrófono trae selector y prueba de nivel (3 s); Ajustes trae la tecla y el
+arranque con el sistema; **Vocabulario** trae tabla por perfil con término,
+variantes (`a | b | c`), pill de sonido (`≈`) y botón de quitar (`✕`).
+«Añadir término» agrega una fila en blanco lista para escribir. El panel indica
+los cambios pendientes de guardar y, después de guardar, avisa si hace falta
+reiniciar Instant. El diagnóstico muestra el informe en una ventana
+independiente. La ventana puede cerrarse sin detener el daemon; en Windows queda
+el icono de bandeja, y en Linux/macOS el daemon sigue vivo hasta `scripts/instant-stop.sh`.
 
 Sin ventana (servidores, SSH, scripts): `instant setup --tui` mantiene el
 asistente de terminal; cualquier flag de CLI también lo usa.
@@ -183,7 +180,7 @@ instant setup --fix-deps
 | portaudio mac | `brew --prefix portaudio` | sí (`brew`) solo si tenés brew | `brew install portaudio` |
 | Windows: nada del sistema | — | — | no hace falta nada |
 
-Wayland: `xdotool` no anda (usa sesión X11 o `wtype` manual). Sin red no se instalan paquetes ni modelos; el setup informa qué falta. Para evitar preguntas en instalaciones automatizadas, define `INSTANT_UNATTENDED=1` antes de correr el instalador del repositorio.
+En Wayland no hay soporte (usá sesión X11 o `wtype` manual; ver [Linux](#linux-solo-x11)). Sin red no se instalan paquetes ni modelos; el setup informa qué falta. Para evitar preguntas en instalaciones automatizadas, definí `INSTANT_UNATTENDED=1` antes de correr el instalador del repositorio.
 
 ## De dónde saca los modelos (DICTADO_DATA)
 
@@ -332,8 +329,8 @@ reconocimiento es baja, y nunca toca texto seguro ni palabras corrientes.
 
 ## Pulido LLM (opcional, off por defecto)
 
-Si tienes `llama-server` local corriendo, en Windows configura su URL en
-Preferencias; en Linux/macOS usa `--llm-url` al setup (o
+Si tenés `llama-server` local corriendo, en Windows configurá su URL en
+Preferencias; en Linux/macOS usá `--llm-url` al setup (o
 `DICTADO_LLM_URL=http://127.0.0.1:8080`). El LLM recibe la transcripción y el
 glosario activo —no el audio— y solo se lo consulta cuando la confianza del
 decode es baja (media de log-probs por token < 0.85): el texto seguro se pega
@@ -351,4 +348,34 @@ ausencia).
 
 ## Binarios por SO
 
-Los binarios PyInstaller todavía requieren verificación antes de publicarse como distribución oficial.
+Los binarios salen de las [releases de GitHub](https://github.com/getodevel-source/Instant/releases/latest): `Instant-Setup.exe` (instalador de Windows), `Instant.exe` (portable de Windows), `instant-linux` y `instant-macos`. Cada asset trae un sidecar `.sha256` y el actualizador rechaza cualquier descarga sin sidecar válido o con hash distinto. Están **sin firmar** por ahora (ver la nota en [Instalación](#instalación)).
+
+Verificá un asset a mano antes de instalarlo:
+
+```powershell
+Get-FileHash Instant-Setup.exe -Algorithm SHA256
+# compará con el contenido de Instant-Setup.exe.sha256
+```
+
+```bash
+sha256sum -c instant-linux.sha256
+```
+
+## Actualizaciones
+
+Al abrir el panel, Instant consulta como máximo una vez al día el último release en GitHub. Esa conexión expone tu IP a GitHub como cualquier visita web; no manda telemetría, ni audio, ni tu configuración.
+
+El modo vive en `update_mode` (`notify` por defecto | `auto` | `off`); `INSTANT_NO_UPDATE=1` equivale a `off`:
+
+- `notify`: chequea y te avisa con la versión y las notas; descarga solo cuando lo pedís.
+- `auto`: además la descarga y verifica en segundo plano, con progreso y reintento.
+- `off`: ni chequea.
+
+La instalación **siempre** pide tu confirmación («Actualizar y reiniciar»); nunca corta un dictado sin aviso. Toda descarga se verifica por SHA256 contra su sidecar antes de instalarse, y se vuelve a hashear justo antes de aplicar.
+
+## Desinstalación
+
+Desinstalar frena el dictado y borra la app, pero **conserva tu configuración y tus modelos** para no descargarlos de nuevo:
+
+- Windows: el desinstalador frena el daemon antes de borrar; quedan `%APPDATA%\instant` (config) y `%LOCALAPPDATA%\instant\models` (modelos).
+- Linux/macOS: `scripts/uninstall.sh` frena el daemon y el panel y quita el arranque automático (`instant.desktop` / `com.instant.dictado.plist`); con `--purge` borra además la configuración y los modelos descritos más arriba.

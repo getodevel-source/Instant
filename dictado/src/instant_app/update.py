@@ -6,6 +6,8 @@ desinstalador (Windows) se actualiza con `Instant-Setup.exe`; el exe portable
 se cambia con `instant-update.bat` (frena todo, respalda y reemplaza); en
 Linux/macOS el binario se reemplaza en caliente (POSIX permite unlink+rename
 con el proceso vivo, que sigue usando el inodo viejo).
+La actualización POSIX conserva el binario previo en `<destino>.bak` y lo
+restaura solo si el nuevo no pasa el health-check (existe+ejecutable).
 """
 import hashlib
 import json
@@ -27,6 +29,10 @@ ASSETS = {"win32": "Instant.exe", "linux": "instant-linux", "darwin": "instant-m
 INSTALLER_ASSET = "Instant-Setup.exe"
 UNINSTALLER = "unins000.exe"
 
+# Tag válido: semver estricto X.Y.Z (tras `normalize`). Un tag raro no dispara
+# descarga: `check()` lo rechaza en voz alta en vez de comparar a ciegas.
+_STRICT_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+
 
 def current_version():
     from instant_app import __version__
@@ -43,11 +49,15 @@ def _parts(version):
 
 
 def is_newer(latest, current):
-    """True si latest supera a current comparando números (no strings)."""
+    """True si latest supera a current comparando números (no strings).
+
+    Ante cualquier fallo de parseo devuelve False: un updater que no entiende
+    una versión no descarga nada (mejor quedarse que traer lo incorrecto).
+    """
     try:
         return _parts(normalize(latest)) > _parts(normalize(current))
     except Exception:
-        return normalize(latest) != normalize(current)
+        return False
 
 
 def fetch_json(url):
@@ -103,7 +113,27 @@ def apply_hint():
             "(reemplaza el binario en caliente; el próximo arranque ya es el nuevo).")
 
 
-def apply_binary_update(downloaded, target=None, allow_source=False):
+def _sha256_of(path):
+    """SHA256 de un archivo en disco (por stream, sin cargarlo entero)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _posix_health_ok(path):
+    """Health-check mínimo post-replace: existe, no vacío y ejecutable."""
+    try:
+        return (os.path.isfile(path)
+                and os.path.getsize(path) > 0
+                and os.access(path, os.X_OK))
+    except OSError:
+        return False
+
+
+def apply_binary_update(downloaded, target=None, allow_source=False,
+                        expected_sha256=None):
     """Reemplaza el binario en uso (Linux/macOS). Devuelve la ruta destino.
 
     POSIX permite renombrar sobre un ejecutable en ejecución: el proceso vivo
@@ -112,6 +142,17 @@ def apply_binary_update(downloaded, target=None, allow_source=False):
     En instalación source no hay binario que reemplazar: aunque se pase
     `allow_source=True`, se exige `target` explícito fuera del prefijo del
     intérprete (nunca se sobrescribe `sys.executable`).
+
+    `expected_sha256` es obligatorio (el SHA del sidecar `.sha256` verificado
+    al descargar): justo antes del `os.replace` final se vuelve a hasear lo
+    stageado y se compara. Esto cierra el TOCTOU entre la descarga verificada
+    y el reemplazo (si el archivo cambió en el medio, no se instala nada).
+    Sin expected no hay apply.
+
+    Rollback: el binario previo se copia a `<target>.bak` antes de reemplazar;
+    tras el reemplazo se verifica que el nuevo existe y es ejecutable, y si
+    falla se restaura el .bak automáticamente. El .bak se deja en disco a
+    propósito como vuelta atrás manual (el .bat de Windows lo borra en éxito).
     """
     if sys.platform == "win32":
         raise RuntimeError(
@@ -126,18 +167,43 @@ def apply_binary_update(downloaded, target=None, allow_source=False):
                 "update --apply no corre en instalación source (solo frozen/portable); "
                 "bajá con --download y actualizá el checkout a mano "
                 "(o pasá un destino explícito fuera del intérprete).")
+    if not expected_sha256 or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256):
+        raise RuntimeError(
+            "sin SHA256 esperado no se aplica la actualización: pasá "
+            "expected_sha256 con el hash del sidecar .sha256 verificado.")
     target = target or sys.executable
     directory = os.path.dirname(os.path.abspath(target))
     fd, staged = tempfile.mkstemp(prefix=".instant-update-", suffix=".part",
                                   dir=directory)
     applied = False
+    backup = target + ".bak"
+    had_target = os.path.isfile(target)
     try:
         with os.fdopen(fd, "wb") as destination, open(downloaded, "rb") as source:
             shutil.copyfileobj(source, destination, length=1024 * 1024)
             destination.flush()
             os.fsync(destination.fileno())
         os.chmod(staged, 0o755)
+        if _sha256_of(staged) != expected_sha256.lower():
+            raise ValueError(
+                "SHA256 cambió entre la descarga y el reemplazo "
+                "(posible TOCTOU); no se instala nada.")
+        if had_target:
+            # Sin respaldo no hay reemplazo: si no se puede copiar el previo,
+            # se aborta antes de tocar el binario en uso.
+            shutil.copyfile(target, backup)
         os.replace(staged, target)
+        if not _posix_health_ok(target):
+            if had_target and os.path.isfile(backup):
+                try:
+                    os.replace(backup, target)
+                except OSError:
+                    pass
+                raise RuntimeError(
+                    "el binario nuevo no pasó el health-check "
+                    "(existe+ejecutable); se restauró la versión anterior.")
+            raise RuntimeError(
+                "el binario nuevo no pasó el health-check (existe+ejecutable).")
         applied = True
     finally:
         if not applied:
@@ -160,13 +226,23 @@ def check():
         raise RuntimeError(
             "GitHub no devolvió versión (¿rate-limit o sin releases?). "
             "No se informa 'al día' sin haber consultado.")
+    if not _STRICT_SEMVER.fullmatch(release["version"]):
+        raise RuntimeError(
+            f"el tag {release['tag']!r} no es semver X.Y.Z "
+            f"(vino {release['version']!r}): sin versión clara no se actualiza.")
     name = platform_asset()
     url = release["assets"].get(name, "")
-    if release["version"] and not url:
+    if not is_newer(release["version"], current):
+        # latest<=current: no hay update aunque el asset exista. Se devuelve
+        # la info igual (sin exigir asset) para no romper el "estás al día".
+        return {"update": False,
+                "current": current, "latest": release["version"],
+                "notes": release["notes"], "asset": name, "asset_url": url}
+    if not url:
         available = ", ".join(sorted(release["assets"])) or "ninguno"
         raise LookupError(
             f"el release {release['tag']} no trae {name} (hay: {available})")
-    return {"update": bool(release["version"]) and is_newer(release["version"], current),
+    return {"update": True,
             "current": current, "latest": release["version"],
             "notes": release["notes"], "asset": name, "asset_url": url}
 
@@ -296,7 +372,8 @@ def cmd_update(download_dir=None, apply=False, allow_source_apply=False):
         print(apply_hint())
         return 0
     try:
-        target = apply_binary_update(dest, allow_source=allow_source_apply)
+        target = apply_binary_update(dest, allow_source=allow_source_apply,
+                                     expected_sha256=expected)
     except Exception as exc:
         print(f"No se pudo aplicar: {exc}")
         return 2

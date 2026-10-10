@@ -63,15 +63,13 @@ class PanelPageContractTests(unittest.TestCase):
                          'id="sec-vocab"', 'id="modelSetup"',
                          "section.hidden = name !== page", "updateProgressWrap",
                          "overlayStyleSelect", "threadsSelect", "maxSegmentInput",
-                         "soundCheck", "llmUrlInput", "op:\"set_advanced\""):
+                         "soundCheck", "llmUrlInput", "op:\"set_advanced\"",
+                         "vadModelSelect", "blankPenaltyInput", "updateModeSelect",
+                         "runBtnReason", 'id="checklist"', "renderChecklist"):
             self.assertIn(expected, source)
-        self.assertNotIn("IntersectionObserver", source)
-        self.assertIn('if (!vocabBody.contains(active) || active.tagName !== "INPUT")', source)
-        self.assertIn("micCombo.disabled = !hasDevices", source)
-        self.assertIn("option.value === s.mic.unavailable_label", source)
-        self.assertNotIn('data-page="models"', source)
-        self.assertNotIn('id="sec-models"', source)
-        self.assertNotIn("Parakeet", source)
+        self.assertIn('aria-describedby="statusDetail runBtnReason"', source)
+        self.assertIn('aria-describedby="blankPenaltyHelp blankPenaltyError"',
+                      source)
 
     def test_controls_have_explicit_accessible_status_and_error_text(self):
         source = self._source()

@@ -2,6 +2,32 @@
 import os
 import sys
 
+
+def _restrict(path, mode):
+    """chmod best-effort: en Windows no hay bits POSIX (se ignora), en POSIX
+    un fallo de permiso no puede romper el arranque ni el guardado."""
+    if os.name == "nt":
+        return
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
+def ensure_private_dir(path):
+    """Crea `path` con 0o700 best-effort (config/datos solo del usuario).
+    Idempotente: si ya existe, solo intenta restringir bits sin romper nada."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    _restrict(path, 0o700)
+    return path
+
+
+def restrict_file(path):
+    """chmod 0o600 best-effort para secretos/logs (config.json/.bak, pid,
+    instant.log, wavs). Nunca lanza."""
+    _restrict(path, 0o600)
+    return path
+
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 PARAKEET_SUBDIR = "parakeet-v3-int8"

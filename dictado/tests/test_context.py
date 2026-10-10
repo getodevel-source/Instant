@@ -115,14 +115,14 @@ class LlmPolishTests(unittest.TestCase):
     def test_high_confidence_skips_network(self):
         with patch("urllib.request.urlopen") as urlopen:
             self.assertEqual(
-                llm.maybe_polish("hola mundo", {"llm_url": "http://local"}, conf=0.95),
+                llm.maybe_polish("hola mundo", {"llm_url": "http://127.0.0.1:8080"}, conf=0.95),
                 "hola mundo")
             urlopen.assert_not_called()
 
     def test_low_confidence_falls_back_to_local(self):
         with patch("urllib.request.urlopen", side_effect=OSError("caido")):
             self.assertEqual(
-                llm.maybe_polish("hola mundo", {"llm_url": "http://local"}, conf=0.5),
+                llm.maybe_polish("hola mundo", {"llm_url": "http://127.0.0.1:8080"}, conf=0.5),
                 "hola mundo")
 
     def test_restore_openers(self):
@@ -137,9 +137,9 @@ class LlmPolishTests(unittest.TestCase):
 
     def test_llm_response_accepts_punctuation_only(self):
         with patch("urllib.request.urlopen", return_value=_llm_response("¿Cómo estás?")):
-            self.assertEqual(llm.polish("como estas", "http://local"), "¿Cómo estás?")
+            self.assertEqual(llm.polish("como estas", "http://127.0.0.1:8080"), "¿Cómo estás?")
         with patch("urllib.request.urlopen", return_value=_llm_response("Hola, mundo y todo.")):
-            self.assertEqual(llm.polish("Hola mundo", "http://local"), "Hola mundo")
+            self.assertEqual(llm.polish("Hola mundo", "http://127.0.0.1:8080"), "Hola mundo")
 
     def test_local_glossary_with_llm_disabled(self):
         self.assertEqual(llm.maybe_polish("in stand", _WORK_CONTEXT), "Instant")
@@ -147,7 +147,7 @@ class LlmPolishTests(unittest.TestCase):
     def test_llm_failure_keeps_locally_corrected_text(self):
         with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
             self.assertEqual(
-                llm.maybe_polish("instante", {**_WORK_CONTEXT, "llm_url": "http://local"}),
+                llm.maybe_polish("instante", {**_WORK_CONTEXT, "llm_url": "http://127.0.0.1:8080"}),
                 "Instant")
 
 

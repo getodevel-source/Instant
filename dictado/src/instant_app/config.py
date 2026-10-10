@@ -19,10 +19,12 @@ DEFAULTS = {
     "vad_model": "silero",
     "blank_penalty": 0.0,
     "llm_url": "",
+    "llm_token": "",
     "active_context": "General",
     "context_profiles": {"General": []},
     "autostart": False,
     "overlay_style": "orbital",
+    "update_mode": "notify",
     "update_last_check": 0,
 }
 
@@ -163,8 +165,15 @@ def load():
             cfg[k] = v if v in ("silero", "ten") else "silero"
         else:
             cfg[k] = v.lower() if k == "key" else v
-    if cfg.get("vad_model") not in ("silero", "ten"):
-        cfg["vad_model"] = "silero"
+    if cfg.get("update_mode") not in ("notify", "auto", "off"):
+        cfg["update_mode"] = "notify"
+    tok = cfg.get("llm_token", "")
+    cfg["llm_token"] = tok if isinstance(tok, str) else ""
+    if (os.environ.get("DICTADO_LLM_TOKEN") or "") != "":
+        cfg["llm_token"] = os.environ["DICTADO_LLM_TOKEN"]
+    if (os.environ.get("INSTANT_NO_UPDATE") or "").strip().lower() in (
+            "1", "true", "yes", "y", "on", "si", "s"):
+        cfg["update_mode"] = "off"
     try:
         cfg["blank_penalty"] = max(0.0, min(1.0, float(cfg.get("blank_penalty", 0.0))))
     except (TypeError, ValueError):
@@ -173,17 +182,20 @@ def load():
 
 
 def save(cfg):
+    from instant_app.paths import ensure_private_dir, restrict_file
+
     path = config_path()
     directory = os.path.dirname(path) or "."
-    os.makedirs(directory, exist_ok=True)
+    ensure_private_dir(directory)
     temp_path = None
     slim = {k: cfg.get(k, DEFAULTS[k]) for k in DEFAULTS}
     try:
         temp_path = _write_temp_json(path, slim)
 
+        # Nota: config.json guarda `llm_url` en claro (URL sin token: el token
+        # va en `DICTADO_LLM_TOKEN`/env o config `llm_token`, nunca en la URL).
         # Preserve the last valid config only after the replacement content
         # has been serialized successfully. El .bak se escribe atomico con
-        # fsync: un corte a mitad de copia no deja un respaldo trunco.
         if os.path.isfile(path):
             try:
                 bak_tmp = _write_temp_json(path + ".bak", _read_json(path))
@@ -201,6 +213,9 @@ def save(cfg):
                 log.warning("no pude respaldar la config anterior", exc_info=True)
         os.replace(temp_path, path)
         temp_path = None
+        # Best-effort (no rompe Windows): solo el usuario lee la config.
+        restrict_file(path + ".bak")
+        restrict_file(path)
     finally:
         if temp_path is not None:
             try:

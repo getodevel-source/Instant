@@ -17,8 +17,11 @@
 | 🎯 **Preciso en español** | Diccionario técnico, corrección fonética y restauración de `¿?` incluidos. |
 | 🪶 **Liviano** | Sin GPU, ~670 MB de modelo que se descarga una sola vez. |
 
-## Empezar en 1 minuto
+## Empezar
 
+0. **Primera vez:** Instant descarga el modelo de voz (~670 MB, una sola
+   vez). Necesitás internet y ~1 GB libre en disco; sin el modelo, el
+   dictado no arranca.
 1. Descargá la versión para tu sistema desde [Releases](https://github.com/getodevel-source/Instant/releases/latest).
 2. Abrí Instant, elegí el micrófono y configurá la tecla.
 3. Enfocá cualquier campo de texto, mantené la tecla mientras hablás y soltala al terminar. Listo.
@@ -28,6 +31,13 @@
 | Windows | `Instant-Setup.exe` (instalador) o `Instant.exe` (portable) |
 | Linux (X11) | `instant-linux` |
 | macOS | `instant-macos` |
+
+> **Antes de dictar.** Tu sistema te pide permiso para usar el micrófono:
+> aceptalo, si no Instant no escucha. Los binarios están **sin firmar**
+> por ahora: SmartScreen (Windows) y Gatekeeper (macOS) avisan la primera
+> vez, es esperable. En Linux usá sesión **X11** (en Wayland el pegado y
+> la tecla global están limitados). En macOS autorizá además
+> **Accesibilidad** en Ajustes del Sistema (pegar con el teclado lo exige).
 
 ## Pantallas
 

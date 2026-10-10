@@ -416,7 +416,7 @@ with patch("urllib.request.urlopen", side_effect=OSError("server unavailable")):
     _check("LLM failure keeps explicit local glossary correction",
            llm.maybe_polish(
                "instante",
-               {**_work_context, "llm_url": "http://local"})
+               {**_work_context, "llm_url": "http://127.0.0.1:8080"})
            == "Instant")
 
 # Bias: la vecina no cruza frontera de oracion (.?!).

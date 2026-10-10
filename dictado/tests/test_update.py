@@ -118,6 +118,11 @@ class InstallModeTests(unittest.TestCase):
 
 
 class ApplyUpdateTests(unittest.TestCase):
+    def _expected(self, path):
+        import hashlib
+        with open(path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+
     def test_apply_binary_update_replaces_the_target(self):
         with tempfile.TemporaryDirectory() as directory:
             downloaded = os.path.join(directory, "instant-linux.download")
@@ -127,7 +132,9 @@ class ApplyUpdateTests(unittest.TestCase):
             with open(target, "wb") as handle:
                 handle.write(b"viejo")
             with patch.object(update_module.sys, "platform", "linux"):
-                applied = update_module.apply_binary_update(downloaded, target)
+                applied = update_module.apply_binary_update(
+                    downloaded, target,
+                    expected_sha256=self._expected(downloaded))
             self.assertEqual(applied, target)
             with open(target, "rb") as handle:
                 self.assertEqual(handle.read(), b"nuevo")
@@ -153,7 +160,9 @@ class ApplyUpdateTests(unittest.TestCase):
 
             with patch.object(update_module.sys, "platform", "linux"), \
                     patch.object(update_module.os, "replace", side_effect=atomic_replace):
-                update_module.apply_binary_update(downloaded, target)
+                update_module.apply_binary_update(
+                    downloaded, target,
+                    expected_sha256=self._expected(downloaded))
 
             self.assertEqual(len(staged_from), 1)
             with open(target, "rb") as handle:
@@ -163,7 +172,8 @@ class ApplyUpdateTests(unittest.TestCase):
     def test_apply_binary_update_refuses_on_windows(self):
         with patch.object(update_module.sys, "platform", "win32"):
             with self.assertRaises(RuntimeError):
-                update_module.apply_binary_update("descarga", "destino")
+                update_module.apply_binary_update(
+                    "descarga", "destino", expected_sha256="a" * 64)
 
     @unittest.skipIf(os.name == "nt",
                      "la semántica de reemplazo en caliente es de POSIX")
@@ -177,7 +187,9 @@ class ApplyUpdateTests(unittest.TestCase):
             with open(target, "wb") as handle:
                 handle.write(b"version vieja")
             with open(target, "rb") as running:
-                update_module.apply_binary_update(downloaded, target)
+                update_module.apply_binary_update(
+                    downloaded, target,
+                    expected_sha256=self._expected(downloaded))
                 self.assertEqual(running.read(), b"version vieja")
             with open(target, "rb") as handle:
                 self.assertEqual(handle.read(), b"version nueva")
@@ -190,7 +202,8 @@ class ApplyUpdateTests(unittest.TestCase):
             # allow_source solo no alcanza: sin target explícito fuera del
             # intérprete, nunca se sobrescribe sys.executable.
             with self.assertRaisesRegex(RuntimeError, "instalación source"):
-                update_module.apply_binary_update("descarga", allow_source=True)
+                update_module.apply_binary_update(
+                    "descarga", allow_source=True, expected_sha256="a" * 64)
             # Con target explícito fuera del prefijo, pasa el guard
             with tempfile.TemporaryDirectory() as directory, \
                     patch.object(update_module.sys, "prefix", "/otro/prefix"), \
@@ -202,11 +215,191 @@ class ApplyUpdateTests(unittest.TestCase):
                 with open(target, "wb") as handle:
                     handle.write(b"viejo")
                 applied = update_module.apply_binary_update(
-                    downloaded, target, allow_source=True)
+                    downloaded, target, allow_source=True,
+                    expected_sha256=self._expected(downloaded))
                 self.assertEqual(applied, target)
                 with open(target, "rb") as handle:
                     self.assertEqual(handle.read(), b"nuevo")
                 self.assertFalse(os.path.isfile(downloaded))
+
+class ApplyHardeningTests(unittest.TestCase):
+    def _write(self, directory, name, body):
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(body)
+        digest = hashlib.sha256(body).hexdigest()
+        return path, digest
+
+    def test_is_newer_parse_failure_is_not_an_update(self):
+        self.assertFalse(update_module.is_newer("raro!!", "0.1.0"))
+        self.assertFalse(update_module.is_newer("", "0.1.0"))
+
+    def test_check_rejects_non_semver_tag(self):
+        payload = {"tag_name": "v0.1-beta", "body": "",
+                   "assets": [{"name": "Instant.exe",
+                               "browser_download_url": "https://x/Instant.exe"}]}
+        with patch.object(update_module, "fetch_json", return_value=payload), \
+                patch.object(update_module, "current_version", return_value="0.1.0"), \
+                patch.object(update_module.sys, "platform", "win32"):
+            with self.assertRaisesRegex(RuntimeError, "semver"):
+                update_module.check()
+
+    def test_check_older_release_is_not_an_update_even_with_asset(self):
+        payload = {"tag_name": "v0.0.1", "body": "",
+                   "assets": [{"name": "Instant.exe",
+                               "browser_download_url": "https://x/Instant.exe"}]}
+        with patch.object(update_module, "fetch_json", return_value=payload), \
+                patch.object(update_module, "current_version", return_value="0.2.0"), \
+                patch.object(update_module.sys, "platform", "win32"):
+            info = update_module.check()
+        self.assertFalse(info["update"])
+        self.assertEqual(info["latest"], "0.0.1")
+
+    def test_apply_requires_expected_sha256(self):
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded, _digest = self._write(directory, "nuevo", b"nuevo")
+            target, _old = self._write(directory, "bin", b"viejo")
+            with patch.object(update_module.sys, "platform", "linux"):
+                with self.assertRaisesRegex(RuntimeError, "SHA256 esperado"):
+                    update_module.apply_binary_update(downloaded, target)
+                with self.assertRaisesRegex(RuntimeError, "SHA256 esperado"):
+                    update_module.apply_binary_update(
+                        downloaded, target, expected_sha256="corto")
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"viejo")
+
+    @unittest.skipIf(os.name == "nt",
+                     "el health-check de ejecutable es de POSIX")
+    def test_apply_rehashes_before_replace_and_keeps_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded, digest = self._write(directory, "nuevo", b"nuevo")
+            target, _old = self._write(directory, "bin", b"viejo")
+            os.chmod(target, 0o755)
+            with patch.object(update_module.sys, "platform", "linux"):
+                applied = update_module.apply_binary_update(
+                    downloaded, target, expected_sha256=digest)
+            self.assertEqual(applied, target)
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"nuevo")
+            with open(target + ".bak", "rb") as handle:
+                self.assertEqual(handle.read(), b"viejo")
+            self.assertFalse(os.path.isfile(downloaded))
+
+    def test_apply_detects_tamper_between_download_and_replace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded, digest = self._write(directory, "nuevo", b"nuevo")
+            target, _old = self._write(directory, "bin", b"viejo")
+            real_sha = update_module._sha256_of
+            with patch.object(update_module, "_sha256_of",
+                              return_value="0" * 64), \
+                    patch.object(update_module.sys, "platform", "linux"):
+                with self.assertRaisesRegex(ValueError, "TOCTOU|entre la descarga"):
+                    update_module.apply_binary_update(
+                        downloaded, target, expected_sha256=digest)
+            self.assertIsNotNone(real_sha)
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"viejo")
+
+    def test_apply_restores_backup_when_health_check_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            downloaded, digest = self._write(directory, "nuevo", b"nuevo")
+            target, _old = self._write(directory, "bin", b"viejo")
+            with patch.object(update_module.sys, "platform", "linux"), \
+                    patch.object(update_module, "_posix_health_ok",
+                                 return_value=False):
+                with self.assertRaisesRegex(RuntimeError, "health-check"):
+                    update_module.apply_binary_update(
+                        downloaded, target, expected_sha256=digest)
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"viejo")
+
+    @unittest.skipIf(os.name == "nt", "chmod POSIX")
+    def test_private_dirs_and_config_files_are_restricted(self):
+        from instant_app import config as config_module
+        from instant_app import paths as paths_module
+        with tempfile.TemporaryDirectory() as base:
+            directory = os.path.join(base, "cfg")
+            self.assertEqual(paths_module.ensure_private_dir(directory), directory)
+            self.assertEqual(oct(os.stat(directory).st_mode & 0o777), "0o700")
+            with patch.object(paths_module, "config_dir", return_value=directory), \
+                    patch.object(config_module, "config_path",
+                                 return_value=os.path.join(directory, "config.json")):
+                cfg = config_module.load()
+                config_module.save(cfg)
+            mode = oct(os.stat(os.path.join(directory, "config.json")).st_mode & 0o777)
+            self.assertEqual(mode, "0o600")
+
+    def test_llm_blocks_plain_http_off_loopback(self):
+        from instant_app import llm as llm_module
+        for ok in ("http://localhost:8080", "http://127.0.0.1:8080",
+                   "http://[::1]:8080", "https://llm.ejemplo.com"):
+            self.assertTrue(llm_module.check_url(ok))
+        with self.assertRaisesRegex(ValueError, "https://"):
+            llm_module.check_url("http://192.168.1.10:8080")
+        with self.assertRaisesRegex(ValueError, "https://"):
+            llm_module.check_url("http://llm.ejemplo.com")
+
+    def test_llm_failure_log_hides_url_and_keeps_class(self):
+        from instant_app import llm as llm_module
+        url = "http://127.0.0.1:9/v1/chat/completions?token=secreto-abc"
+        with patch("urllib.request.urlopen",
+                   side_effect=OSError("caído")) as _urlopen, \
+                patch.object(llm_module.log, "warning") as warning:
+            out = llm_module.maybe_polish(
+                "hola mundo", {"llm_url": url}, conf=0.1)
+            _urlopen.assert_called_once()
+        self.assertEqual(out, "hola mundo")
+        warning.assert_called_once()
+        logged = " ".join(str(part) for part in warning.call_args.args)
+        self.assertIn("OSError", logged)
+        self.assertNotIn("secreto-abc", logged)
+        self.assertNotIn("127.0.0.1", logged)
+
+    def test_llm_rejects_non_loopback_http_without_network(self):
+        from instant_app import llm as llm_module
+        with patch("urllib.request.urlopen") as _urlopen, \
+                patch.object(llm_module.log, "warning") as warning:
+            out = llm_module.maybe_polish(
+                "hola mundo",
+                {"llm_url": "http://192.168.1.10:8080?token=secreto-abc"},
+                conf=0.1)
+            _urlopen.assert_not_called()
+        self.assertEqual(out, "hola mundo")
+        warning.assert_called_once()
+        logged = " ".join(str(part) for part in warning.call_args.args)
+        self.assertIn("ValueError", logged)
+        self.assertNotIn("secreto-abc", logged)
+        self.assertNotIn("192.168.1.10", logged)
+
+    def test_llm_sends_bearer_without_logging_it(self):
+        from instant_app import llm as llm_module
+        import json as _json
+
+        seen = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return _json.dumps(
+                    {"choices": [{"message": {"content": "hola mundo"}}]}
+                ).encode()
+
+        def fake_urlopen(request, timeout=None):
+            seen["auth"] = request.get_header("Authorization")
+            return _Response()
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            out = llm_module.polish(
+                "hola mundo", "http://127.0.0.1:8080",
+                token="token-secreto-xyz")
+        self.assertEqual(out, "hola mundo")
+        self.assertEqual(seen["auth"], "Bearer token-secreto-xyz")
+
 
 class DownloadVerifyTests(unittest.TestCase):
     def _fixture(self, body):
@@ -365,8 +558,17 @@ class UpdateFlowTests(unittest.TestCase):
                 "notes": "Novedades", "asset": "Instant.exe",
                 "asset_url": "https://x/Instant.exe"}
 
+    def _verified_install_file(self, directory, name="Instant-Setup.exe"):
+        import hashlib
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(b"instalador-verificado-" * 100)
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256(handle.read()).hexdigest()
+        return path, digest
+
     def test_silent_check_downloads_and_verifies_update(self):
-        logic, _emitted = self._logic()
+        logic, _emitted = self._logic({"update_mode": "auto"})
         info = self._release()
         with (
             patch("instant_app.update.check", return_value=info),
@@ -390,15 +592,21 @@ class UpdateFlowTests(unittest.TestCase):
 
     def test_update_button_check_downloads_in_background_with_progress(self):
         from instant_app import gui
-        logic, emitted = self._logic()
+        logic, emitted = self._logic({"update_mode": "auto"})
+
+        import hashlib
+        fake_body = b"nuevo-binario-" * 100
+        fake_digest = hashlib.sha256(fake_body).hexdigest()
 
         def fake_download(_url, _target, **kwargs):
+            with open(_target, "wb") as handle:
+                handle.write(fake_body)
             kwargs["progress"](512, 1024)
 
         with (
             patch("instant_app.update.check", return_value=self._release()),
             patch("instant_app.update.fetch_expected_sha256",
-                  return_value="b" * 64),
+                  return_value=fake_digest),
             patch("instant_app.update.download", side_effect=fake_download) as download,
         ):
             logic.check_updates()
@@ -433,8 +641,22 @@ class UpdateFlowTests(unittest.TestCase):
                          os.path.join(gui._workdir(), "dist", "Instant.exe"))
         self.assertTrue(logic._closed)
 
-    def test_download_failure_can_be_retried(self):
+    def test_silent_check_notify_mode_asks_before_downloading(self):
         logic, emitted = self._logic()
+        info = self._release()
+        with (
+            patch("instant_app.update.check", return_value=info),
+            patch("instant_app.update.download") as download,
+            patch("instant_app.gui.config.save", return_value="config.json"),
+        ):
+            logic._silent_update_check()
+        download.assert_not_called()
+        self.assertTrue(any(toast["title"].startswith("Hay versión nueva")
+                            for toast in self._toasts(emitted)))
+        self.assertIn("Descargar v0.2.0", logic.update_button)
+
+    def test_download_failure_can_be_retried(self):
+        logic, emitted = self._logic({"update_mode": "auto"})
         info = self._release()
         with (
             patch("instant_app.update.check", return_value=info),
@@ -455,7 +677,10 @@ class UpdateFlowTests(unittest.TestCase):
         logic, _emitted = self._logic()
         logic.tasks = DeferredTasks()
         logic._pending_update = self._release()
-        logic._ready_update = ("C:/temp/Instant-Setup.exe", "d" * 64, "0.2.0")
+        _tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(_tmp.cleanup)
+        _path, _digest = self._verified_install_file(_tmp.name)
+        logic._ready_update = (_path, _digest, "0.2.0")
 
         with (patch("instant_app.update.install_mode", return_value="installed"),
               patch("instant_app.gui.stop_daemon") as stop,
@@ -480,7 +705,10 @@ class UpdateFlowTests(unittest.TestCase):
         logic, emitted = self._logic()
         logic.tasks = DeferredTasks()
         logic._pending_update = self._release()
-        logic._ready_update = ("C:/temp/Instant-Setup.exe", "a" * 64, "0.2.0")
+        _tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(_tmp.cleanup)
+        _path, _digest = self._verified_install_file(_tmp.name)
+        logic._ready_update = (_path, _digest, "0.2.0")
 
         with (patch("instant_app.update.install_mode", return_value="installed"),
               patch("instant_app.gui.stop_daemon") as stop,
@@ -505,9 +733,10 @@ class UpdateFlowTests(unittest.TestCase):
     def test_portable_update_uses_bundled_helper_and_real_exe_path(self):
         logic, _emitted = self._logic()
         logic._pending_update = self._release()
-        logic._ready_update = ("C:/temp/Instant.exe", "e" * 64, "0.2.0")
 
         with tempfile.TemporaryDirectory() as temp:
+            _target, _digest = self._verified_install_file(temp, "Instant.exe")
+            logic._ready_update = (_target, _digest, "0.2.0")
             extraction = os.path.join(temp, "_MEI12345")
             os.makedirs(extraction)
             bundled = os.path.join(extraction, "instant-update.bat")
@@ -536,9 +765,10 @@ class UpdateFlowTests(unittest.TestCase):
     def test_portable_helper_copy_failure_is_visible_and_retryable(self):
         logic, emitted = self._logic()
         logic._pending_update = self._release()
-        logic._ready_update = ("C:/temp/Instant.exe", "f" * 64, "0.2.0")
 
         with tempfile.TemporaryDirectory() as temp:
+            _target, _digest = self._verified_install_file(temp, "Instant.exe")
+            logic._ready_update = (_target, _digest, "0.2.0")
             bundled = os.path.join(temp, "instant-update.bat")
             with open(bundled, "w", encoding="utf-8") as handle:
                 handle.write("@echo off\n")

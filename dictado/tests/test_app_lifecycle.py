@@ -307,6 +307,21 @@ class AppLifecycleTests(unittest.TestCase):
         # --tui no se reenvía al asistente: es una elección de la entrada.
         self.assertEqual(cmd.call_args.args[0], [])
 
+    def test_setup_voice_flags_are_declared_and_forwarded(self):
+        with patch.object(entry, "_log_setup"), \
+                patch.object(entry, "_run_gui", return_value=0) as run_gui, \
+                patch("instant_app.setup.cmd_setup", return_value=0) as cmd, \
+                patch.object(entry.sys, "platform", "linux"):
+            self.assertEqual(entry.main(
+                ["setup", "--vad-model", "ten",
+                 "--blank-penalty", "0.5"]), 0)
+        run_gui.assert_not_called()
+        forwarded = cmd.call_args.args[0]
+        self.assertIn("--vad-model", forwarded)
+        self.assertIn("ten", forwarded)
+        self.assertIn("--blank-penalty", forwarded)
+        self.assertIn("0.5", forwarded)
+
     def test_existing_daemon_mutex_skips_second_daemon_construction(self):
         daemon = Mock()
         with patch.object(entry, "_log_setup"), \

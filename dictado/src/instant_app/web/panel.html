@@ -329,11 +329,12 @@ table.vocab th:nth-child(2) { width: 49%; }
         </div>
         <div class="key-instruction"><kbd id="keyBadge">F9</kbd><span>Manten&eacute; la tecla mientras habl&aacute;s; soltala para insertar el texto.</span></div>
         <div class="row home-actions">
-          <button class="btn primary" id="runBtn" disabled>Iniciar Instant</button>
+          <button class="btn primary" id="runBtn" disabled aria-describedby="statusDetail runBtnReason">Iniciar Instant</button>
           <button class="btn" id="stopBtn" disabled>Detener Instant</button>
         </div>
+        <p class="small" id="runBtnReason" role="status" aria-live="polite"></p>
       </div>
-      <div class="home-summary">
+      <div class="home-summary" id="checklist" aria-label="Lista para empezar">
         <div class="summary-item"><span>Micr&oacute;fono</span><strong id="quickMic">Comprobando&hellip;</strong><button class="link" data-page="audio">Configurar</button></div>
       </div>
     </section>
@@ -382,8 +383,11 @@ table.vocab th:nth-child(2) { width: 49%; }
             <div class="advanced-grid">
               <div class="field"><label for="overlayStyleSelect">Indicador de voz</label><select id="overlayStyleSelect"><option value="orbital">Espectro reactivo</option><option value="classic">Barras cl&aacute;sicas</option></select><small>Se muestra durante el dictado.</small></div>
               <div class="field"><label for="threadsSelect">Hilos de CPU</label><select id="threadsSelect"><option value="1">1 hilo</option><option value="2">2 hilos</option><option value="4">4 hilos</option><option value="6">6 hilos</option><option value="8">8 hilos</option></select><small>M&aacute;s hilos pueden acelerar el reconocimiento y usar m&aacute;s CPU.</small></div>
+              <div class="field"><label for="vadModelSelect">Detector de voz</label><select id="vadModelSelect"><option value="silero">Silero (liviano)</option><option value="ten">TEN (m&aacute;s preciso)</option></select><small>TEN baja ~126 KB extra una sola vez. Requiere reiniciar el dictado.</small></div>
+              <div class="field"><label for="blankPenaltyInput">Penalidad al silencio</label><input id="blankPenaltyInput" type="number" min="0" max="1" step="0.05" inputmode="decimal" aria-describedby="blankPenaltyHelp blankPenaltyError"><small id="blankPenaltyHelp">0 = apagada. Tocarla solo con error medido.</small><span class="inline-error" id="blankPenaltyError" role="alert"></span></div>
               <div class="field"><label for="maxSegmentInput">Duraci&oacute;n m&aacute;xima por segmento</label><input id="maxSegmentInput" type="number" min="1" max="60" step="1" inputmode="numeric" aria-describedby="maxSegmentHelp maxSegmentError"><small id="maxSegmentHelp">El audio largo se divide en segmentos.</small><span class="inline-error" id="maxSegmentError" role="alert"></span></div>
               <div class="field"><span class="field-title">Confirmaci&oacute;n sonora</span><label class="check"><input id="soundCheck" type="checkbox">Emitir un tono al terminar</label><small>El tono se reproduce en este equipo.</small></div>
+              <div class="field"><label for="updateModeSelect">Actualizaciones</label><select id="updateModeSelect"><option value="notify">Avisarme antes de descargar</option><option value="auto">Descargar solas</option><option value="off">Apagadas</option></select><small>Con aviso, nada se descarga sin tu clic. Apagadas no consulta versiones.</small></div>
             </div>
             <div class="field">
               <label for="llmUrlInput">Servidor opcional para pulir el texto</label>
@@ -391,7 +395,11 @@ table.vocab th:nth-child(2) { width: 49%; }
               <small id="llmUrlHelp">Al activarlo, el servidor recibe el texto reconocido y el vocabulario activo; nunca recibe el audio. Dejalo vac&iacute;o para mantener esta funci&oacute;n apagada.</small>
               <span class="inline-error" id="llmUrlError" role="alert"></span>
             </div>
-          </div>
+            <div class="field">
+              <label for="llmTokenInput">Token del servidor (opcional)</label>
+              <input id="llmTokenInput" type="password" placeholder="Solo si el servidor pide autenticación" spellcheck="false" autocomplete="off">
+              <small>Viaja en el encabezado Authorization y nunca queda en los registros. Se guarda solo en este equipo.</small>
+            </div>
         </details>
       </div>
     </section>
@@ -465,12 +473,15 @@ table.vocab th:nth-child(2) { width: 49%; }
 const $ = (id) => document.getElementById(id);
 const statusDot = $("statusDot"), statusTitle = $("statusTitle"), statusDetail = $("statusDetail");
 const keyBadge = $("keyBadge"), keyValue = $("keyValue");
-const runBtn = $("runBtn"), stopBtn = $("stopBtn");
-const quickMic = $("quickMic");
+const runBtn = $("runBtn"), stopBtn = $("stopBtn"), runBtnReason = $("runBtnReason");
+const quickMic = $("quickMic"), checklist = $("checklist");
 const micCombo = $("micCombo"), meterWrap = $("meterWrap"), meterFill = $("meterFill"), meterText = $("meterText");
 const autostart = $("autostart"), overlayStyleSelect = $("overlayStyleSelect");
 const threadsSelect = $("threadsSelect"), maxSegmentInput = $("maxSegmentInput");
+const vadModelSelect = $("vadModelSelect"), blankPenaltyInput = $("blankPenaltyInput");
+const blankPenaltyError = $("blankPenaltyError"), updateModeSelect = $("updateModeSelect");
 const soundCheck = $("soundCheck"), llmUrlInput = $("llmUrlInput");
+const llmTokenInput = $("llmTokenInput");
 const profileCombo = $("profileCombo"), vocabBody = $("vocabBody");
 const modelSetup = $("modelSetup"), modelStatus = $("modelStatus"), modelBtn = $("modelBtn"), modelDownloadNote = $("modelDownloadNote");
 const modelProgWrap = $("modelProgWrap"), modelProgFill = $("modelProgFill"), modelProgText = $("modelProgText");
@@ -514,6 +525,7 @@ function parse(raw) {
 }
 function hasFieldErrors() {
   return maxSegmentInput.getAttribute("aria-invalid") === "true"
+    || blankPenaltyInput.getAttribute("aria-invalid") === "true"
     || llmUrlInput.getAttribute("aria-invalid") === "true";
 }
 function updateSaveControl() {
@@ -600,7 +612,11 @@ function onState(raw) {
       || !!(s.model && !s.model.ready) || !!(s.mic && !s.mic.available);
     stopBtn.textContent = state === "stopping" ? "Deteniendo…" : "Detener Instant";
     stopBtn.disabled = s.status.can_stop === false || state === "stopping";
+    const reason = s.status.disabled_reason || "";
+    runBtn.title = runBtn.disabled ? reason : "";
+    runBtnReason.textContent = runBtn.disabled ? reason : "";
   }
+  if (s.checklist) renderChecklist(s.checklist);
   keyBadge.textContent = key;
   keyValue.textContent = key;
   if (document.activeElement !== autostart)
@@ -692,9 +708,18 @@ function onState(raw) {
     const a = s.advanced;
     overlayStyleSelect.value = a.overlay_style || "orbital";
     threadsSelect.value = String(a.threads || 4);
+    if (document.activeElement !== vadModelSelect)
+      vadModelSelect.value = a.vad_model || "silero";
+    if (document.activeElement !== blankPenaltyInput)
+      blankPenaltyInput.value = String(a.blank_penalty ?? 0);
+    if (updateModeSelect && document.activeElement !== updateModeSelect)
+      updateModeSelect.value = a.update_mode || "notify";
     if (document.activeElement !== maxSegmentInput) maxSegmentInput.value = String(a.max_seg || 20);
     soundCheck.checked = !!a.sound;
     if (document.activeElement !== llmUrlInput) llmUrlInput.value = a.llm_url || "";
+    // El token nunca viaja al panel: solo se informa si hay uno guardado.
+    if (document.activeElement !== llmTokenInput && !llmTokenInput.value)
+      llmTokenInput.placeholder = a.llm_token_set ? "Token guardado (escribí para reemplazarlo)" : "Solo si el servidor pide autenticación";
   }
   if (s.diagnostics && s.diagnostics.open && diagModal.hidden) {
     diagText.textContent = s.diagnostics.text || "Ejecutando comprobaciones…";
@@ -708,6 +733,30 @@ function onState(raw) {
       : message ? "Guardado." : "";
   updateSaveControl();
   if (s.version !== undefined) versionEl.textContent = `v${s.version}`;
+}
+
+function renderChecklist(items) {
+  if (!checklist) return;
+  checklist.querySelectorAll("[data-check]").forEach((el) => el.remove());
+  (items || []).forEach((item) => {
+    if (item.id === "mic") return; // el resumen de mic ya existe (quickMic)
+    const row = document.createElement("div");
+    row.className = "summary-item";
+    row.dataset.check = item.id;
+    const label = document.createElement("span");
+    label.textContent = `${item.ok ? "✓ " : "○ "}${item.label}`;
+    const hint = document.createElement("strong");
+    hint.textContent = item.hint || "";
+    const link = document.createElement("button");
+    link.className = "link";
+    link.setAttribute("data-page", item.page || "home");
+    link.textContent = item.ok ? "Ver" : "Configurar";
+    link.addEventListener("click", () => goToPage(item.page || "home", {focus:true, notify:true, force:true}));
+    row.appendChild(label);
+    row.appendChild(hint);
+    row.appendChild(link);
+    checklist.appendChild(row);
+  });
 }
 
 function renderVocab(rows) {
@@ -823,7 +872,9 @@ function onToast(raw) {
     else if (oldest) oldest.remove();
     else break;
   }
-  window.setTimeout(() => dismiss(true), t.ms || 4500);
+  if ((t.actions || []).length) box.setAttribute("role", "alert");
+  const sticky = (t.actions || []).length > 0 && !(Number(t.ms) > 0);
+  if (!sticky) window.setTimeout(() => dismiss(true), Math.max(Number(t.ms) || 4500, (t.actions || []).length ? 15000 : 0));
 }
 
 function onMeter(raw) {
@@ -977,13 +1028,27 @@ $("keyCancel").addEventListener("click", () => closeActiveModal(keyModal));
 autostart.addEventListener("change", () => send({op:"set_autostart", value:autostart.checked}));
 overlayStyleSelect.addEventListener("change", () => send({op:"set_advanced", key:"overlay_style", value:overlayStyleSelect.value}));
 threadsSelect.addEventListener("change", () => send({op:"set_advanced", key:"threads", value:threadsSelect.value}));
+vadModelSelect.addEventListener("change", () => send({op:"set_advanced", key:"vad_model", value:vadModelSelect.value}));
+updateModeSelect.addEventListener("change", () => send({op:"set_advanced", key:"update_mode", value:updateModeSelect.value}));
+blankPenaltyInput.addEventListener("change", () => {
+  const value = Number(blankPenaltyInput.value);
+  if (blankPenaltyInput.value === "" || !Number.isFinite(value) || value < 0 || value > 1) {
+    blankPenaltyInput.setAttribute("aria-invalid", "true");
+    blankPenaltyError.textContent = "Ingresá un valor entre 0 y 1 (0 = apagada).";
+    updateSaveControl();
+    return;
+  }
+  blankPenaltyInput.removeAttribute("aria-invalid");
+  blankPenaltyError.textContent = "";
+  updateSaveControl();
+  send({op:"set_advanced", key:"blank_penalty", value:blankPenaltyInput.value});
+});
 maxSegmentInput.addEventListener("change", () => {
   const value = Number(maxSegmentInput.value);
   if (!maxSegmentInput.value || !Number.isFinite(value) || value < 1 || value > 60) {
     maxSegmentInput.setAttribute("aria-invalid", "true");
     maxSegmentError.textContent = "Ingresá una duración entre 1 y 60 segundos.";
     updateSaveControl();
-    return;
   }
   maxSegmentInput.removeAttribute("aria-invalid");
   maxSegmentError.textContent = "";
@@ -1010,6 +1075,10 @@ llmUrlInput.addEventListener("change", () => {
   llmUrlError.textContent = "";
   updateSaveControl();
   send({op:"set_advanced", key:"llm_url", value:value});
+});
+llmTokenInput.addEventListener("change", () => {
+  send({op:"set_advanced", key:"llm_token", value:llmTokenInput.value});
+  llmTokenInput.value = "";
 });
 profileCombo.addEventListener("change", () => send({op:"context_select", name:profileCombo.value}));
 $("profileAdd").addEventListener("click", () => {

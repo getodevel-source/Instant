@@ -105,7 +105,7 @@ class TranscriptLogPrivacyTests(unittest.TestCase):
 
         with patch("urllib.request.urlopen", return_value=Response()):
             with self.assertRaises(RuntimeError) as caught:
-                llm.polish("texto de prueba", "http://local")
+                llm.polish("texto de prueba", "http://127.0.0.1:8080")
         self.assertNotIn(secret, str(caught.exception))
 
 

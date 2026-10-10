@@ -72,8 +72,27 @@ def _parse_args(argv=None):
                     help="autoinstala lo permitido por el SO y re-chequea")
     known, unknown = ap.parse_known_args(argv)
     for flag in unknown:
-        print(f"  AVISO: flag desconocido {flag}; se ignora.")
+        print(f"  ERROR: flag desconocido {flag}; revisá `instant setup --help`.")
+        raise SystemExit(2)
     return known
+
+
+def _setup_cause(exc):
+    """Causa resumida en consola: qué falló y qué hacer (detalle en el log)."""
+    lowered = f"{type(exc).__name__} {exc}".casefold()
+    if any(mark in lowered for mark in (
+            "urlerror", "timeout", "connection", "network", "unreachable",
+            "refused", "reset", "dns", "ssl", "http", "404", "403", "500",
+            "sin red", "offline")):
+        return (f"sin red ({exc}); conectate y re-corre `instant setup`.")
+    if any(mark in lowered for mark in (
+            "no space", "no hay espacio", "disco lleno", "enospc",
+            "disk full", "espacio")):
+        return (f"sin espacio ({exc}); liberá ~1 GB y re-corre `instant setup`.")
+    if "sha256" in lowered or "hash" in lowered or "verific" in lowered:
+        return (f"el archivo bajado no verifica ({exc}); "
+                "re-corre `instant setup` (reintenta solo).")
+    return f"{exc}; re-corre `instant setup`."
 
 
 def _real_inputs():
@@ -126,13 +145,15 @@ def cmd_setup(argv=None):
             models_ok = all(dl.check(data_dir, verify=True).values())
             print("  modelos OK (VoxCore + VAD)." if models_ok
                   else "  descarga incompleta, reintenta luego.")
-        except Exception:
+        except Exception as exc:
+            print(f"  ERROR modelos: {_setup_cause(exc)}")
             log.exception("SIN MODELOS: sin red o sin espacio; el resto se configura igual. "
                           "Re-corre `instant setup` con red para descargar.")
             models_ok = False
             rc = 2
     if not models_ok:
-        print("  AVISO: sin modelos `instant run` no transcribe hasta descargarlos.")
+        print("  Configuración incompleta: modelos sin descargar → "
+              "corre `instant setup` con red y ~1 GB libre.")
 
     # 2. Microfono: lista con backend, medidor y seleccion persistente por nombre.
     inputs = _real_inputs()
@@ -245,8 +266,8 @@ def cmd_setup(argv=None):
         try:
             msg = _as.enable() if want else _as.disable()
             print(f"  {msg}")
-        except Exception as e:
-            print(f"  autostart no se pudo aplicar: {e}")
+        except Exception as exc:
+            print(f"  ERROR arranque: {_setup_cause(exc)}")
             rc = max(rc, 2)
         # La casilla pedida queda recordada igual para reintentar luego.
         cfg["autostart"] = bool(want)
@@ -280,7 +301,8 @@ def cmd_setup(argv=None):
             try:
                 _dl2.download_models(_ddir(), include_ten_vad=True)
                 print("  ten-vad OK.")
-            except Exception:
+            except Exception as exc:
+                print(f"  ERROR ten-vad: {_setup_cause(exc)} (sigo con silero).")
                 log.exception("no pude bajar ten-vad; sigo con silero.")
                 cfg["vad_model"] = "silero"
                 rc = max(rc, 2)
@@ -348,13 +370,24 @@ def cmd_setup(argv=None):
     # 6. Test final: probe mic + warmup modelos.
     print(f"  config en: {path}")
     if o.no_probe:
-        print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")
-        return rc
+        if rc == 0 and models_ok and inputs:
+            print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")
+            return rc
+        missing = ("modelos sin descargar" if not models_ok else
+                   "mic sin detectar" if not inputs else "revisá avisos")
+        print(f"  Configuración incompleta: {missing} → "
+              "corre `instant setup` para completarla.")
+        return 2
     mic_ok = True
     if inputs:
         from instant_app.audio import probe, resolve_mic
-        mic = resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
-        mic_ok = probe(mic)
+        try:
+            mic = resolve_mic(cfg.get("mic_hint", ""), cfg.get("mic_index"))
+            mic_ok = probe(mic)
+        except Exception as exc:
+            print(f"  ERROR mic: {_setup_cause(exc)}")
+            log.exception("mic probe FAIL")
+            mic_ok = False
         print(f"  mic probe: {'OK' if mic_ok else 'FAIL (revisa uso exclusivo)'}")
     else:
         print("  mic probe: SKIP (sin mics)")
@@ -368,12 +401,19 @@ def cmd_setup(argv=None):
             eng.recognizer()
             eng.vad()
             print("  warmup modelos: OK")
-        except Exception:
+        except Exception as exc:
+            print(f"  ERROR warmup: {_setup_cause(exc)}")
             log.exception("warmup modelos FAIL")
             models_ok = False
     else:
         print("  warmup modelos: SKIP (sin modelos)")
-    print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")
     if not (mic_ok and models_ok):
+        missing = ", ".join(
+            part for part, ok in (("modelos sin descargar", models_ok),
+                                  ("mic sin detectar", mic_ok and bool(inputs)))
+            if not ok) or "revisá avisos"
+        print(f"  Configuración incompleta: {missing} → "
+              "corre `instant setup` para completarla.")
         return 2
+    print(f"Listo. Mantén {cfg.get('key', 'f9').upper()} y dicta.")
     return rc

@@ -30,9 +30,14 @@ jobs:
             output: instant-macos
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      # Actions por SHA (`version@sha` + comentario): el tag es legible, el
+      # SHA es lo que realmente corre. Refrescar con `git ls-remote` del repo
+      # de cada action y actualizar ambas partes.
+      - uses: actions/checkout@v4.4.0 # v4
+        # v4 = 11d5960a326750d5838078e36cf38b85af677262
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0 # v5
+        # v5 = a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           # Tiene que coincidir con lo que exigen las dependencias fijadas y con
           # la version que usa la suite: numpy 2.5.3 pide Python 3.12 o mas, y
@@ -246,7 +251,10 @@ jobs:
           }
           echo "panel congelado OK"
 
-      - name: Sign binary (SHA256 sidecar for the updater)
+      # SHA256 != firma: el sidecar solo detecta descargas corruptas, no un
+      # release comprometido. La prueba criptográfica la da la atestación
+      # SLSA del job `provenance` (OIDC de GitHub, sin secretos).
+      - name: Hash binary sidecar (SHA256 for the updater)
         # Python en vez de sha256sum: macOS no lo trae y el sidecar tiene
         # que salir igual en los tres sistemas o el updater lo rechaza.
         run: |
@@ -258,7 +266,8 @@ jobs:
           python -c "import hashlib; name = 'Instant-Setup.exe'; data = open('dist/' + name, 'rb').read(); open('dist/' + name + '.sha256', 'w').write(f'{hashlib.sha256(data).hexdigest()}  {name}\n')"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2 # v4
+        # v4 = ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: instant-${{ matrix.platform }}
           path: |
@@ -267,27 +276,75 @@ jobs:
 
       - name: Upload installer artifact
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2 # v4
+        # v4 = ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: instant-windows-installer
           path: |
             dist/Instant-Setup.exe
             dist/Instant-Setup.exe.sha256
 
-  publish:
+  sbom:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.4.0 # v4
+        # v4 = 11d5960a326750d5838078e36cf38b85af677262
+      - name: Generate SBOM (SPDX, solo manifiesto fuente)
+        uses: anchore/sbom-action@v0 # v0
+        # v0 = e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: ./dictado
+          format: spdx-json
+          output-file: instant-sbom.spdx.json
+      - uses: actions/upload-artifact@v4.6.2 # v4
+        # v4 = ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: instant-sbom
+          path: instant-sbom.spdx.json
+          if-no-files-found: error
+
+  provenance:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      id-token: write
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4.3.0 # v4
+        # v4 = d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: instant-*
+          path: release-assets
+          merge-multiple: true
+      - name: Attest build provenance (SLSA, OIDC sin secretos)
+        uses: actions/attest-build-provenance@v2.2.0 # v2
+        # v2 = 96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-path: release-assets/*
+
+  publish:
+    needs: [build, sbom, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0 # v4
+        # v4 = d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: instant-*
           path: release-assets
           merge-multiple: true
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.2.1 # v2
+        # v2 = 3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           files: release-assets/*
+          fail_on_unmatched_files: true
+          draft: true
           generate_release_notes: true

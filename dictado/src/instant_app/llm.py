@@ -2,13 +2,66 @@
 
 Si `llm_url` está vacío, solo se aplican las variantes exactas del vocabulario.
 Si el servidor falla o modifica palabras, se conserva el texto local corregido.
+
+Seguridad: `http://` en claro solo se permite contra loopback (localhost,
+127.* o ::1); cualquier otro `http://` se rechaza con un error accionable
+(pasá a `https://` o usá un túnel local). El token (`llm_token` en config o
+`DICTADO_LLM_TOKEN`) viaja en `Authorization: Bearer` y nunca se loguea.
 """
+import ipaddress
 import logging
 import os
 import re
 import unicodedata
+from urllib.parse import urlsplit
 
 log = logging.getLogger("instant")
+
+# Hosts donde el claro es aceptable: solo esta máquina (nunca sale a la red).
+_LOOPBACK_NAMES = frozenset({"localhost"})
+
+
+def _is_loopback_host(host):
+    """True si `host` es loopback (nombre o IP). Sin DNS: lo que no se puede
+    clasificar con certeza, no es loopback."""
+    if not host:
+        return False
+    name = host.strip().strip("[]").lower().rstrip(".")
+    if name in _LOOPBACK_NAMES:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
+
+
+def check_url(url):
+    """Valida el endpoint LLM. Devuelve la URL normalizada o lanza ValueError
+    accionable. `http://` no-loopback se bloquea (usá `https://`)."""
+    target = (url or "").strip()
+    if not target:
+        return ""
+    try:
+        parsed = urlsplit(target)
+    except ValueError as exc:
+        raise ValueError(f"URL del LLM no válida ({exc}); "
+                         "usá http://localhost:8080 o https://…") from None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("URL del LLM no válida: usá http(s)://host… "
+                         "o dejá el campo vacío para no usar red.")
+    if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+        raise ValueError(
+            f"el LLM en http://{parsed.hostname} viaja en claro por la red: "
+            "usá https:// o un endpoint local (http://localhost:… o http://127.0.0.1:…).")
+    return target
+
+
+def resolve_token(cfg=None):
+    """Token Bearer del LLM (config `llm_token` o env `DICTADO_LLM_TOKEN`).
+    Vacío = sin auth. Nunca se loguea ni se incluye en mensajes de error."""
+    cfg = cfg or {}
+    return (cfg.get("llm_token", "")
+            or os.environ.get("DICTADO_LLM_TOKEN", ""))
 
 DEFAULT_SYSTEM = ("Corrige solo ortografía, tildes y puntuación de este dictado en español. "
                   "Pon los signos de apertura ¿ y ¡ cuando correspondan. "
@@ -19,14 +72,16 @@ DEFAULT_SYSTEM = ("Corrige solo ortografía, tildes y puntuación de este dictad
                   "Devuelve SOLO el texto corregido, sin comillas ni explicaciones.")
 
 
-def polish(text, url, timeout=8.0, system=None, context_terms=""):
+def polish(text, url, timeout=8.0, system=None, context_terms="", token=None,
+           cfg=None):
     """Corrige `text` via endpoint OpenAI-compatible de llama-server."""
     import json
     import urllib.request
 
     if not text or not text.strip():
         return text
-    base = (url or "").rstrip("/")
+    # Falla rápido y accionable: un http:// no-loopback no sale a la red.
+    base = check_url(url).rstrip("/")
     if base.endswith(("/chat/completions", "/completions", "/completion")):
         endpoint = base
     else:
@@ -41,9 +96,13 @@ def polish(text, url, timeout=8.0, system=None, context_terms=""):
         "temperature": 0.0,
         "max_tokens": max(256, len(text.split()) * 4),
     }
+    headers = {"Content-Type": "application/json"}
+    bearer = token if token is not None else resolve_token(cfg)
+    if bearer:
+        headers["Authorization"] = "Bearer " + bearer
     req = urllib.request.Request(
         endpoint, data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         data = json.loads(r.read().decode("utf-8", "replace"))
     try:
@@ -132,9 +191,12 @@ def maybe_polish(text, cfg=None, url=None, conf=1.0, min_conf=0.85):
         _terms = context.prompt_context(cfg)
         _gen = _bias.terms_for_prompt()
         terms = (_terms + "\n" + _gen) if _terms else _gen
-        return polish(corrected, target, context_terms=terms)
-    except Exception as e:
-        log.warning("LLM off/fail (%s): sigo con texto corregido localmente.", e)
+        return polish(corrected, target, context_terms=terms, cfg=cfg)
+    except Exception as exc:
+        # Clase del error, nunca la URL ni el cuerpo: la URL puede llevar
+        # token en query y el texto dictado no va al log.
+        log.warning("LLM off/fail (%s): sigo con texto corregido localmente.",
+                    type(exc).__name__)
         return corrected
 
 def _words(text):

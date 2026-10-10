@@ -8,12 +8,16 @@ import sys
 def _log_setup():
     from logging.handlers import RotatingFileHandler
 
-    from instant_app.paths import config_dir
+    from instant_app.paths import config_dir, ensure_private_dir, restrict_file
 
-    directory = config_dir()
-    os.makedirs(directory, exist_ok=True)
+    directory = ensure_private_dir(config_dir())
+    log_path = os.path.join(directory, "instant.log")
+    # Best-effort (no rompe Windows): el log puede rozar datos sensibles.
+    restrict_file(log_path)
+    for rotated in (log_path + ".1", log_path + ".2", log_path + ".3"):
+        restrict_file(rotated)
     handlers = [RotatingFileHandler(
-        os.path.join(directory, "instant.log"), maxBytes=2 << 20,
+        log_path, maxBytes=2 << 20,
         backupCount=3, encoding="utf-8")]
     has_console = sys.stdout is not None and sys.stderr is not None
     if has_console:
@@ -62,6 +66,10 @@ def main(argv=None):
     p_setup.add_argument("--no-autostart", action="store_true",
                          help="desactiva el arranque con el sistema")
     p_setup.add_argument("--no-meter", action="store_true")
+    p_setup.add_argument("--vad-model", default=None, choices=("silero", "ten"),
+                         help="detector de voz: silero (liviano) o ten (más preciso)")
+    p_setup.add_argument("--blank-penalty", type=float, default=None,
+                         help="penalidad al silencio 0..1 (default 0)")
     p_setup.add_argument("--no-probe", action="store_true")
     p_setup.add_argument("--check-deps", action="store_true",
                          help="muestra tabla de dependencias y sigue")
@@ -116,6 +124,7 @@ def main(argv=None):
             args.llm_url is not None, args.context_profile is not None,
             bool(args.context_term), bool(args.context_remove_term),
             args.context_delete_profile, args.no_meter, args.no_probe,
+            args.vad_model is not None, args.blank_penalty is not None,
             args.check_deps, args.fix_deps, bool(rest))
         if not any(cli_options):
             override = False if args.no_autostart else True if args.autostart else None
@@ -125,7 +134,8 @@ def main(argv=None):
             print("Sin entorno gráfico; abro el asistente de terminal (TUI)...")
         from instant_app.setup import cmd_setup
         forward = ["--yes"] if args.yes else []
-        for key in ("mic", "key", "threads", "llm_url", "context_profile"):
+        for key in ("mic", "key", "threads", "llm_url", "context_profile",
+                    "vad_model", "blank_penalty"):
             value = getattr(args, key)
             if value is not None:
                 forward.extend((f"--{key.replace('_', '-')}", str(value)))

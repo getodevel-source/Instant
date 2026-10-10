@@ -5,8 +5,33 @@ El proyecto usa [versionado semántico](https://semver.org/lang/es/).
 
 ## [Sin publicar]
 
-### Corregido (auditoría interna, 4 rondas)
+### Agregado (producción)
 
+- Consentimiento de actualizaciones: `update_mode` (`notify` por defecto
+  | `auto` | `off`); `INSTANT_NO_UPDATE=1` equivale a `off`. En `notify`
+  el panel avisa con versión y notas y descarga solo con tu clic; en `auto`
+  descarga y verifica en segundo plano; la instalación siempre pide tu
+  confirmación y nunca corta un dictado sin aviso.
+- Re-hash SHA256 del archivo justo antes de aplicar la actualización
+  (además de la verificación en descarga); sin hash esperado no se instala nada.
+- Rollback POSIX: el binario previo se respalda (`.bak`) y se restaura si el
+  reemplazo falla el chequeo mínimo (existe + ejecutable).
+- Permisos best-effort: directorios de config/datos `0o700`,
+  config/`.bak`/pid/log/wavs `0o600` (sin romper Windows).
+- Release: provenance atestada + SBOM publicados (OIDC de GitHub, sin
+  secretos); paso «Sign binary» renombrado a hash sidecar; actions con SHA pineado.
+- Panel: checklist de primera ejecución en Inicio, selector de VAD
+  (silero/ten) y `blank_penalty` en Ajustes avanzados; errores de red/SO
+  accionables en criollo en vez de excepciones crudas.
+- LLM: bloquea `http://` no-loopback (solo loopback en claro); Authorization
+  por config/env sin loguearla; el log guarda la clase del error, nunca la URL.
+- Puerta honesta en docs: primera vez (~670 MB + internet + ~1 GB libre),
+  permisos de micrófono por SO, SmartScreen/Gatekeeper sin firma, Linux solo
+  X11 y accesibilidad en macOS; panel documentado como navegación lateral de
+  4 vistas; binarios verificables por SHA256; desinstalación documentada
+  (qué queda y `--purge`).
+
+### Corregido (auditoría interna, 4 rondas)
 - Lanzadores `scripts/` reparados tras la mudanza: `ROOT` en la raíz del
   repo (venv, paquete, modelos y `dist/` resuelven bien); `update.bat` usa el
   `instant-stop.bat` vecino; `run`/`status` verifican la línea de comando
