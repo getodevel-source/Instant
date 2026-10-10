@@ -1119,10 +1119,12 @@ class PanelLogic:
                 self.cfg.get("max_seg", 20.0),
                 self.cfg.get("vad_model", "silero"),
                 self.cfg.get("blank_penalty", 0.0),
-                _update_mode(self.cfg))
+                _update_mode(self.cfg),
+                self.cfg.get("llm_token", ""))
 
     @staticmethod
     def _restart_signature(snapshot):
+        # El token (índice 13) no exige reinicio: se excluye a propósito.
         return (snapshot[0], snapshot[1], snapshot[3], snapshot[4], snapshot[5],
                 snapshot[6], snapshot[7], snapshot[8], snapshot[9],
                 snapshot[10], snapshot[11])

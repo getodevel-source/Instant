@@ -100,12 +100,23 @@ if [ "$PURGE" -eq 1 ]; then
       *) echo "  Purga cancelada; config y modelos conservados."; exit 0 ;;
     esac
   fi
+  canon() {
+    if command -v realpath >/dev/null 2>&1; then
+      realpath -m -- "$1" 2>/dev/null || printf '%s' "$1"
+    elif command -v readlink >/dev/null 2>&1; then
+      readlink -m -- "$1" 2>/dev/null || printf '%s' "$1"
+    else
+      printf '%s' "$1"
+    fi
+  }
+  HOME_C="$(canon "$HOME")"
   for target in "$CONFIG_DIR" "$DATA_DIR"; do
-    case "$target" in
-      ""|"/"|"$HOME")
+    canon_target="$(canon "$target")"
+    case "$canon_target" in
+      ""|"/"|"$HOME_C")
         echo "  Ruta de purga peligrosa, no se toca: $target"; continue ;;
     esac
-    case "$target" in
+    case "$canon_target" in
       *instant*) rm -rf -- "$target" && echo "  Eliminado: $target" ;;
       *) echo "  No parece de Instant, no se toca: $target" ;;
     esac

@@ -426,7 +426,13 @@ class LogicSettingsTests(unittest.TestCase):
         logic.handle({"op": "set_advanced", "key": "llm_url",
                       "value": "http://127.0.0.1:8080"})
         self.assertEqual(logic.cfg["llm_url"], "http://127.0.0.1:8080")
-    def test_status_carries_disabled_reason_and_checklist(self):
+
+    def test_set_advanced_llm_token_marks_dirty(self):
+        logic, _emitted = make_logic()
+        logic.save_config(show_message=False)
+        self.assertFalse(logic._dirty())
+        logic.handle({"op": "set_advanced", "key": "llm_token", "value": "tok-1"})
+        self.assertTrue(logic._dirty())
         logic, _emitted = make_logic()
         logic.model_ready = False
         state = logic.state_payload()
