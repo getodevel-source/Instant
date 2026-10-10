@@ -296,7 +296,7 @@ jobs:
         with:
           path: ./dictado
           format: spdx-json
-          artifact-name: instant-sbom
+          artifact-name: instant_sbom
           upload-artifact: true
 
   provenance:
